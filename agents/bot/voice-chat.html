@@ -173,13 +173,17 @@
     <input id="apiUrl" value="http://localhost:3002" />
     <label>WS URL</label>
     <input id="wsUrl" value="ws://localhost:3002/ws" />
+    <label>Tu nombre en Minecraft</label>
+    <input id="playerName" value="JereC4str0" />
   </div>
 
   <script>
     const apiUrlEl = document.getElementById('apiUrl');
     const wsUrlEl = document.getElementById('wsUrl');
+    const playerNameEl = document.getElementById('playerName');
     const API_URL = () => apiUrlEl.value.trim();
     const WS_URL = () => wsUrlEl.value.trim();
+    const PLAYER_NAME = () => playerNameEl.value.trim() || 'Jugador';
     const chatEl = document.getElementById('chat');
     const micBtn = document.getElementById('micBtn');
     const statusDot = document.getElementById('statusDot');
@@ -331,7 +335,7 @@
         const resp = await fetch(API_URL() + '/chat/send', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: text }),
+          body: JSON.stringify({ message: text, as: PLAYER_NAME() }),
         });
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
       } catch (err) {
