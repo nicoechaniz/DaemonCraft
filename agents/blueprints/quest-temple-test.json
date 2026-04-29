@@ -8,7 +8,11 @@
   },
   "setting": {
     "biome": "desert",
-    "center": {"x": 200, "y": 70, "z": 200},
+    "center": {
+      "x": 200,
+      "y": 70,
+      "z": 200
+    },
     "radius": 30,
     "time_lock": null,
     "weather_lock": null
@@ -60,8 +64,8 @@
           "type": "chat",
           "as": "narrator",
           "lines": [
-            "SAY: El calor aquí no es natural. Es un horno que prueba intención.",
-            "SAY: Hay un Guardián del Desierto cerca. Y un altar que necesita luz."
+            "El calor aquí no es natural. Es un horno que prueba intención.",
+            "Hay un Guardián del Desierto cerca. Y un altar que necesita luz."
           ]
         }
       ]
@@ -87,8 +91,8 @@
           "type": "chat",
           "as": "narrator",
           "lines": [
-            "SAY: Bien. El primer fuego arde. Ahora el segundo.",
-            "SAY: El Guardián del Desierto no permite pasar a los débiles."
+            "Bien. El primer fuego arde. Ahora el segundo.",
+            "El Guardián del Desierto no permite pasar a los débiles."
           ]
         }
       ]
@@ -114,8 +118,8 @@
           "type": "chat",
           "as": "narrator",
           "lines": [
-            "SAY: Tres fuegos: el viaje, la llama, y la victoria.",
-            "SAY: Pasaste la prueba. El templo es tuyo."
+            "Tres fuegos: el viaje, la llama, y la victoria.",
+            "Pasaste la prueba. El templo es tuyo."
           ]
         }
       ],
@@ -128,8 +132,15 @@
     {
       "name": "Guardián del Desierto",
       "type": "husk",
-      "location": {"x": 205, "y": 70, "z": 205},
-      "properties": {"PersistenceRequired": true, "CustomName": "Guardián del Desierto"}
+      "location": {
+        "x": 205,
+        "y": 70,
+        "z": 205
+      },
+      "properties": {
+        "PersistenceRequired": true,
+        "CustomName": "Guardián del Desierto"
+      }
     }
   ],
   "completion": {

@@ -8,7 +8,11 @@
   },
   "setting": {
     "biome": "plains",
-    "center": {"x": 100, "y": 64, "z": 100},
+    "center": {
+      "x": 100,
+      "y": 64,
+      "z": 100
+    },
     "radius": 50,
     "time_lock": null,
     "weather_lock": null
@@ -16,8 +20,16 @@
   "init": {
     "description": "Setup sensors for this quest. Run setup_sensors once when the adventure starts.",
     "sensors": [
-      {"name": "dc_pozo", "criterion": "dummy", "poll_command": "/execute as @a at @s positioned 100 64 100 if entity @s[distance=..20] run scoreboard players set @s dc_pozo 1"},
-      {"name": "dc_revela", "criterion": "dummy", "poll_command": "/execute as @a if score @s dc_pozo matches 1 at @s positioned 100 64 100 if entity @s[distance=..3] if entity @s[y=55,dy=8] run scoreboard players set @s dc_revela 1"}
+      {
+        "name": "dc_pozo",
+        "criterion": "dummy",
+        "poll_command": "/execute as @a at @s positioned 100 64 100 if entity @s[distance=..20] run scoreboard players set @s dc_pozo 1"
+      },
+      {
+        "name": "dc_revela",
+        "criterion": "dummy",
+        "poll_command": "/execute as @a if score @s dc_pozo matches 1 at @s positioned 100 64 100 if entity @s[distance=..3] if entity @s[y=55,dy=8] run scoreboard players set @s dc_revela 1"
+      }
     ]
   },
   "cleanup": {
@@ -58,8 +70,8 @@
           "type": "chat",
           "as": "narrator",
           "lines": [
-            "SAY: El viento no sopla aquí. Se detiene, como si escuchara.",
-            "SAY: Hay un pozo en el claro. Las piedras alrededor están húmedas, aunque no llovió."
+            "El viento no sopla aquí. Se detiene, como si escuchara.",
+            "Hay un pozo en el claro. Las piedras alrededor están húmedas, aunque no llovió."
           ]
         }
       ],
@@ -101,9 +113,9 @@
           "type": "chat",
           "as": "narrator",
           "lines": [
-            "SAY: El pozo susurra. No con palabras — con tu propia voz, devuelta tres segundos tarde.",
-            "SAY: Algo sube. No rápido. Como si no tuviera prisa.",
-            "SAY: Dime, Nico: ¿quién eres cuando nadie te ve?"
+            "El pozo susurra. No con palabras — con tu propia voz, devuelta tres segundos tarde.",
+            "Algo sube. No rápido. Como si no tuviera prisa.",
+            "Dime, Nico: ¿quién eres cuando nadie te ve?"
           ]
         }
       ],
@@ -117,21 +129,39 @@
     {
       "name": "El Vigía",
       "type": "parrot",
-      "location": {"x": 102, "y": 65, "z": 98},
-      "properties": {"Silent": true, "CustomName": "El Vigía"}
+      "location": {
+        "x": 102,
+        "y": 65,
+        "z": 98
+      },
+      "properties": {
+        "Silent": true,
+        "CustomName": "El Vigía"
+      }
     },
     {
       "name": "El Eco",
       "type": "bat",
-      "location": {"x": 100, "y": 55, "z": 100},
-      "properties": {"Silent": true, "CustomName": "El Eco"}
+      "location": {
+        "x": 100,
+        "y": 55,
+        "z": 100
+      },
+      "properties": {
+        "Silent": true,
+        "CustomName": "El Eco"
+      }
     }
   ],
   "objects": [
     {
       "name": "Diario del Pozo",
       "type": "written_book",
-      "location": {"x": 99, "y": 64, "z": 99},
+      "location": {
+        "x": 99,
+        "y": 64,
+        "z": 99
+      },
       "content": {
         "title": "Última Entrada",
         "author": "Desconocido",
@@ -142,7 +172,12 @@
     }
   ],
   "soundscape": [
-    {"sound": "ambient.cave", "trigger": "dc_revela=1", "volume": 0.5, "pitch": 0.8}
+    {
+      "sound": "ambient.cave",
+      "trigger": "dc_revela=1",
+      "volume": 0.5,
+      "pitch": 0.8
+    }
   ],
   "completion": {
     "condition": "respondio_eco = true OR huyo = true",

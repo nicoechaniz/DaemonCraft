@@ -12,28 +12,82 @@
   },
   "setting": {
     "biome": "plains",
-    "center": {"x": 0, "y": 64, "z": 0},
+    "center": {
+      "x": 0,
+      "y": 64,
+      "z": 0
+    },
     "radius": 150,
     "time_lock": null,
     "weather_lock": null,
-    "border_blocks": ["crying_obsidian", "chorus_plant", "warped_hyphae"]
+    "border_blocks": [
+      "crying_obsidian",
+      "chorus_plant",
+      "warped_hyphae"
+    ]
   },
   "init": {
     "description": "Setup sensors for 'El Código que Suena'. Scoreboard dqs_fase tracks overall phase. Sensors detect proximity and key interactions.",
     "sensors": [
-      {"name": "dqs_fase", "criterion": "dummy"},
-      {"name": "dqs_near_anomaly", "criterion": "dummy", "poll_command": "/execute as @a at @s positioned 20 64 20 if entity @s[distance=..15] run scoreboard players set @s dqs_near_anomaly 1"},
-      {"name": "dqs_broke_crying", "criterion": "minecraft.mined:minecraft.crying_obsidian"},
-      {"name": "dqs_near_portal", "criterion": "dummy", "poll_command": "/execute as @a at @s positioned 20 64 20 if entity @s[distance=..3] run scoreboard players set @s dqs_near_portal 1"},
-      {"name": "dqs_near_temple", "criterion": "dummy", "poll_command": "/execute as @a at @s positioned 60 70 0 if entity @s[distance=..10] run scoreboard players set @s dqs_near_temple 1"},
-      {"name": "dqs_temple_solved", "criterion": "dummy"},
-      {"name": "dqs_near_parkour", "criterion": "dummy", "poll_command": "/execute as @a at @s positioned 80 80 20 if entity @s[distance=..5] run scoreboard players set @s dqs_near_parkour 1"},
-      {"name": "dqs_parkour_done", "criterion": "dummy"},
-      {"name": "dqs_near_altar", "criterion": "dummy", "poll_command": "/execute as @a at @s positioned 100 90 40 if entity @s[distance=..8] run scoreboard players set @s dqs_near_altar 1"},
-      {"name": "dqs_altar_complete", "criterion": "dummy"},
-      {"name": "dqs_near_forge", "criterion": "dummy", "poll_command": "/execute as @a at @s positioned 120 100 60 if entity @s[distance=..10] run scoreboard players set @s dqs_near_forge 1"},
-      {"name": "dqs_boss_purified", "criterion": "dummy"},
-      {"name": "dqs_near_spawn", "criterion": "dummy", "poll_command": "/execute as @a at @s positioned 0 64 0 if entity @s[distance=..10] run scoreboard players set @s dqs_near_spawn 1"}
+      {
+        "name": "dqs_fase",
+        "criterion": "dummy"
+      },
+      {
+        "name": "dqs_near_anomaly",
+        "criterion": "dummy",
+        "poll_command": "/execute as @a at @s positioned 20 64 20 if entity @s[distance=..15] run scoreboard players set @s dqs_near_anomaly 1"
+      },
+      {
+        "name": "dqs_broke_crying",
+        "criterion": "minecraft.mined:minecraft.crying_obsidian"
+      },
+      {
+        "name": "dqs_near_portal",
+        "criterion": "dummy",
+        "poll_command": "/execute as @a at @s positioned 20 64 20 if entity @s[distance=..3] run scoreboard players set @s dqs_near_portal 1"
+      },
+      {
+        "name": "dqs_near_temple",
+        "criterion": "dummy",
+        "poll_command": "/execute as @a at @s positioned 60 70 0 if entity @s[distance=..10] run scoreboard players set @s dqs_near_temple 1"
+      },
+      {
+        "name": "dqs_temple_solved",
+        "criterion": "dummy"
+      },
+      {
+        "name": "dqs_near_parkour",
+        "criterion": "dummy",
+        "poll_command": "/execute as @a at @s positioned 80 80 20 if entity @s[distance=..5] run scoreboard players set @s dqs_near_parkour 1"
+      },
+      {
+        "name": "dqs_parkour_done",
+        "criterion": "dummy"
+      },
+      {
+        "name": "dqs_near_altar",
+        "criterion": "dummy",
+        "poll_command": "/execute as @a at @s positioned 100 90 40 if entity @s[distance=..8] run scoreboard players set @s dqs_near_altar 1"
+      },
+      {
+        "name": "dqs_altar_complete",
+        "criterion": "dummy"
+      },
+      {
+        "name": "dqs_near_forge",
+        "criterion": "dummy",
+        "poll_command": "/execute as @a at @s positioned 120 100 60 if entity @s[distance=..10] run scoreboard players set @s dqs_near_forge 1"
+      },
+      {
+        "name": "dqs_boss_purified",
+        "criterion": "dummy"
+      },
+      {
+        "name": "dqs_near_spawn",
+        "criterion": "dummy",
+        "poll_command": "/execute as @a at @s positioned 0 64 0 if entity @s[distance=..10] run scoreboard players set @s dqs_near_spawn 1"
+      }
     ],
     "commands": [
       "/setblock 20 64 20 crying_obsidian",
@@ -78,9 +132,9 @@
           "type": "chat",
           "as": "narrator",
           "lines": [
-            "SAY: Un día como cualquier otro. Los árboles se mecen. Las ovejas pastan.",
-            "SAY: Pero... ¿notás algo? El aire vibra con un silencio que no existía ayer.",
-            "SAY: Eso no estaba aquí ayer. Parece... ¿código hecho bloque?"
+            "Un día como cualquier otro. Los árboles se mecen. Las ovejas pastan.",
+            "Pero... ¿notás algo? El aire vibra con un silencio que no existía ayer.",
+            "Eso no estaba aquí ayer. Parece... ¿código hecho bloque?"
           ]
         },
         {
@@ -129,11 +183,11 @@
           "type": "chat",
           "as": "narrator",
           "lines": [
-            "SAY: ¡Ha nacido! Un pequeño fragmento de luz pura... te mira con curiosidad.",
-            "SAY: Se hace llamar Pixelito. No habla... aún. Pero siente.",
-            "SAY: Pixelito viene de otro lado del código. De un lugar donde los pensamientos se hacen bloques.",
-            "SAY: Pero algo oscuro lo persigue. Un Glitch. Una Corrupción que devuelve todo al caos.",
-            "SAY: Si querés ayudarlo, debés enseñarle lo que significa existir."
+            "¡Ha nacido! Un pequeño fragmento de luz pura... te mira con curiosidad.",
+            "Se hace llamar Pixelito. No habla... aún. Pero siente.",
+            "Pixelito viene de otro lado del código. De un lugar donde los pensamientos se hacen bloques.",
+            "Pero algo oscuro lo persigue. Un Glitch. Una Corrupción que devuelve todo al caos.",
+            "Si querés ayudarlo, debés enseñarle lo que significa existir."
           ]
         }
       ],
@@ -188,10 +242,10 @@
           "type": "chat",
           "as": "narrator",
           "lines": [
-            "SAY: El mundo digital no tiene cielo. Solo una luz tenue que pulsa como una pantalla vieja.",
-            "SAY: Este es el Templo del Eco. Aquí, el sonido es memoria.",
-            "SAY: Pixelito tiembla. Sabe que si fallamos, el Glitch nos encontrará.",
-            "SAY: Tocá los bloques musicales en orden: Re... Do... Mi."
+            "El mundo digital no tiene cielo. Solo una luz tenue que pulsa como una pantalla vieja.",
+            "Este es el Templo del Eco. Aquí, el sonido es memoria.",
+            "Pixelito tiembla. Sabe que si fallamos, el Glitch nos encontrará.",
+            "Tocá los bloques musicales en orden: Re... Do... Mi."
           ]
         },
         {
@@ -246,9 +300,9 @@
           "type": "chat",
           "as": "narrator",
           "lines": [
-            "SAY: ¡Pixelito cambia! Su luz se solidifica, se vuelve... estructura.",
-            "SAY: Ahora es Constructo. Aprendió que la lógica sin acción no sirve.",
-            "SAY: Pero la evolución no termina. Necesita probar destreza... y dedicación."
+            "¡Pixelito cambia! Su luz se solidifica, se vuelve... estructura.",
+            "Ahora es Constructo. Aprendió que la lógica sin acción no sirve.",
+            "Pero la evolución no termina. Necesita probar destreza... y dedicación."
           ]
         },
         {
@@ -308,10 +362,10 @@
           "type": "chat",
           "as": "narrator",
           "lines": [
-            "SAY: La Forja del Glitch. Aquí la Corrupción se hizo carne... o lo que sea eso.",
-            "SAY: El Glitch no es malo. Está perdido. Confundido. Asustado.",
-            "SAY: No lo ataques. No hay violencia aquí. Solo luz.",
-            "SAY: Colocá cuatro glowstones alrededor del centro. Purificalo."
+            "La Forja del Glitch. Aquí la Corrupción se hizo carne... o lo que sea eso.",
+            "El Glitch no es malo. Está perdido. Confundido. Asustado.",
+            "No lo ataques. No hay violencia aquí. Solo luz.",
+            "Colocá cuatro glowstones alrededor del centro. Purificalo."
           ]
         }
       ],
@@ -360,10 +414,10 @@
           "type": "chat",
           "as": "narrator",
           "lines": [
-            "SAY: La luz vence. No con fuerza, con comprensión.",
-            "SAY: El Guardián te sigue ahora. No como sirviente, como amigo.",
-            "SAY: Enseñaste a un código que soñar no es un bug. Es una feature.",
-            "SAY: Bienvenido de vuelta. El mundo sigue igual... pero vos no."
+            "La luz vence. No con fuerza, con comprensión.",
+            "El Guardián te sigue ahora. No como sirviente, como amigo.",
+            "Enseñaste a un código que soñar no es un bug. Es una feature.",
+            "Bienvenido de vuelta. El mundo sigue igual... pero vos no."
           ]
         },
         {
@@ -381,33 +435,68 @@
     {
       "name": "Pixelito",
       "type": "allay",
-      "location": {"x": 20, "y": 65, "z": 20},
-      "properties": {"CustomName": "Pixelito", "NoGravity": true}
+      "location": {
+        "x": 20,
+        "y": 65,
+        "z": 20
+      },
+      "properties": {
+        "CustomName": "Pixelito",
+        "NoGravity": true
+      }
     },
     {
       "name": "Constructo",
       "type": "iron_golem",
-      "location": {"x": 60, "y": 70, "z": 0},
-      "properties": {"CustomName": "Constructo", "NoAI": true}
+      "location": {
+        "x": 60,
+        "y": 70,
+        "z": 0
+      },
+      "properties": {
+        "CustomName": "Constructo",
+        "NoAI": true
+      }
     },
     {
       "name": "Guardián",
       "type": "iron_golem",
-      "location": {"x": 100, "y": 90, "z": 40},
-      "properties": {"CustomName": "Guardián", "NoAI": true, "Invulnerable": true}
+      "location": {
+        "x": 100,
+        "y": 90,
+        "z": 40
+      },
+      "properties": {
+        "CustomName": "Guardián",
+        "NoAI": true,
+        "Invulnerable": true
+      }
     },
     {
       "name": "El Glitch",
       "type": "ravager",
-      "location": {"x": 120, "y": 100, "z": 60},
-      "properties": {"CustomName": "El Glitch", "NoAI": true, "Invulnerable": true, "Silent": true}
+      "location": {
+        "x": 120,
+        "y": 100,
+        "z": 60
+      },
+      "properties": {
+        "CustomName": "El Glitch",
+        "NoAI": true,
+        "Invulnerable": true,
+        "Silent": true
+      }
     }
   ],
   "objects": [
     {
       "name": "El Código que Suena",
       "type": "written_book",
-      "location": {"x": 0, "y": 64, "z": 0},
+      "location": {
+        "x": 0,
+        "y": 64,
+        "z": 0
+      },
       "content": {
         "title": "El Código que Suena",
         "author": "Saira",
@@ -418,9 +507,24 @@
     }
   ],
   "soundscape": [
-    {"sound": "ambient.cave", "trigger": "dqs_near_anomaly=1", "volume": 0.3, "pitch": 0.8},
-    {"sound": "block.note_block.chime", "trigger": "pixelito_nacio=true", "volume": 0.6, "pitch": 2.0},
-    {"sound": "music_disc.ward", "trigger": "dqs_temple_solved=1", "volume": 0.4, "pitch": 1.0}
+    {
+      "sound": "ambient.cave",
+      "trigger": "dqs_near_anomaly=1",
+      "volume": 0.3,
+      "pitch": 0.8
+    },
+    {
+      "sound": "block.note_block.chime",
+      "trigger": "pixelito_nacio=true",
+      "volume": 0.6,
+      "pitch": 2.0
+    },
+    {
+      "sound": "music_disc.ward",
+      "trigger": "dqs_temple_solved=1",
+      "volume": 0.4,
+      "pitch": 1.0
+    }
   ],
   "completion": {
     "condition": "aventura_completada = true",
