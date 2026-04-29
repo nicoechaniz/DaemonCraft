@@ -272,7 +272,7 @@ def setup_agent_profile(
             model_lower = model.lower()
             if "minimax" in model_lower:
                 provider = "minimax"
-                base_url = base_url or "https://api.minimax.chat/v1"
+                base_url = base_url or "https://api.minimax.io/anthropic"
             elif "kimi" in model_lower:
                 provider = "kimi-coding"
             elif "glm" in model_lower:
