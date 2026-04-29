@@ -771,7 +771,7 @@ async function sendToMcChat(text, { source = "auto" } = {}) {
     }
     recentFragments.push(now);
     sent++;
-    chatLog.push({ time: Date.now(), from: botName, message: frag, self: true });
+    chatLog.push({ time: Date.now(), from: config.mc.username, message: frag, self: true });
     if (chatLog.length > MAX_LOG) chatLog.shift();
     broadcastDashboard('chat', chatLog.slice(-30));
     if (sent < fragments.length) await sleep(MC_FRAGMENT_DELAY_MS);
