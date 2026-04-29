@@ -843,10 +843,18 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 30):
     print(f"[loop] MC_API_URL: {mc_api_url}")
     print(f"[loop] Interval: {interval}s")
 
+    # Force Anthropic Messages API for MiniMax anthropic endpoints
+    # so prompt caching and native Anthropic features work.
+    api_mode = None
+    if provider == "minimax" and base_url and base_url.rstrip("/").endswith("/anthropic"):
+        api_mode = "anthropic_messages"
+        print("[loop] Forcing api_mode=anthropic_messages for MiniMax")
+
     agent = AIAgent(
         model=model,
         provider=provider,
         base_url=base_url,
+        api_mode=api_mode,
         enabled_toolsets=toolsets,
         ephemeral_system_prompt=system_prompt,
         platform="cli",
