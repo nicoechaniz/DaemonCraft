@@ -856,11 +856,20 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 30):
         api_mode = "anthropic_messages"
         print("[loop] Forcing api_mode=anthropic_messages for MiniMax")
 
+    # Pass API key explicitly so the agent doesn't rely on internal credential
+    # discovery that may fail for MiniMax (and other non-OpenRouter providers).
+    api_key = None
+    if provider == "minimax":
+        api_key = os.environ.get("MINIMAX_API_KEY")
+    elif provider == "minimax-cn":
+        api_key = os.environ.get("MINIMAX_CN_API_KEY")
+
     agent = AIAgent(
         model=model,
         provider=provider,
         base_url=base_url,
         api_mode=api_mode,
+        api_key=api_key,
         enabled_toolsets=toolsets,
         ephemeral_system_prompt=system_prompt,
         platform="cli",
