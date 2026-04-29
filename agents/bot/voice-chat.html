@@ -253,10 +253,10 @@
       chatEl.appendChild(div);
       chatEl.scrollTop = chatEl.scrollHeight;
 
-      // TTS para mensajes del agente
-      if (cls === 'agent' && window.speechSynthesis) {
-        speak(text);
-      }
+      // TTS disabled — too annoying
+      // if (cls === 'agent' && window.speechSynthesis) {
+      //   speak(text);
+      // }
     }
 
     function escapeHtml(str) {
