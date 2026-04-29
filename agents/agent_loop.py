@@ -200,8 +200,14 @@ def load_profile_config(profile_name: str) -> dict:
     # Load profile .env so credentials (MINIMAX_API_KEY, etc.) are available
     env_path = profile_dir / ".env"
     if env_path.exists():
-        from hermes_cli.env_loader import load_hermes_dotenv
-        load_hermes_dotenv(hermes_home=Path.home() / ".hermes", project_env=env_path)
+        for line in env_path.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" in line:
+                key, value = line.split("=", 1)
+                os.environ[key.strip()] = value.strip().strip('"').strip("'")
+                print(f"[loop] Loaded env: {key.strip()}")
 
     config = {}
     if config_path.exists():
