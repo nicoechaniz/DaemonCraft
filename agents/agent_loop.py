@@ -77,10 +77,26 @@ def send_heartbeat(next_turn_in: float | None = None, turn_in_progress: bool = F
 
 
 def _clean_response_for_chat(text: str) -> str:
-    """Best-effort cleanup. Currently a no-op; reserved for future tag stripping."""
+    """Parse SAY: lines from agent output. Only SAY: lines go to Minecraft chat.
+
+    If the response contains at least one SAY: line, extract only those lines
+    and strip the prefix. Everything else (reasoning, plans, JSON) is ignored.
+
+    If no SAY: lines are found, fall back to sending the full text — this
+    preserves compatibility with agents that don't use the SAY convention.
+    """
     if not text:
         return ""
-    return text.strip()
+    text = text.strip()
+    lines = text.splitlines()
+    say_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("SAY:"):
+            say_lines.append(stripped[4:].strip())
+    if say_lines:
+        return "\n".join(say_lines)
+    return text
 
 
 def _post_chat(text: str) -> None:
