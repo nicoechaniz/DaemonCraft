@@ -76,7 +76,7 @@ The Hermes gateway is the **social routing layer** for the agent's consciousness
 ```
 
 **Key insight:** The gateway adapter is a **consumer** of the bot API, not its owner. The bot API continues to serve multiple consumers:
-- `agent_loop.py` — for embodiment/autonomy (chat response disabled when gateway active)
+- `agent_loop.py` — for embodiment/autonomy (coexists with gateway; both may respond to chat)
 - `DaemonCraftAdapter` — for social/messaging
 - `dashboard.html` — for debug UI and TTS playback
 
@@ -203,30 +203,11 @@ async def send(self, chat_id: str, content: str, reply_to=None, metadata=None) -
         await self._post("/chat/send", {"message": content, "target": chat_id, "whisper": True})
 ```
 
-#### Outbound: Full Response, No Filtering, With Hard Length Ceiling
+#### Outbound: Full Response, No Filtering
 
 **CRITICAL REQUIREMENT:** The legacy "SAY:" filter in `agent_loop.py` is **removed**. When the gateway adapter sends a message to Minecraft, it sends the **complete response text** from the AIAgent. There is no truncation, no extraction of a "SAY:" prefix, no chat-length heuristic.
 
-**However, Minecraft has a chat length limit (~240-256 chars).** The existing `_send_chat_chunks` lives in `agent_loop.py` (Python), NOT in `server.js`, and it **rejects** lines over 240 chars rather than splitting them. This is insufficient for the gateway adapter.
-
-**Solution: hard ceiling + truncation at the adapter layer**
-```python
-MINECRAFT_CHAT_MAX = 500  # hard ceiling in characters
-
-def _clamp_for_chat(text: str) -> str:
-    if len(text) <= MINECRAFT_CHAT_MAX:
-        return text
-    # Truncate cleanly at last sentence boundary before limit
-    truncated = text[:MINECRAFT_CHAT_MAX]
-    last_period = truncated.rfind(".")
-    if last_period > MINECRAFT_CHAT_MAX * 0.7:
-        return truncated[:last_period + 1] + " [...]"
-    return truncated + " [...]"
-```
-
-The adapter clamps text before sending. `server.js` then passes each line to `bot.chat()`. If a single line still exceeds Minecraft's protocol limit, `server.js` may reject it or truncate further — the adapter's 500-char ceiling is a safety margin, not a protocol guarantee.
-
-**TTS always receives the FULL unclamped text.** The audio plays the complete agent response. Only the Minecraft chat text is clamped.
+**Server-side chunking:** `server.js` handles message fragmentation via `chunkForMc` and `byteCap` for both broadcast and whisper paths. The gateway adapter sends the full text and trusts the bot API to split it into protocol-compliant fragments.
 
 #### TTS / Voice Integration (CORRECTED from v2)
 
@@ -237,7 +218,7 @@ async def send_voice(self, chat_id: str, audio_path: str, **kwargs) -> SendResul
     # Instead, it POSTs to a bot API endpoint that relays to all dashboards.
     await self._post("/tts/play", {"audio_url": audio_path, "chat_id": chat_id})
     # Also send the FULL text to Minecraft chat so players can read it
-    text = kwargs.get("text", "🗣️ [Voice message]")
+    text = kwargs.get("text", "[Voice message]")
     return await self.send(chat_id, text)
 ```
 
@@ -294,29 +275,14 @@ for entry in new_messages:
 - Daemon guardian (creative mode, effects)
 - Autonomous behavior (mining, building, pathfinding)
 
-**NEW: Coordination with gateway adapter**
+**NEW: Coexistence with gateway adapter**
 
-When the gateway adapter is active for a profile, `agent_loop.py` must **disable its own chat response path** to avoid double-responding:
+When the gateway adapter is active for a profile, `agent_loop.py` continues running its chat response path. Both the loop and the gateway may respond to the same player message, resulting in duplicate responses. This is a known coexistence issue that will be solved at the root cause (unified cognition or message deduplication), not by silencing the loop.
 
-```python
-# In agent_loop.py chat handling
-GATEWAY_HANDLES_CHAT = os.getenv("DISABLE_LOOP_CHAT_RESPONSE", "").lower() in ("1", "true", "yes")
-
-if GATEWAY_HANDLES_CHAT and is_chat_triggered:
-    # Skip chat response — the gateway adapter will handle it
-    pass
-elif response and (is_chat_triggered or os.getenv("MC_ALWAYS_CHAT", "")):
-    _send_chat_chunks(chat_msg)
-```
-
-This is a **message partition** strategy:
-- Gateway adapter handles player-sourced chat (whispers + broadcasts)
+**Message partition strategy (current):**
+- Gateway adapter handles player-sourced chat (whispers + broadcasts) via the Hermes AIAgent
 - Agent loop handles non-player events (quest events, blueprint updates, idle turns, system events)
-
-**Failure mode warning:** If the gateway process crashes while `DISABLE_LOOP_CHAT_RESPONSE` is set, the agent loop stays silenced and players get no responses from either process. Recommended mitigations:
-- Run gateway and agent loop under the same systemd service with `Restart=always`
-- Or add a watchdog: if no gateway heartbeat for 60s, unset `DISABLE_LOOP_CHAT_RESPONSE` and let the loop resume chat handling
-- Or use a systemd dependency so loop auto-restarts if gateway exits
+- Both may respond to chat; duplicates are visible until fixed properly
 
 **Legacy "SAY:" filter REMOVED**
 
@@ -395,7 +361,8 @@ Each adapter connects to a single bot API. The gateway-per-bot is **not overkill
    - Extend `POST /chat/send` with `target` + `whisper` fields
 2. Update `agent_loop.py`:
    - Remove "SAY:" filter entirely
-   - Add `DISABLE_LOOP_CHAT_RESPONSE` env var check
+   - Loop continues handling chat; gateway adapter handles player chat via Hermes AIAgent
+   - Duplicate responses are a known coexistence issue to be solved at root cause
 3. Create `gateway/platforms/daemoncraft.py`:
    - WebSocket connect to `/ws` with array-snapshot filtering
    - Whisper → 1:1 sessions, broadcast → group sessions
@@ -452,7 +419,7 @@ Each adapter connects to a single bot API. The gateway-per-bot is **not overkill
 
 | Concern | Response |
 |---------|----------|
-| "Double-response problem" | **Fixed.** `DISABLE_LOOP_CHAT_RESPONSE` env var disables loop chat response when gateway is active. Message partition: gateway handles player chat, loop handles non-player events. |
+| "Double-response problem" | **Mitigation deferred.** Loop and gateway coexist; duplicates are visible until unified cognition is implemented. No env-var silencing. |
 | "Event shape is array snapshot, not single event" | **Fixed.** Adapter implements high-water timestamp filtering identical to `agent_loop.py:305-315`. Design doc now shows correct schema. |
 | "`is_whisper` vs `whisper`" | **Fixed.** Uses existing `whisper` field from `server.js`. |
 | "`world` field missing" | **Fixed.** `server.js` change scoped: add `bot.game.dimension` to every chat log push. |

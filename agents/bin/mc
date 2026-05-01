@@ -922,7 +922,7 @@ BUILDING:
 
 SOCIAL:
   mc chat "message"        Say something publicly (nearby players hear it)
-  mc whisper PLAYER "msg"  Private /msg — only PLAYER sees it
+  mc whisper PLAYER "msg"  Private /tell — only PLAYER sees it
   mc overhear [count]      See overheard conversations between others
   mc follow PLAYER         Follow a player
 
