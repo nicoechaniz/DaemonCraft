@@ -378,10 +378,10 @@ These are **canonical architecture proposals** reviewed by Claude Code and Opus.
 
 | Mode | Agents | SOUL | Status |
 |------|--------|------|--------|
-| Companion | 1 (Steve) | `SOUL-minecraft.md` | **Active — currently deployed** |
+| Companion | 1 (Steve) | `SOUL-minecraft.md` | **Legacy / test mode** |
 | Civilization | 7 (Marcus, Sarah, Jin, Dave, Lisa, Tommy, Elena) | `SOUL-civilization.md` | **Legacy / test mode** |
 | Landfolk | 5 (Steve, Moss, Reed, Flint, Ember) | `SOUL-landfolk.md` | **Legacy / test mode** |
-| Role Master | 1 (Pamplinas) | `SOUL-rolemaster.md` | **Implemented — branch `pamplinas`, tested live** |
+| Role Master | 1 (Pamplinas) | `SOUL-rolemaster.md` | **Active — currently deployed** |
 | HoloCraft | N/A | `SOUL-holocraft.md` | **Future vision — asset generation pipeline** |
 
 ## Migration Plan
@@ -437,27 +437,27 @@ Key phases:
 
 ## Lattice Task Status
 
-Done: DC-1 through DC-8, DC-10 through DC-28, DC-68 through DC-76  
+Done: DC-1 through DC-8, DC-10 through DC-28, DC-68 through DC-76, DC-95 through DC-110  
 Cancelled: DC-78 (Multiverse Pipeline), DC-80 (Lobby Matrix), DC-82 (Showroom), DC-83 (Relocatable blueprints) — discarded in favor of in-world design (2026-04-28)  
-Backlog: DC-77 (error frequency tracker), DC-79 (blueprint conversion — done but unclosed), DC-81 (blueprint compiler — redefined), DC-84 (regeneration), DC-85 through DC-91 (new in-world blueprint engine)
+Backlog: DC-77 (error frequency tracker), DC-79 (blueprint conversion), DC-81 (blueprint compiler), DC-84 (regeneration), DC-85 through DC-91 (in-world blueprint engine), DC-111 (spike: Hermes /voice mode), DC-112 (epic: Single-LLM Architecture), DC-113 through DC-115 (Single-LLM subtasks), DC-116 (bug: new blueprints not appearing in dashboard)
 
-### Epic: DC-94 — DaemonCraft Hermes Gateway Adapter
+### Epic: DC-105 — Unified Social Routing
 
-**Phase 1: COMPLETE (2026-05-01).** E2E chat routing verified.
-**Phase 2: COMPLETE (2026-05-01).** TTS integration — dashboard voice mode, audio player, deduplication.
+**Status: CODE-COMPLETE, pending end-to-end validation.**
 
 | Task | Status | Notes |
 |------|--------|-------|
-| DC-95 | review | Bot API fixes (/tts/play, /agent/log, world field, /chat/send) |
-| DC-96 | backlog | DISABLE_LOOP_CHAT_RESPONSE rejected by user — coexistence with duplicate responses accepted |
-| DC-97 | review | gateway/platforms/daemoncraft.py adapter created |
-| DC-98 | review | Platform enum, adapter factory, get_connected_platforms |
-| DC-99 | review | End-to-end test passing — chat routes through gateway → profile pamplinas → MiniMax |
-| DC-100 | review | Phase 2: TTS Integration — `send_voice()`, `/tts/audio/:filename`, dashboard toggle + player, dedup, cast voice config |
-| DC-101 | backlog | Phase 3: Full Gateway Integration — setup wizard, status display, cron delivery |
-| DC-102 | backlog | Phase 4: Unified Cognition |
+| DC-109 | done | Phase 0 Prep: interrupt endpoint, plan epoch, BODY.md, DC_LOOP_MODE |
+| DC-110 | done | BODY.md fix: removed mc_chat, terminal/file tools, "ask for goal" |
+| DC-106 | done | Gateway consumes quest_event and blueprint_updated from WebSocket |
+| DC-107 | done | Gateway owns all player-facing chat: bot filtering, @mention, interrupt |
+| DC-108 | done | Loop cleanup: removed KNOWN_BOTS, _post_chat, chat infrastructure |
 
-Branch: `feat/dc-94-gateway` in `~/Projects/hermes-agent` and `~/Projects/DaemonCraft`
+**Architecture change:** Gateway is now the single owner of player-facing chat. The agent_loop is "body-only" — it handles heartbeat, plan execution, quest/blueprint events, but never sends chat to players. Dual-LLM architecture maintained for now. Single-LLM (DC-112) is in backlog.
+
+**Branches:** `feat/dc-105-unified-social-routing` in both `~/Projects/DaemonCraft` and `~/Projects/hermes-agent`.
+
+**Deploy status:** `~/.hermes/hermes-agent` was temporarily switched to `test-dc105` branch for validation. Must be restored to main after testing.
 
 ## Epic: Adventure Management Dashboard (DC-67)
 
@@ -499,14 +499,15 @@ All version-dependent code is annotated with `// MC_VERSION_SENSITIVE: 1.21.11` 
 
 **Phase 1 is complete.** All Hermescraft primitives have been migrated and improved.
 **Rolemaster mode (Pamplinas) is the active cast** — currently deployed and running on the live server.
-**DC-94 Phase 1 (Gateway Adapter) is complete** — E2E chat routing verified, all subtasks in review.
+**DC-105 (Unified Social Routing) is code-complete** — gateway owns all player-facing chat, loop is pure body. Pending end-to-end validation.
+**DC-94 (Gateway Adapter + TTS) is superseded by DC-105** — its commits were merged into the DC-105 branch.
 Companion and Landfolk modes are **legacy test modes** and will be deprecated.
 
 **Agent model:** MiniMax-M2.7 (via minimax provider, anthropic_messages api_mode for prompt caching).
 
-**Active development branch:** `main` (DaemonCraft), `feat/dc-94-gateway` (hermes-agent gateway changes).
+**Active development branch:** `feat/dc-105-unified-social-routing` (both DaemonCraft and hermes-agent).
 
-**Next major direction:** DC-85 through DC-91 (in-world blueprint engine) — build the tooling so Pamplinas can design, implement, and reset adventures interactively inside the main world.
+**Next major direction:** DC-112 (Single-LLM Architecture — gateway owns all cognition, loop becomes heartbeat injector) is in backlog. Also DC-85 through DC-91 (in-world blueprint engine).
 
 ## Known Issues / Next Steps
 
@@ -515,7 +516,7 @@ Companion and Landfolk modes are **legacy test modes** and will be deprecated.
 - **Sensor persistence**: `active_sensors` tracked in `story.json` as `{name, criterion, poll_command}`. `setup_sensors` is idempotent — safe to call on every startup. State survives server/agent restarts.
 - **Vision/screenshots**: ✅ **RESUELTO (DC-57)**. Reemplazamos `mine-photo` (corrupto) por `prismarine-viewer` + `puppeteer` con flag `--use-angle=swiftshader`. WebGL headless funciona. Endpoint `GET /screenshot` y `mc_perceive(type="screenshot")` operativos. `vision` toolset re-habilitado en `rolemaster.yaml`.
 - **Standby mode**: ✅ **IMPLEMENTADO**. `python3 -m agents.daemoncraft pause rolemaster [Pamplinas]` pausa turns autónomos sin desconectar el bot del juego. `resume` vuelve a activar. Controlado via archivo `STANDBY_FILE` + señal `SIGUSR1`.
-- **Pamplinas status**: ✅ **Corriendo en standby** (conectado al servidor, no gasta tokens en turns autónomos).
+- **Pamplinas status**: ⚠️ **NO CORRIENDO** — `daemoncraft-cast.service` está detenido. El código de DC-105 está en la branch `feat/dc-105-unified-social-routing` pero aún no se hizo validación end-to-end.
 - **No truncation policy**: Chat lines > 240 chars son REJECTED con visible error (`CHAT TOO LONG — NOT SENT`). Todos los agentes aprenden brevedad vía prompt (máx 180 chars por línea, eficiencia poética). El `final_response` del modelo va directo al chat; Hermes separa nativamente tool_calls de content.
 - **Verify before narrate**: SOUL rule — Pamplinas debe verificar mundo con `mc_perceive` antes de describir objetos/entidades.
 - **Narrative branching**: SOUL documenta exits success/failure/surrender/chaos por fase. `get_events` tool lee historial reciente.
@@ -662,45 +663,15 @@ Mineflayer-pathfinder v2.4.5 has a bug where `allowSprinting = true` causes the 
 
 ---
 
-## TTS / Voice Integration Project (Active — 2026-04-29)
+## TTS / Voice Integration Project (DC-94 — absorbed into DC-105)
 
-**Epic:** DC-94 — "DaemonCraft Hermes Gateway Adapter — TTS and Dashboard Voice"
-**Status:** Planning complete. Ready to implement Phase 1 (DC-95 → DC-99).
-**Tag:** `playable-2026-04-29` marks the last stable state before gateway work.
+**Status: SUPERCEDED by DC-105.** The gateway adapter, TTS integration, and dashboard voice mode were all merged into the DC-105 branch. The TTS hook and dashboard toggle remain functional. See DC-105 section above for current architecture.
 
-### What Was Done Today
+**Voice mode config:** `~/.hermes/gateway_voice_mode.json` contains `{"daemoncraft:overworld": "all"}` — TTS is active for all messages in the overworld.
 
-1. **Chat directo implemented** — Removed `SAY:` prefix parsing from `agent_loop.py`. Assistant `final_response` goes directly to Minecraft chat. Hermes natively separates `tool_calls` from `content`.
-2. **SOUL-base.md updated** — All agents now have 180-char brevity rule, no `SAY:` mention.
-3. **Blueprints cleaned** — All `SAY: ` prefixes removed from `agents/blueprints/*.json` dialogues.
-4. **Pamplinas prompt updated** — Creative mode rules confirmed, no material checks, teleport fallback.
-5. **Lattice cards created** — Full breakdown of the platform adapter work:
-
-| Card | Title | Phase |
-|------|-------|-------|
-| DC-94 | Epic: TTS and Dashboard Voice | — |
-| DC-95 | Bot API fixes (`/tts/play`, world field, chat/send) | 1 MVP |
-| DC-96 | agent_loop.py coordination (DISABLE_LOOP_CHAT_RESPONSE) | 1 MVP |
-| DC-97 | Create `gateway/platforms/daemoncraft.py` adapter | 1 MVP |
-| DC-98 | Platform enum, factory, `get_connected_platforms()` | 1 MVP |
-| DC-99 | End-to-end test (no double responses) | 1 MVP |
-| DC-100 | TTS Integration — dashboard voice mode, /voice toggle | 2 TTS |
-| DC-101 | Full gateway integration (wizard, status, cron) | 3 Polish |
-| DC-102 | Unified cognition research (shared AIAgent) | 4 Future |
-
-Plan files: `.lattice/plans/DC-94.md` through `.lattice/plans/DC-102.md`
-Design doc: `docs/design/daemoncraft-platform-adapter.md`
-
-### Key Design Decisions (Locked)
-
-- **No SAY: filter** — complete response text goes to chat (already implemented)
-- **Adapter clamps to 500 chars** before sending; server.js handles protocol limit
-- **TTS receives FULL unclamped text** — audio is complete, chat may be truncated
-- **Message partition**: gateway handles player chat, agent_loop handles quest/events/idle
-- **WebSocket array snapshots** with high-water timestamp filtering (same as agent_loop.py)
-
-### Next Step Tomorrow
-
-Start **Phase 1 MVP**: DC-95 (Bot API fixes) → DC-96 (agent_loop coordination) → DC-97 (adapter skeleton) → DC-98 (platform wiring) → DC-99 (e2e test).
-
-Pamplinas is already running cleanly on `playable-2026-04-29` — we branch from there.
+**What survives from DC-94:**
+- Gateway adapter (`gateway/platforms/daemoncraft.py`) — extended in DC-105 with bot filtering and event consumption
+- TTS hook (`send_voice()`) — unchanged
+- Dashboard voice toggle + audio player — unchanged
+- Deduplication logic — unchanged
+- Voice config in `casts/rolemaster.yaml` (edge / es-MX-JorgeNeural)
