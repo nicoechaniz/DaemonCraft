@@ -128,12 +128,19 @@ function saveLocations(locs) {
 const PLAN_FILE = path.join(DATA_DIR, `plan-${(process.env.MC_USERNAME || 'HermesBot').toLowerCase()}.json`);
 
 function loadPlan() {
-  try { return JSON.parse(fs.readFileSync(PLAN_FILE, 'utf8')); }
+  try {
+    const plan = JSON.parse(fs.readFileSync(PLAN_FILE, 'utf8'));
+    // Migrate legacy plans without epoch
+    if (typeof plan.epoch !== 'number') plan.epoch = 0;
+    return plan;
+  }
   catch { return null; }
 }
 function savePlan(plan) {
   const dir = path.dirname(PLAN_FILE);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  plan.epoch = (plan.epoch || 0) + 1;
+  plan.updated_at = new Date().toISOString();
   fs.writeFileSync(PLAN_FILE, JSON.stringify(plan, null, 2));
 }
 
@@ -3111,22 +3118,29 @@ async collect({ block, count = 1 }) {
   // Planning — Persistent goal & task state
   // ═══════════════════════════════════════════════════════════════════
 
-  async plan({ action, goal, tasks, task_id, status, result, attempt }) {
-    const plan = loadPlan() || { goal: '', tasks: [], created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+  async plan({ action, goal, tasks, task_id, status, result, attempt, expected_epoch }) {
+    const plan = loadPlan() || { goal: '', tasks: [], epoch: 0, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+
+    // Helper to validate epoch for mutating actions
+    const validateEpoch = () => {
+      if (expected_epoch !== undefined && expected_epoch !== plan.epoch) {
+        throw new Error(`STALE_PLAN: expected epoch ${expected_epoch} but current is ${plan.epoch}. Refetch and retry.`);
+      }
+    };
 
     if (action === 'set_goal') {
       if (!goal) throw new Error('goal is required for set_goal');
+      validateEpoch();
       plan.goal = goal;
       plan.tasks = tasks || [];
       plan.created_at = new Date().toISOString();
-      plan.updated_at = new Date().toISOString();
       savePlan(plan);
       broadcastDashboard('plan', plan);
-      return { result: `Goal set: ${goal} (${plan.tasks.length} tasks)` };
+      return { result: `Goal set: ${goal} (${plan.tasks.length} tasks)`, epoch: plan.epoch };
     }
 
     if (action === 'get_plan') {
-      if (!plan.goal) return { result: 'No active goal. Use set_goal first.' };
+      if (!plan.goal) return { result: 'No active goal. Use set_goal first.', epoch: plan.epoch };
       const done = plan.tasks.filter(t => t.status === 'done').length;
       const total = plan.tasks.length;
       const active = plan.tasks.find(t => t.status === 'in_progress');
@@ -3140,47 +3154,48 @@ async collect({ block, count = 1 }) {
           return `  [${sym}] ${i + 1}. ${t.description}${att}`;
         }),
       ];
-      return { result: lines.join('\n'), plan };
+      return { result: lines.join('\n'), plan, epoch: plan.epoch };
     }
 
     if (action === 'update_task') {
       if (task_id == null) throw new Error('task_id is required for update_task');
+      validateEpoch();
       const idx = parseInt(task_id);
       if (idx < 0 || idx >= plan.tasks.length) throw new Error(`Invalid task_id ${idx}`);
       if (status) plan.tasks[idx].status = status;
       if (result !== undefined) plan.tasks[idx].result = result;
       if (attempt !== undefined) plan.tasks[idx].attempts = (plan.tasks[idx].attempts || 0) + 1;
-      plan.updated_at = new Date().toISOString();
       savePlan(plan);
       broadcastDashboard('plan', plan);
-      return { result: `Updated task ${idx + 1}: ${plan.tasks[idx].description} → ${status || 'updated'}` };
+      return { result: `Updated task ${idx + 1}: ${plan.tasks[idx].description} → ${status || 'updated'}`, epoch: plan.epoch };
     }
 
     if (action === 'add_task') {
       if (!goal) throw new Error('goal (task description) is required for add_task');
+      validateEpoch();
       plan.tasks.push({ description: goal, status: status || 'pending', attempts: 0 });
-      plan.updated_at = new Date().toISOString();
       savePlan(plan);
       broadcastDashboard('plan', plan);
-      return { result: `Added task: ${goal}` };
+      return { result: `Added task: ${goal}`, epoch: plan.epoch };
     }
 
     if (action === 'remove_task') {
       if (task_id == null) throw new Error('task_id is required for remove_task');
+      validateEpoch();
       const idx = parseInt(task_id);
       if (idx < 0 || idx >= plan.tasks.length) throw new Error(`Invalid task_id ${idx}`);
       const removed = plan.tasks.splice(idx, 1)[0];
-      plan.updated_at = new Date().toISOString();
       savePlan(plan);
       broadcastDashboard('plan', plan);
-      return { result: `Removed task: ${removed.description}` };
+      return { result: `Removed task: ${removed.description}`, epoch: plan.epoch };
     }
 
     if (action === 'clear_goal') {
-      const emptyPlan = { goal: '', tasks: [], created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+      validateEpoch();
+      const emptyPlan = { goal: '', tasks: [], epoch: plan.epoch + 1, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
       savePlan(emptyPlan);
       broadcastDashboard('plan', emptyPlan);
-      return { result: 'Goal cleared.' };
+      return { result: 'Goal cleared.', epoch: emptyPlan.epoch };
     }
 
     throw new Error(`Unknown plan action: ${action}`);
@@ -3545,6 +3560,25 @@ const httpServer = http.createServer(async (req, res) => {
         // Broadcast to all WebSocket clients so agent_loop can abort its LLM turn
         broadcastDashboard('interrupt', { reason: body?.reason || 'gateway_request', time: Date.now() });
         return respond(res, 200, { ok: true, result: 'Agent interrupted.', state: briefState() });
+      }
+
+      // Direct plan mutation — POST /plan/update
+      // Allows gateway (or any authorized client) to mutate the plan with epoch validation.
+      if (path === '/plan/update') {
+        const { action, goal, tasks, task_id, status, result, attempt, expected_epoch } = body || {};
+        if (!action) {
+          return respond(res, 400, { ok: false, error: "Missing 'action' field" });
+        }
+        try {
+          const result = await ACTIONS.plan({ action, goal, tasks, task_id, status, result, attempt, expected_epoch });
+          return respond(res, 200, { ok: true, ...result });
+        } catch (err) {
+          if (err.message?.startsWith('STALE_PLAN')) {
+            const current = loadPlan();
+            return respond(res, 409, { ok: false, error: err.message, epoch: current?.epoch ?? 0 });
+          }
+          return respond(res, 400, { ok: false, error: err.message });
+        }
       }
 
       // Agent turn log — POST /agent/log
