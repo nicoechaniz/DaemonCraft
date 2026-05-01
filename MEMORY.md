@@ -549,7 +549,7 @@ Backlog: DC-77 (error frequency tracker), DC-79 (blueprint conversion), DC-81 (b
 | DC-110 | done | BODY.md fix: removed mc_chat, terminal/file tools, "ask for goal" |
 | DC-106 | done | Gateway consumes quest_event and blueprint_updated from WebSocket |
 | DC-107 | done | Gateway owns all player-facing chat: bot filtering, @mention, interrupt |
-| DC-108 | done | Loop cleanup: removed KNOWN_BOTS, _post_chat, chat infrastructure |
+| DC-108 | done | Loop Embodiment Cleanup: remove chat, fake injection |
 
 **Architecture change:** Gateway is now the single owner of player-facing chat. The agent_loop is "body-only" — it handles heartbeat, plan execution, quest/blueprint events, but never sends chat to players. Dual-LLM architecture maintained for now. Single-LLM (DC-112) is in backlog.
 
