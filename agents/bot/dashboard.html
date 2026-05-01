@@ -1276,6 +1276,18 @@ function toggleVoice() {
   voiceEnabled = !voiceEnabled;
   saveVoiceState();
   updateVoiceButton();
+  if (voiceEnabled) {
+    // Unlock browser audio context on user gesture so autoplay works
+    const player = document.getElementById('tts-player');
+    if (player) {
+      player.volume = 0;
+      player.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+      player.play().then(() => {
+        player.pause();
+        player.volume = 1.0;
+      }).catch(() => {});
+    }
+  }
 }
 
 function updateVoiceButton() {
@@ -1320,7 +1332,15 @@ function playTtsAudio(url) {
   if (!player) return;
   player.src = url;
   player.volume = 1.0;
-  player.play().catch(e => console.warn('[dashboard] Audio play failed:', e));
+  player.play().catch(e => {
+    console.warn('[dashboard] Audio play failed:', e);
+    const status = document.getElementById('conn-status');
+    if (status && e.name === 'NotAllowedError') {
+      status.textContent = '🔇 Click Voice On to enable audio';
+      status.className = 'disconnected';
+      setTimeout(() => { status.textContent = 'Live'; status.className = ''; }, 4000);
+    }
+  });
 }
 
 loadVoiceState();
