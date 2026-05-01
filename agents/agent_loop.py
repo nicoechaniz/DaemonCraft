@@ -318,54 +318,15 @@ def _ws_on_message(ws, message):
         data = json.loads(message)
         msg_type = data.get("type")
         if msg_type == "chat":
+            # Gateway now owns all chat handling. Loop ignores chat messages
+            # but updates last_chat_time for heartbeat timing awareness.
             msgs = data.get("data", [])
-            new_msgs = [
-                m for m in msgs
-                if m.get("time", 0) > last_chat_time
-                and m.get("from", "").lower() != BOT_USERNAME
-            ]
-            if new_msgs:
-                # Classify messages: urgent (@mention from human) vs normal (everything else)
-                # Also filter: bot messages without @mention are silently dropped entirely.
-                urgent_msgs = []
-                accepted_msgs = []
-                for m in new_msgs:
-                    from_user = m.get("from", "").lower()
-                    msg_text = m.get("message", "")
-                    is_bot = from_user in KNOWN_BOTS
-                    mentions_bot = f"@{BOT_USERNAME.lower()}" in msg_text.lower()
-                    
-                    # Bots only get a response if they @mention us. Humans always get a response.
-                    if is_bot and not mentions_bot:
-                        continue  # Silently drop bot spam that doesn't mention us
-                    
-                    accepted_msgs.append(m)
-                    
-                    # Only humans can interrupt with @mention. Bots never interrupt,
-                    # even if they @mention each other.
-                    if mentions_bot and not is_bot:
-                        urgent_msgs.append(m)
-
-                with message_lock:
-                    pending_messages.extend(accepted_msgs)
-                    last_chat_time = max(m.get("time", 0) for m in new_msgs)
-                chat_event.set()
-
-                # Interrupt ONLY for urgent human @mentions
-                if urgent_msgs and turn_in_progress.is_set() and current_agent is not None:
-                    try:
-                        cancel_event.set()
-                        current_agent._interrupt_requested = True
-                        senders = ", ".join({m.get("from", "Player") for m in urgent_msgs})
-                        print(f"[ws] Urgent @mention from {senders} — interrupting to respond now", flush=True)
-                    except Exception:
-                        pass
-                elif accepted_msgs:
-                    senders = ", ".join({m.get("from", "Player") for m in accepted_msgs})
-                    print(f"[ws] Chat from {senders} queued — will respond after current action", flush=True)
-                elif new_msgs:
-                    # All messages were bot spam without @mention
-                    print(f"[ws] Ignored {len(new_msgs)} bot message(s) without @mention", flush=True)
+            if msgs:
+                new_times = [m.get("time", 0) for m in msgs if m.get("time", 0) > last_chat_time]
+                if new_times:
+                    with message_lock:
+                        last_chat_time = max(new_times)
+            pass
         elif msg_type == "blueprint_updated":
             bp_name = data.get("data", {}).get("name", "unknown")
             with message_lock:
@@ -952,15 +913,15 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 30):
                     msgs = list(pending_messages)
                     pending_messages.clear()
                 if msgs:
-                    senders = ", ".join({m.get("from", "Player") for m in msgs})
-                    print(f"[loop] Chat trigger from {senders}", flush=True)
+                    senders = ", ".join({m.get("from", "System") for m in msgs})
+                    print(f"[loop] Event trigger from {senders}", flush=True)
                     with countdown_lock:
                         next_turn_time = None
 
-            is_chat_triggered = bool(msgs)
+            is_event_triggered = bool(msgs)
 
-            # Standby mode: skip autonomous turns, but still respond to chat
-            if _is_standby() and not is_chat_triggered:
+            # Standby mode: skip autonomous turns, but still respond to system events
+            if _is_standby() and not is_event_triggered:
                 print("[loop] Standby mode — skipping autonomous turn", flush=True)
                 send_heartbeat(next_turn_in=interval, turn_in_progress=False)
                 continue
@@ -969,16 +930,14 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 30):
             plan_context = format_plan(plan)
 
             if msgs:
-                chat_lines = "\n".join([
-                    f"- {m.get('from', 'Player')}: {m.get('message', '')}"
+                # Only quest/blueprint events reach here (chat is handled by gateway)
+                event_lines = "\n".join([
+                    f"- {m.get('from', 'System')}: {m.get('message', '')}"
                     for m in msgs
                 ])
                 prompt = (
-                    f"New chat messages — respond immediately:\n{chat_lines}\n\n"
-                    f"If this is a new task or request from the player, handle it right away. "
-                    f"Remember: if the player gives you a NEW task that replaces your current work, "
-                    f"FIRST call mc_plan(action='clear_goal') to wipe the old plan, "
-                    f"THEN create a new plan with mc_plan(action='set_goal', ...)."
+                    f"System events received:\n{event_lines}\n\n"
+                    f"Process these events and take appropriate action via tool calls."
                 )
             elif turn_count == 1:
                 prompt = initial_prompt
@@ -1038,16 +997,10 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 30):
                     print("[loop] Budget exhausted — tools executed but summary failed. Will retry next turn.", flush=True)
                     conversation_history = []
                 else:
-                    if response and (is_chat_triggered or os.getenv("MC_ALWAYS_CHAT", "").lower() in ("1", "true", "yes")):
-                        # If the agent used mc_chat this turn, it already spoke — don't duplicate.
-                        # Otherwise, the final_response IS the chat output.
-                        chat_msg = response.strip()
-                        if (
-                            chat_msg
-                            and not chat_msg.startswith("Operation interrupted")
-                            and not mc_chat_used
-                        ):
-                            _post_chat(chat_msg)
+                    # Loop no longer posts chat — gateway owns all player-facing output.
+                    # mc_chat is suppressed by DC_LOOP_MODE=1; any final_response here
+                    # is body-internal monologue, not social chat.
+                    pass
 
                 if response and not is_budget_error:
                     print(f"[loop] Response: {response[:200]}", flush=True)
