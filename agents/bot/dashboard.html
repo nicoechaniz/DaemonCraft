@@ -326,6 +326,9 @@
       <button onclick="collapseAll()">Collapse All</button>
       <button onclick="expandAll()">Expand All</button>
     </div>
+    <button id="voice-toggle" onclick="toggleVoice()" title="Toggle voice playback" style="background:#21262d;border:1px solid #30363d;color:#c9d1d9;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:0.75rem;display:flex;align-items:center;gap:4px">
+      🔇 Voice Off
+    </button>
     <span id="conn-status">Connecting...</span>
   </div>
 </header>
@@ -581,6 +584,7 @@ function handleMessage(msg) {
     case 'task': renderTask(msg.data); break;
     case 'agent': renderAgent(msg.data); break;
     case 'heartbeat': renderHeartbeat(msg.data); break;
+    case 'tts_play': handleTtsPlay(msg.data); break;
   }
 }
 
@@ -1251,11 +1255,82 @@ function renderBlueprintHtml(data) {
   return html;
 }
 
+// ── Voice Mode / TTS Player ───────────────────────────────────────────────────
+let voiceEnabled = false;
+let lastTtsTime = 0;
+let ttsDebounceTimer = null;
+let ttsQueue = [];
+
+function loadVoiceState() {
+  try {
+    voiceEnabled = localStorage.getItem('dc_voice_enabled') === 'true';
+  } catch {}
+  updateVoiceButton();
+}
+
+function saveVoiceState() {
+  try { localStorage.setItem('dc_voice_enabled', voiceEnabled ? 'true' : 'false'); } catch {}
+}
+
+function toggleVoice() {
+  voiceEnabled = !voiceEnabled;
+  saveVoiceState();
+  updateVoiceButton();
+}
+
+function updateVoiceButton() {
+  const btn = document.getElementById('voice-toggle');
+  if (!btn) return;
+  if (voiceEnabled) {
+    btn.innerHTML = '🔊 Voice On';
+    btn.style.borderColor = '#238636';
+    btn.style.color = '#3fb950';
+  } else {
+    btn.innerHTML = '🔇 Voice Off';
+    btn.style.borderColor = '#30363d';
+    btn.style.color = '#c9d1d9';
+  }
+}
+
+function handleTtsPlay(data) {
+  if (!voiceEnabled || !data || !data.audio_url) return;
+
+  const now = Date.now();
+  // Deduplication: queue incoming; if 3+ arrive within 2s, skip the burst
+  ttsQueue.push({ url: data.audio_url, time: now });
+  ttsQueue = ttsQueue.filter(q => now - q.time < 2000);
+
+  if (ttsQueue.length >= 3) {
+    console.log('[dashboard] TTS burst detected (' + ttsQueue.length + ' msgs), skipping audio spam');
+    return;
+  }
+
+  // Debounce: if another message arrives within 800ms, cancel previous playback
+  if (ttsDebounceTimer) {
+    clearTimeout(ttsDebounceTimer);
+  }
+  ttsDebounceTimer = setTimeout(() => {
+    playTtsAudio(data.audio_url);
+    ttsDebounceTimer = null;
+  }, 800);
+}
+
+function playTtsAudio(url) {
+  const player = document.getElementById('tts-player');
+  if (!player) return;
+  player.src = url;
+  player.volume = 1.0;
+  player.play().catch(e => console.warn('[dashboard] Audio play failed:', e));
+}
+
+loadVoiceState();
+
 initPanelToggles();
 loadPanelState();
 fetchBlueprints();
 
 connect();
 </script>
+<audio id="tts-player" preload="none" style="display:none"></audio>
 </body>
 </html>

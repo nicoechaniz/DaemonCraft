@@ -30,6 +30,17 @@ agents:
     immortal: true          # Daemon Guardian enforces creative + resistance/fire_resist/water_breathing every 5s
     max_chat_chars: 480
 
+# Voice configuration for TTS output
+# The gateway reads these values and passes them to the TTS tool when
+# generating audio for dashboard playback.
+# Supported providers: edge (free), openai, elevenlabs, minimax, mistral
+voice:
+  tts_provider: edge
+  voice_id: es-ES-AlvaroNeural        # Warm, mature Spanish male voice
+  # Fallback / future options:
+  # voice_style: warm
+  # speed: 1.0
+
 # Narrative timing configuration
 # All story phases, triggers, and deadlines are expressed in Minecraft days.
 timeline:
