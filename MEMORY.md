@@ -550,8 +550,8 @@ Backlog: DC-77 (error frequency tracker), DC-79 (blueprint conversion), DC-81 (b
 | DC-106 | done | Gateway consumes quest_event and blueprint_updated from WebSocket |
 | DC-107 | done | Gateway owns all player-facing chat: bot filtering, @mention, interrupt |
 | DC-108 | done | Loop Embodiment Cleanup: remove chat, fake injection |
-
-**Architecture change:** Gateway is now the single owner of player-facing chat. The agent_loop is "body-only" — it handles heartbeat, plan execution, quest/blueprint events, but never sends chat to players. Dual-LLM architecture maintained for now. Single-LLM (DC-112) is in backlog.
+| DC-111 | done | Gateway tool discovery: added 'minecraft' to CONFIGURABLE_TOOLSETS, fixed check_minecraft_available |
+| DC-112 | backlog | Single-LLM architecture (remove dual-LLM) |
 
 **Branches:** `feat/dc-105-unified-social-routing` in both `~/Projects/DaemonCraft` and `~/Projects/hermes-agent`.
 
