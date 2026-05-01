@@ -748,7 +748,7 @@ function byteCap(s) {
   return cut;
 }
 
-async function sendToMcChat(text, { source = "auto" } = {}) {
+async function sendToMcChat(text, { source = "auto", target = null } = {}) {
   const { fragments, truncated } = chunkForMc(text);
   if (fragments.length === 0) {
     return { ok: true, fragments_sent: 0, fragments_dropped: 0, reason: "empty" };
@@ -767,7 +767,8 @@ async function sendToMcChat(text, { source = "auto" } = {}) {
     }
     try {
       const b = ensureBot();
-      b.chat(frag);
+      const payload = target ? `/tell ${target} ${frag}` : frag;
+      b.chat(payload);
     } catch (e) {
       log(`[chat] b.chat() threw: ${e.message}`);
       dropped++;
@@ -775,7 +776,19 @@ async function sendToMcChat(text, { source = "auto" } = {}) {
     }
     recentFragments.push(now);
     sent++;
-    chatLog.push({ time: Date.now(), from: config.mc.username, message: frag, self: true });
+    const entry = {
+      time: Date.now(),
+      from: config.mc.username,
+      message: frag,
+      self: true,
+      world: b?.game?.dimension || 'unknown',
+      uuid: b?.player?.uuid || b?.uuid || null,
+    };
+    if (target) {
+      entry.to = target;
+      entry.whisper = true;
+    }
+    chatLog.push(entry);
     if (chatLog.length > MAX_LOG) chatLog.shift();
     broadcastDashboard('chat', chatLog.slice(-30));
     if (sent < fragments.length) await sleep(MC_FRAGMENT_DELAY_MS);
@@ -3612,24 +3625,24 @@ const httpServer = http.createServer(async (req, res) => {
             b.chat(tellrawCmd);
             chatFrom = sender;
           }
-          chatLog.push({ time: Date.now(), from: chatFrom, message, self: chatFrom.toLowerCase() === botName.toLowerCase() });
+          chatLog.push({
+            time: Date.now(),
+            from: chatFrom,
+            message,
+            self: chatFrom.toLowerCase() === botName.toLowerCase(),
+            world: b?.game?.dimension || 'unknown',
+            uuid: b?.player?.uuid || b?.uuid || null,
+          });
           if (chatLog.length > MAX_LOG) chatLog.shift();
           broadcastDashboard('chat', chatLog.slice(-30));
           return respond(res, 200, { ok: true, result: 'Message sent.', from: chatFrom });
         }
 
-        // Gateway-routed messaging: whisper or broadcast
+        // Gateway-routed messaging: directed whisper or broadcast
         if (target && typeof target === 'string' && target.toLowerCase() !== 'broadcast') {
-          // Directed message (whisper or direct chat)
-          if (whisper) {
-            b.chat(`/tell ${target} ${message}`);
-          } else {
-            b.chat(`/tell ${target} ${message}`);
-          }
-          chatLog.push({ time: Date.now(), from: botName, message, self: true, whisper, to: target });
-          if (chatLog.length > MAX_LOG) chatLog.shift();
-          broadcastDashboard('chat', chatLog.slice(-30));
-          return respond(res, 200, { ok: true, result: 'Message sent.', target, whisper });
+          // Directed messages are always delivered as whispers
+          const result = await sendToMcChat(message, { source: "http", target });
+          return respond(res, 200, { ...result, target });
         }
 
         // Default: broadcast / public chat
