@@ -457,7 +457,23 @@ Backlog: DC-77 (error frequency tracker), DC-79 (blueprint conversion), DC-81 (b
 
 **Branches:** `feat/dc-105-unified-social-routing` in both `~/Projects/DaemonCraft` and `~/Projects/hermes-agent`.
 
-**Deploy status:** `~/.hermes/hermes-agent` was temporarily switched to `test-dc105` branch for validation. Must be restored to main after testing.
+**Deploy status:** Deploy was temporarily modified during testing (toolset added, SyntaxError fixed). Workspace commits capture the fixes. Deploy should be restored to main + `hermes update` after merge.
+
+**Validation (2026-05-01):** ✅ **PASSED.** End-to-end test confirmed:
+- Gateway receives player chat via WebSocket
+- Gateway classifies `@mention` as urgent, interrupts loop via `/agent/interrupt`
+- Gateway AIAgent generates response using profile `pamplinas`
+- Gateway sends response to Minecraft chat via `/chat/send`
+- Agent_loop stays in body lane (heartbeat/quest/blueprint), does not respond to chat
+- Tools are available (mc_perceive, mc_plan, etc.) after fixing toolset + SyntaxError
+
+**Bugs found during validation:**
+1. `toolset 'minecraft'` missing from `toolsets.py` — `enabled_toolsets=['minecraft']` resolved to `[]`
+2. SyntaxError in `minecraft_tools.py`: `registry.register(` wrapping an `if/else` block
+3. Gateway rejected all DaemonCraft users — needed `DAEMONCRAFT_ALLOW_ALL_USERS=true`
+4. `sed -i` on symlink broke it (created a regular file copy in deploy)
+
+All bugs fixed and committed.
 
 ## Epic: Adventure Management Dashboard (DC-67)
 
