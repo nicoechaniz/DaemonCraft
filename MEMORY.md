@@ -497,12 +497,24 @@ Key phases:
 7. ✓ Integration test: spawn Landfolk cast
 8. ✓ Deploy Landfolk mode on live server
 
-## Completed This Session
+## Completed This Session (2026-05-02)
+
+- **DC-112 Single-LLM Architecture**: Implemented and tested. Gateway owns all cognition; agent_loop is heartbeat injector only.
+- **Two-level event system**: Context-only heartbeats (silent injection) vs wake-up events (forced tool_choice=required).
+- **mc_no_op tool**: Added for silent reactions when wake-up event requires tool call but no action is needed.
+- **tool_choice propagation**: Fixed NameError in gateway/run.py — _run_agent now accepts tool_choice parameter.
+- **DaemonCraft adapter wiring**: Restored Platform.DAEMONCRAFT in _create_adapter, auth maps, and home channel skip (was lost in rebase).
+- **Sandbox testing**: Validated end-to-end — heartbeats silent, chat responses working, wake-up events triggering agent turns.
+- **Branch consolidation**: DaemonCraft feat/dc-105 merged to main. Hermes-agent changes consolidated in feat/dc-112-daemoncraft-gateway rebased onto nousmain, merged to main, pushed to origin.
+- **Dashboard regression identified**: DC-123 created — BOT MIND, PLAN & GOALS, BACKGROUND TASK empty after DC-112. TTS also affected.
 
 ## DaemonCraft Architectural Principles
 
+**Gateway owns ALL cognition (DC-112):**
+The Hermes gateway is the single AIAgent session for DaemonCraft. The agent_loop's sole purpose is to poll sensors every 30s and inject heartbeat context into the gateway via the bot server's WebSocket. This eliminates the dual-LLM split-brain and makes the agent truly grounded (one memory, one plan, one mind).
+
 **Gateway owns reactive/social, agent_loop owns proactive tick:**
-The Hermes gateway should own ALL reactive/social responsibilities (chat, TTS, event narration, plan mutations from player input). The agent_loop should be reduced to its unique purpose: the proactive tick loop (heartbeat, sensor polling, quest trigger evaluation, physical tool execution) that Hermes lacks natively. This is a durable design preference for all future DaemonCraft work.
+The Hermes gateway handles ALL reactive responsibilities (chat, TTS, event narration, plan mutations from player input). The agent_loop handles the proactive tick loop (heartbeat, sensor polling, quest trigger evaluation) that Hermes lacks natively. This is now fully implemented via DC-112.
 
 **Provider changes require explicit user confirmation:**
 NEVER change LLM provider or model configurations without explicit user confirmation. Providers are paid API services. The user explicitly pays for them and has cost, privacy, and availability preferences that the agent does not have visibility into. The agent has ZERO authority to choose, switch, or default to any provider on the user's behalf. Always ask before touching any provider setting.
@@ -543,13 +555,13 @@ NEVER change LLM provider or model configurations without explicit user confirma
 
 ## Lattice Task Status
 
-Done: DC-1 through DC-8, DC-10 through DC-28, DC-68 through DC-76, DC-95 through DC-110  
+Done: DC-1 through DC-8, DC-10 through DC-28, DC-68 through DC-76, DC-95 through DC-112, DC-118 through DC-122  
 Cancelled: DC-78 (Multiverse Pipeline), DC-80 (Lobby Matrix), DC-82 (Showroom), DC-83 (Relocatable blueprints) — discarded in favor of in-world design (2026-04-28)  
-Backlog: DC-77 (error frequency tracker), DC-79 (blueprint conversion), DC-81 (blueprint compiler), DC-84 (regeneration), DC-85 through DC-91 (in-world blueprint engine), DC-111 (spike: Hermes /voice mode), DC-112 (epic: Single-LLM Architecture), DC-113 through DC-115 (Single-LLM subtasks), DC-116 (bug: new blueprints not appearing in dashboard)
+Backlog: DC-77 (error frequency tracker), DC-79 (blueprint conversion), DC-81 (blueprint compiler), DC-84 (regeneration), DC-85 through DC-91 (in-world blueprint engine), DC-111 (spike: Hermes /voice mode), DC-123 (dashboard/TTS regression after DC-112)
 
 ### Epic: DC-105 — Unified Social Routing
 
-**Status: ACTIVE TESTING — Deploy temporarily has dc-105 merged for end-to-end validation.**
+**Status: DONE — merged to main (2026-05-02).**
 
 | Task | Status | Notes |
 |------|--------|-------|
@@ -559,54 +571,44 @@ Backlog: DC-77 (error frequency tracker), DC-79 (blueprint conversion), DC-81 (b
 | DC-107 | done | Gateway owns all player-facing chat: bot filtering, @mention, interrupt |
 | DC-108 | done | Loop Embodiment Cleanup: remove chat, fake injection |
 | DC-111 | done | Gateway tool discovery: added 'minecraft' to CONFIGURABLE_TOOLSETS, fixed check_minecraft_available |
-| DC-112 | backlog | Single-LLM architecture (remove dual-LLM) |
+| DC-112 | done | Single-LLM architecture (gateway owns cognition, loop = heartbeat injector) |
 
-**Branches:** `feat/dc-105-unified-social-routing` in both `~/Projects/DaemonCraft` and `~/Projects/hermes-agent`.
+**Merged to main (2026-05-02):** `feat/dc-105-unified-social-routing` → `main`
 
-**Deploy status (2026-05-01):**
-- Deploy (`~/.hermes/hermes-agent`) has `feat/dc-105` temporarily merged for testing
-- `hermes-gateway.service` corrected to point to deploy (was accidentally pointing to workspace)
-- `~/.hermes/config.yaml` has `daemoncraft` in `platform_toolsets` with `minecraft`, `messaging`, `memory`, `vision`, `tts`
-- Workspace (`~/Projects/hermes-agent`) is clean on `main`
-- **When done testing:** restore deploy with `cd ~/.hermes/hermes-agent && git checkout main && git reset --hard origin/main && systemctl --user restart hermes-gateway.service`
+### Epic: DC-112 — Single-LLM Architecture
 
-**Validation (2026-05-01):**
-- ✅ Gateway receives player chat via WebSocket
-- ✅ Gateway classifies `@mention` as urgent, interrupts loop via `/agent/interrupt`
-- ✅ Gateway AIAgent generates response using profile `pamplinas`
-- ✅ Gateway sends response to Minecraft chat via `/chat/send`
-- ✅ TTS works (voice plays through dashboard)
-- ✅ Agent_loop stays in body lane (heartbeat/quest/blueprint), does not respond to chat
-- ✅ Tools are available (mc_perceive, mc_plan, etc.) after fixing toolset + SyntaxError
-- ❌ **Action execution not yet validated** — bot appears to plan actions but physical execution (follow, move, mine) is not working correctly. Needs debug.
+**Status: DONE — merged to main via `feat/dc-112-daemoncraft-gateway` (2026-05-02).**
 
-**Bugs found during validation:**
-1. `toolset 'minecraft'` missing from `toolsets.py` — `enabled_toolsets=['minecraft']` resolved to `[]`
-2. SyntaxError in `minecraft_tools.py`: `registry.register(` wrapping an `if/else` block
-3. Gateway rejected all DaemonCraft users — needed `DAEMONCRAFT_ALLOW_ALL_USERS=true`
-4. `sed -i` on symlink broke it (created a regular file copy in deploy)
-5. `hermes-gateway.service` accidentally pointed to workspace instead of deploy
-6. `platform_toolsets` missing `daemoncraft` entry — gateway had no mc_* tools
+| Task | Status | Notes |
+|------|--------|-------|
+| DC-118 | done | Define wake_up vs context event classification in heartbeat data |
+| DC-119 | done | Add mc_no_op tool for silent wake-up reactions |
+| DC-120 | done | Propagate tool_choice through AIAgent → transport → API |
+| DC-121 | done | Implement synthetic tool call injection (assistant + tool messages) |
+| DC-122 | done | End-to-end validation: heartbeats silent, chat works, wake-ups trigger turns |
 
-All bugs fixed and committed.
+**Files changed in hermes-agent:**
+- `gateway/platforms/daemoncraft.py` (new — heartbeat handler, two-level event system)
+- `gateway/platforms/base.py` (tool_choice field in MessageEvent)
+- `gateway/run.py` (propagate tool_choice, restore DaemonCraft wiring)
+- `agent/transports/chat_completions.py` (dynamic tool_choice in API payload)
+- `run_agent.py` (accept and propagate tool_choice parameter)
 
-## Epic: Adventure Management Dashboard (DC-67)
+**Branches:**
+- DaemonCraft: `feat/dc-105-unified-social-routing` → `main` (merged 2026-05-02)
+- hermes-agent: `feat/dc-112-daemoncraft-gateway` → `main` (merged 2026-05-02, pushed to origin)
 
-**Status: COMPLETE.** All dashboard tasks (DC-68 through DC-76) are done and deployed on branch `pamplinas`.
+**Deploy status (2026-05-02):**
+- Workspace (`~/Projects/hermes-agent`): clean on `main`, 4 commits ahead of origin/main
+- Deploy (`~/.hermes/hermes-agent`): sandbox mode ended — will update via `hermes update`
+- `hermes-gateway.service` uses deploy path (correct)
+- `daemoncraft-cast.service` running with DC-112 agent_loop (heartbeat injector only)
 
-### Dashboard Features
-- **Collapsible panels** with localStorage persistence (DC-68)
-- **Blueprint browser** — `GET /blueprints` lists all JSON files with metadata (DC-69)
-- **Full-width Adventures panel** with blueprint list + detail view (DC-70)
-- **Save endpoint** — `POST /blueprints/:name` with JSON validation and atomic write (DC-71)
-- **Editable narrative fields** — metadata, setting, phase names/descriptions/objectives/chat, entity names/locations, object lore (DC-72)
-- **Shared validation registry** — `agents/data/minecraft-registry.json` generated from `minecraft-data` (PrismarineJS). Single source of truth for biomes (65), entities (157), blocks (1166), items (1505), effects (40), scoreboard criteria (20). Generator: `scripts/generate-minecraft-registry.js` (DC-73)
-- **Hard fields editing** — biome `<select>` grouped by dimension, entity `<select>` grouped by category, item `<input>` + `<datalist>`, criterion `<select>`, commands as `<textarea>` (DC-74)
-- **Blueprint reload on demand** — save in dashboard broadcasts `blueprint_updated` WS message; agent_loop.py injects simulated chat message prompting Pamplinas to reload via `mc_story(action='load_blueprint', name=...)` (DC-75)
-- **On-demand registry lookup tool** — `mc_registry(category, filter?, limit?, type_filter?, dimension?)` lets Pamplinas query canonical lists without context bloat (DC-76)
+### Epic: Adventure Management Dashboard (DC-67)
 
-### MC_VERSION_SENSITIVE Comments
-All version-dependent code is annotated with `// MC_VERSION_SENSITIVE: 1.21.11` or `// MC_VERSION: 1.21.11` for grep-friendly version bumps.
+**Status: COMPLETE (DC-68–DC-76), but REGRESSED by DC-112.**
+Dashboard panels BOT MIND, PLAN & GOALS, BACKGROUND TASK are empty because agent_loop no longer sends turns to `/agent/log`. ACTION LOG still works (bot server). TTS relay also affected.
+**Tracking:** DC-123 (backlog) — restore dashboard visualization and TTS relay.
 
 ## Multiverse Adventure Pipeline (Phase 1.6) — DISCARDED
 
@@ -630,15 +632,16 @@ All version-dependent code is annotated with `// MC_VERSION_SENSITIVE: 1.21.11` 
 
 **Phase 1 is complete.** All Hermescraft primitives have been migrated and improved.
 **Rolemaster mode (Pamplinas) is the active cast** — currently deployed and running on the live server.
-**DC-105 (Unified Social Routing) is code-complete** — gateway owns all player-facing chat, loop is pure body. Pending end-to-end validation.
-**DC-94 (Gateway Adapter + TTS) is superseded by DC-105** — its commits were merged into the DC-105 branch.
+**DC-105 (Unified Social Routing) is DONE** — merged to main (2026-05-02).
+**DC-112 (Single-LLM Architecture) is DONE** — gateway owns all cognition, loop is heartbeat injector. Merged to main via `feat/dc-112-daemoncraft-gateway` (2026-05-02).
+**DC-123 (Dashboard/TTS regression) is BACKLOG** — dashboard panels empty after DC-112, TTS relay broken.
 Companion and Landfolk modes are **legacy test modes** and will be deprecated.
 
 **Agent model:** MiniMax-M2.7 (via minimax provider, anthropic_messages api_mode for prompt caching).
 
-**Active development branch:** `feat/dc-105-unified-social-routing` (both DaemonCraft and hermes-agent).
+**Active development:** No active feature branch. Both repos on `main`. Next session will tackle DC-123 (dashboard restoration).
 
-**Next major direction:** DC-112 (Single-LLM Architecture — gateway owns all cognition, loop becomes heartbeat injector) is in backlog. Also DC-85 through DC-91 (in-world blueprint engine).
+**Sandbox mode:** ENDED (2026-05-02). Deploy will be updated via `hermes update` instead of manual file copying.
 
 ## Known Issues / Next Steps
 
