@@ -3631,7 +3631,7 @@ const httpServer = http.createServer(async (req, res) => {
         const ctx = body || {};
         const payload = {
           timestamp: Date.now(),
-          bot_username: botUsername,
+          bot_username: config.mc.username,
           status: ctx.status || null,
           nearby: ctx.nearby || null,
           inventory: ctx.inventory || null,
