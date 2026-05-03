@@ -84,7 +84,9 @@ import {
   recipeDiagnostics,
   recipeIngredientCounts,
 } from './lib/action_feedback.js';
-import { Camera } from 'mine-photo';
+// mine-photo removed — prismarine-viewer + puppeteer replaced it (see line 253).
+// The package was broken on Node 22 (fs.globSync at module load) and the
+// only call site (Camera ray-tracing init) was removed below.
 import { mineflayer as mineflayerViewer } from 'prismarine-viewer';
 import puppeteer from 'puppeteer';
 
@@ -624,27 +626,10 @@ async function createBotImpl() {
         }, delay);
       });
 
-      // Initialize ray-tracing camera for screenshots
-      try {
-        photoCamera = new Camera(bot);
-        photoCamera.resize(854, 480);
-        photoCamera.samplesPerPixel = 8;        // default 8 (was 16)
-        photoCamera.renderDistance = 48;
-        photoCamera.maxBounces = 2;
-        photoCamera.fov = 90;
-        photoScanReady = false;
-        log('[Photo] Starting initial world scan...');
-        photoScanPromise = photoCamera.scan(48, 24, 48).then(() => {
-          photoScanReady = true;
-          log(`[Photo] Camera scan complete — screenshots ready`);
-        }).catch(err => {
-          log(`[Photo] Camera scan failed: ${err.message}`);
-          photoScanReady = false;
-        });
-        log(`[Photo] Camera initialized, background scan started...`);
-      } catch (err) {
-        log(`[Photo] Camera init failed: ${err.message}`);
-      }
+      // Camera init removed with mine-photo — prismarine-viewer below
+      // serves screenshots now. photoCamera/photoScanReady/photoScanPromise
+      // remain declared at module scope as harmless null/false placeholders
+      // so any older /photo/* request handler that reads them still works.
 
       botReady = true;
       reconnectAttempts = 0;

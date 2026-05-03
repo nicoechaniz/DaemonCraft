@@ -1,5 +1,6 @@
 # Server runtime data
 server/data/
+server/backups/
 server/geyser/*.jar
 server/geyser/logs/
 server/geyser/dumps/
@@ -63,3 +64,9 @@ PROJECT.md
 EPIC-*.md
 # docs/ is no longer gitignored — design docs are canonical references
 # docs/archive/ contains outdated docs kept for historical reference
+
+# LuckPerms runtime DB (not gitignored by the server/data catch-all since
+# LP is installed into data/ which is already ignored — this covers the
+# manually tracked copy if someone adds it directly)
+server/plugins/luckperms/*.db
+server/plugins/luckperms/luckperms-h2*

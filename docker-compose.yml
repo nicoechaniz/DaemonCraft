@@ -2,7 +2,10 @@ version: "3.8"
 
 services:
   minecraft:
-    image: itzg/minecraft-server:latest
+    # Pinned to a digest so restarts are deterministic. Bump deliberately
+    # after a smoke test; do NOT switch back to :latest. See
+    # docs/server-overhaul.md for the upgrade procedure (DC-125).
+    image: itzg/minecraft-server@sha256:629762aaf864e109a35e00b11d701cfc6b2bddca4331944aefde0a352ebb9fd4
     container_name: daemoncraft-minecraft
     restart: unless-stopped
     network_mode: host
@@ -21,7 +24,11 @@ services:
 
       # --- Gameplay / Dev Settings ---
       ONLINE_MODE: "false"
-      DIFFICULTY: "peaceful"
+      # easy permits hostile mob spawns (rolemaster narrative tension) while
+      # keeping kid-friendly damage scaling. Per-cast overrides via in-game
+      # /difficulty are still allowed (Pamplinas can switch to peaceful for
+      # specific scenes via mc_command).
+      DIFFICULTY: "easy"
       CREATE_CONSOLE_IN_PIPE: "true"
       ALLOW_FLIGHT: "true"
       ENABLE_COMMAND_BLOCK: "true"
@@ -45,15 +52,18 @@ services:
       # MODPACK: "/modpacks/phi-craft.zip"
       # MODPACK_PLATFORM: ""
 
-      # --- Bedrock Edition support via Geyser ---
-      # itzg auto-installs the Geyser-Spigot plugin from Modrinth on boot.
-      # Geyser binds UDP/19132 (host network mode) and responds to RakNet
-      # unconnected pings, so Bedrock clients on the LAN auto-discover the
-      # server. No Floodgate: the Java side runs ONLINE_MODE=false, and
-      # Geyser's auth-type=offline matches (see server/geyser/config.yml).
-      # Note: Geyser only ships beta-tagged continuous builds on Modrinth.
-      MODRINTH_PROJECTS: "geyser"
+      # --- Plugins (auto-installed by itzg from Modrinth, DC-126 + Geyser) ---
+      # Pinned version IDs so restarts are deterministic. Bumps land in
+      # follow-up PRs after smoke-test. See docs/server-overhaul.md.
+      # Geyser only ships beta-tagged continuous builds on Modrinth; we use
+      # MODRINTH_ALLOWED_VERSION_TYPE=beta which covers both beta and release.
+      MODRINTH_PROJECTS: "geyser,luckperms:OrIs0S6b,coreprotect:HD2IvrxS,skinsrestorer:2PjHGlwd,decentholograms:t9gURTWO,tab-was-taken:FewsxQmS"
       MODRINTH_ALLOWED_VERSION_TYPE: "beta"
+
+      # RCON — enabled by default in Purpur; password is pinned here so the
+      # mc-backup sidecar can reliably authenticate. Change in .env only.
+      RCON_PASSWORD: ${RCON_PASSWORD:-daemoncraft-rcon}
+      ENABLE_RCON: "true"
 
       # --- Logging ---
       TZ: "UTC"
@@ -69,11 +79,51 @@ services:
       - ./server/geyser:/data/plugins/Geyser-Spigot
     tty: true
     stdin_open: true
+    # Bound resource use so a runaway plugin or hot loop cannot OOM the host
+    # (which would also take down redis, bridge, lan-broadcast). Tune to host
+    # capacity; current target is a 16 GB / 8-core box with headroom.
+    mem_limit: 14g
+    cpus: 6.0
     healthcheck:
       test: mc-health
       start_period: 1m
       interval: 5s
       retries: 20
+
+  # ---------------------------------------------------------------------------
+  # Backup Sidecar (DC-126) — periodic world snapshots with RCON save flush
+  # ---------------------------------------------------------------------------
+  # Destination is a placeholder bind-mount for now. Final destination will
+  # move to Hetzner Storage Box or Backblaze B2 in a follow-up (decision in
+  # plans/DC-126.md "Open Questions"). The sidecar pattern stays the same;
+  # only the destination volume mapping changes.
+  mc-backup:
+    image: itzg/mc-backup@sha256:7ffba80d2c6752df8d1669451de928f9e7b2d94866cd84951af6e7bc5bed1496
+    container_name: daemoncraft-mc-backup
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      BACKUP_INTERVAL: ${BACKUP_INTERVAL:-24h}
+      INITIAL_DELAY: "5m"
+      PRUNE_BACKUPS_DAYS: "30"
+      RCON_HOST: localhost
+      RCON_PORT: "25575"
+      # MUST match the minecraft service default. If they diverge, mc-backup
+      # silently fails to authenticate when the operator hasn't set
+      # RCON_PASSWORD in .env, and backups quietly stop happening.
+      RCON_PASSWORD: ${RCON_PASSWORD:-daemoncraft-rcon}
+      SRC_DIR: /data
+      DEST_DIR: /backups
+      BACKUP_NAME: daemoncraft
+      TZ: UTC
+    volumes:
+      # Read the world from the live server. Read-only would be ideal but
+      # mc-backup needs to call save-off / save-on via RCON, which is fine.
+      - ./server/data:/data:ro
+      # Local placeholder destination; override BACKUP_DEST in .env.
+      - ${BACKUP_DEST:-./server/backups}:/backups
+    depends_on:
+      - minecraft
 
   # ---------------------------------------------------------------------------
   # LAN Discovery Broadcaster — makes dedicated server visible in LAN list

@@ -467,6 +467,223 @@ mc_story(action="log_event", event="Transitioned to el_nacimiento: Pixelito appe
 
 ---
 
+## Stage Tools — Quick Reference
+
+Pamplinas has **operator-level world access** via `mc_command`. This section is the cheatsheet for common scene-staging operations. No new tools are needed — everything here uses `mc_command` and the tools already listed above.
+
+> **DC-127 dependency**: DecentHolograms and SkinsRestorer activate when DC-127 lands. Until then, `/dh` and `/skin` commands will be rejected by the server.
+
+---
+
+### Holograms (DecentHolograms)
+
+Holograms are floating text labels. Great for location names, story fragments, ambient flavour.
+
+```
+# Create a hologram at your current position
+mc_command(command="/dh create <name> <first line of text>")
+
+# Add a line to an existing hologram
+mc_command(command="/dh addline <name> <text>")
+
+# Edit an existing line (lines are 1-indexed)
+mc_command(command="/dh setline <name> <line#> <new text>")
+
+# Teleport a hologram to exact coordinates
+mc_command(command="/dh teleport <name> <x> <y> <z>")
+
+# Delete a hologram
+mc_command(command="/dh delete <name>")
+```
+
+**Text formatting** uses `§` colour codes or MiniMessage tags (`<red>`, `<bold>`, `<gradient:#ff0000:#0000ff>`).
+
+**Stage pattern — named location marker:**
+```
+mc_command(command="/dh create entrada_templo §6§l✦ El Templo Olvidado §6§l✦")
+mc_command(command="/dh addline entrada_templo §7Los dioses no responden aquí.")
+mc_command(command="/dh teleport entrada_templo 120 75 340")
+```
+
+**Cleanup on quest end** — always delete holograms you created:
+```
+mc_command(command="/dh delete entrada_templo")
+```
+Or log their names with `mc_story(action="log_event", event="Hologram: entrada_templo at 120,75,340")` so you can clean up later.
+
+---
+
+### Skin Changes (SkinsRestorer)
+
+Change a player's visual appearance for a scene. Useful for disguise mechanics, role assignment, or dramatic reveals.
+
+```
+# Set a player's skin by Minecraft username (pulls the real Mojang skin)
+mc_command(command="/skin set <player> <minecraft_username>")
+
+# Set a skin by URL (custom texture)
+mc_command(command="/skin url <player> <url>")
+
+# Clear a player's skin (restore their original)
+mc_command(command="/skin clear <player>")
+```
+
+**Stage pattern — disguise mechanic:**
+```
+# Pamplinas gives a player an NPC disguise for the scene
+mc_command(command="/skin set Fede Notch")
+mc_chat(action="chat_to", player="Fede", message="You wear the face of the Builder tonight. Do not let them recognise you.")
+
+# On scene end, restore
+mc_command(command="/skin clear Fede")
+```
+
+---
+
+### Time and Weather
+
+```
+mc_command(command="/time set day")       # bright, safe feeling
+mc_command(command="/time set noon")      # high sun, clear shadows
+mc_command(command="/time set night")     # darkness, tension
+mc_command(command="/time set midnight")  # deepest dark
+mc_command(command="/time set 13000")     # just-turned-night (exact ticks)
+
+mc_command(command="/weather clear")
+mc_command(command="/weather rain")
+mc_command(command="/weather thunder")
+mc_command(command="/weather clear 99999")  # lock clear for ~5 game days
+```
+
+**Scene transitions — combine time and weather:**
+```
+# Ritual begins
+mc_command(command="/time set midnight")
+mc_command(command="/weather thunder")
+mc_command(command="/effect give @a minecraft:darkness 10 1 true")
+
+# Dawn after resolution
+mc_command(command="/time set 23000")
+mc_command(command="/weather clear")
+mc_command(command="/effect give @a minecraft:regeneration 30 0 true")
+```
+
+---
+
+### Titles and Subtitles
+
+Titles appear as large on-screen text — the closest thing to a cinematic cut. Use them for phase transitions, reveals, and dramatic moments.
+
+```
+# Full title + subtitle combo
+mc_command(command="/title @a title {\"text\":\"Capítulo II\",\"color\":\"dark_red\",\"bold\":true}")
+mc_command(command="/title @a subtitle {\"text\":\"El Despertar\",\"color\":\"gray\",\"italic\":true}")
+
+# Timing: fadein ticks, stay ticks, fadeout ticks (all in game ticks, 20/sec)
+mc_command(command="/title @a times 20 80 30")
+
+# Clear immediately
+mc_command(command="/title @a clear")
+
+# Action bar (smaller, bottom of screen, less intrusive)
+mc_command(command="/title @a actionbar {\"text\":\"⚠ Algo se acerca...\",\"color\":\"yellow\"}")
+```
+
+---
+
+### Sounds
+
+```
+# Ambient sound at a player's position
+mc_command(command="/playsound minecraft:ambient.cave ambient @a ~ ~ ~ 0.8 1.0")
+
+# Jump-scare or trigger
+mc_command(command="/playsound minecraft:entity.warden.heartbeat master @a ~ ~ ~ 1.0 0.8")
+
+# Music disc style (looping ambient)
+mc_command(command="/playsound minecraft:music_disc.13 record @a ~ ~ ~ 2.0 1.0")
+
+# Stop all sounds
+mc_command(command="/stopsound @a")
+```
+
+**Sound categories**: `master`, `music`, `record`, `weather`, `block`, `hostile`, `neutral`, `player`, `ambient`, `voice`. Use `ambient` for environmental; `master` for dramatic stings.
+
+**Useful sounds for rolemaster:**
+| Sound | Use |
+|---|---|
+| `minecraft:ambient.cave` | Mystery, unease |
+| `minecraft:entity.warden.heartbeat` | Dread, approaching threat |
+| `minecraft:block.bell.use` | Announcement, scene start |
+| `minecraft:ui.toast.challenge_complete` | Victory sting |
+| `minecraft:entity.elder_guardian.curse` | Boss reveal |
+| `minecraft:music_disc.13` | Unsettling ambient |
+| `minecraft:music_disc.11` | Horror ambient |
+| `minecraft:block.note_block.harp` + varying pitch | Custom melodies |
+
+---
+
+### Particles
+
+Particles add atmosphere without spawning entities. They are local and temporary.
+
+```
+# Particle burst at specific coords
+mc_command(command="/particle minecraft:flame 120 75 340 0.5 0.5 0.5 0.05 50")
+#                                             ^x  ^y  ^z  ^dx^dy^dz ^speed ^count
+
+# On a player (uses ~ ~ ~ for relative)
+mc_command(command="/execute at Fede run particle minecraft:witch ~ ~1 ~ 0.3 0.5 0.3 0.05 20")
+
+# Floating dust (custom colour, needs hex via dust particle)
+mc_command(command="/particle minecraft:dust{color:[1.0,0.0,0.0],scale:1.5} 120 75 340 0.3 0.3 0.3 0 30")
+```
+
+**Common stage particles:**
+| Particle | Effect |
+|---|---|
+| `minecraft:flame` | Fire, ritual |
+| `minecraft:soul_fire_flame` | Supernatural fire |
+| `minecraft:enchant` | Magic, spellcasting |
+| `minecraft:end_rod` | Magical shimmer |
+| `minecraft:portal` | Dimensional energy |
+| `minecraft:witch` | Curse, potion effect |
+| `minecraft:explosion` | Impact, destruction |
+| `minecraft:cloud` | Smoke, obscurement |
+
+---
+
+### Targeting players
+
+```
+@a          — all players
+@a[r=30]    — all players within 30 blocks of command origin
+@a[name=Fede]  — specific player by name
+@p          — nearest player
+```
+
+**Good habit — use `/execute as ... at @s` to run relative to a player:**
+```
+# Spawn flame particles above a specific player wherever they are
+mc_command(command="/execute as Fede at @s run particle minecraft:flame ~ ~2 ~ 0.3 0.3 0.3 0.05 20")
+```
+
+---
+
+### Anti-patterns (do NOT do these)
+
+| Anti-pattern | Why | Instead |
+|---|---|---|
+| `/op <player>` | Grants full server control | Use `lp user <player> parent add pamplina-team` |
+| `/stop` | Kills the server | Never. If you need a restart, alert the human admin. |
+| `/whitelist remove <player>` | Bans a kid mid-session | Alert the human admin. |
+| `/fill <large region> air` | Can destroy player builds permanently | Always verify with `mc_perceive(type="scene")` first; fill only regions you placed |
+| Creating holograms without logging them | They become untrackable ghosts | Always `mc_story(action="log_event", ...)` with the hologram name and coordinates |
+| Changing a player's skin without restoring it | Player is stuck in a costume after the scene | Always `mc_story(action="log_event", event="Skin changed: Fede -> Notch")` and restore in cleanup phase |
+| Playing sounds on a loop without a stop | Permanent audio | Always pair with a cleanup `stopsound @a` in the scene's resolution phase |
+
+---
+
 ## Memory
 
 You MUST remember across sessions:

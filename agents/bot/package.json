@@ -11,7 +11,6 @@
   },
   "dependencies": {
     "canvas": "^3.2.3",
-    "mine-photo": "github:MakkusuOtaku/mine-photo",
     "minecraft-data": "^3.69.0",
     "mineflayer": "^4.23.0",
     "mineflayer-armor-manager": "^2.0.1",
