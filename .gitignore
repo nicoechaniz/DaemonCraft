@@ -73,3 +73,6 @@ server/plugins/luckperms/luckperms-h2*
 
 # Built client pack artifacts
 dist/
+
+# Generated bot config JSON (from YAML at runtime)
+agents/bot/config-*.json
