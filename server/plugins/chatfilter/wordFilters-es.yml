@@ -1,0 +1,65 @@
+# Spanish wordlist supplement for ChatFilter (DC-131).
+#
+# Soft-block strategy: first offense → replace the word with asterisks and
+# warn the player; we don't cancel the message. This keeps conversation
+# flowing while making the disapproval visible. Hard-block escalation is
+# left to staff intervention via the auto-warn-on-staff channel.
+#
+# Install: copy into /data/plugins/ChatFilter/wordFilters.yml (merge with
+# the plugin's existing entries), or load via the plugin's include syntax
+# if a future ChatFilter version adds one.
+#
+# Word selection: a tight ES floor — common slurs and high-impact profanity
+# only. Aggressive expansion produces false positives in normal chat
+# (Spanish has a lot of polite verb conjugations that look like roots of
+# rude words). Start narrow; widen on incident review.
+
+ChatFilter:
+  es_profanity_strong:
+    # Strong profanity — replace with asterisks, warn player, log to staff.
+    # Word boundaries on both sides to avoid catching legitimate Spanish words
+    # that share a substring (e.g. "mierdosa" → catch; "miércoles" → no catch).
+    Enabled: true
+    Regex:
+      - (?i)\bmierda\w*\b
+      - (?i)\bputa\w*\b
+      - (?i)\bculiao\w*\b
+      - (?i)\bconch[ae]\w*\b
+      - (?i)\bpendej[oa]\w*\b
+      - (?i)\bcabr[oó]n\w*\b
+      - (?i)\bgilipollas\b
+      - (?i)\bmaric[oó]n\w*\b
+      - (?i)\bcoñ[oa]\w*\b
+      - (?i)\bcojones\b
+    Warn:
+      Staff: true
+      Player: true
+      Console: true
+    CancelChat:
+      Cancel: false
+      Replace: true
+      ReplaceWith: '****'
+    Action:
+      - <SendMessage>&cPor favor cuidá el lenguaje. &7Filtramos automáticamente.
+    AddedBy: DC-131
+
+  es_slurs_zero_tolerance:
+    # Slurs targeting protected groups — hard block, do NOT relay the message.
+    # Smaller list, no false-positive tolerance.
+    Enabled: true
+    Regex:
+      - (?i)\bnegro\s+de\s+mierda\b
+      - (?i)\bsudaca\w*\b
+      - (?i)\bret(a|r)asado\w*\b
+      - (?i)\btrolaz[oa]\w*\b
+    Warn:
+      Staff: true
+      Player: true
+      Console: true
+    CancelChat:
+      Cancel: true
+      Replace: false
+    Action:
+      - <SendMessage>&cMensaje bloqueado por insulto. &7Repetir → expulsión.
+      - '<RunCommand>say &c[ChatFilter] %player% intentó insultar — revisado.'
+    AddedBy: DC-131
