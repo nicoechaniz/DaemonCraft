@@ -84,7 +84,11 @@ import {
   recipeDiagnostics,
   recipeIngredientCounts,
 } from './lib/action_feedback.js';
-import { Camera } from 'mine-photo';
+// mine-photo is dead code — prismarine-viewer + puppeteer replaced it (see line 253).
+// The package is broken on Node 22 (fs.globSync at module load) so we stub Camera here.
+class Camera {
+  constructor() { throw new Error('mine-photo Camera disabled — use prismarine-viewer screenshot path'); }
+}
 import { mineflayer as mineflayerViewer } from 'prismarine-viewer';
 import puppeteer from 'puppeteer';
 
