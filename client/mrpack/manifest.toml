@@ -1,0 +1,85 @@
+# DaemonCraft Java client modpack manifest (DC-128)
+#
+# Pinned project + version IDs from Modrinth. The build script
+# (scripts/build-mrpack.sh) resolves these to download URLs and
+# checksums via the Modrinth API and produces a .mrpack archive.
+#
+# Bumping a version: change the version_id only, then re-run the build.
+# Project IDs are stable; version IDs unlock controlled rollouts.
+
+minecraft = "1.21.11"
+loader = "fabric"
+loader_version = "latest"   # build script asks Modrinth for the latest stable
+
+[meta]
+name = "DaemonCraft"
+version = "0.1.0"
+summary = "Two-click client install for DaemonCraft. AI-driven roleplay world."
+
+# --- Required mods (Fabric) ---
+[[mods]]
+slug = "sodium"
+version_id = "UddlN6L4"           # mc1.21.11-0.8.7-fabric — performance
+
+[[mods]]
+slug = "lithium"
+version_id = "Ow7wA0kG"           # mc1.21.11-0.21.4-fabric — server-tick perf
+
+[[mods]]
+slug = "ferrite-core"
+version_id = "Ii0gP3D8"           # 8.2.0-fabric — memory
+
+[[mods]]
+slug = "immediatelyfast"
+version_id = "QwkfUKSj"           # 1.14.2+1.21.11-fabric — text/render perf
+
+[[mods]]
+slug = "fabric-api"
+version_id = "i5tSkVBH"           # 0.141.3+1.21.11 — required by everything
+
+[[mods]]
+slug = "modmenu"
+version_id = "Tyk71iSw"           # 17.0.0 — config UI
+
+[[mods]]
+slug = "entitytexturefeatures"
+version_id = "rAQimlSn"           # 7.1-fabric-1.21.11 — Fresh Animations parts
+
+[[mods]]
+slug = "entity-model-features"
+version_id = "wbSSx6vc"           # 3.2.2-fabric-1.21.11 — Fresh Animations parts
+
+[[mods]]
+slug = "continuity"
+version_id = "mX1iknM1"           # 3.0.1-beta.1+1.21.11 — connected textures
+
+# --- Vanity (low overhead, on by default) ---
+[[mods]]
+slug = "lambdynamiclights"
+version_id = "5Tp7kdU0"           # 4.9.1+1.21.11
+
+[[mods]]
+slug = "fallingleaves"
+version_id = "U7hPBr6x"           # 2.0.3+1.21.11
+
+# Note: 'particular' only has 1.21.1 builds on Modrinth as of 2026-05-03.
+# Re-add when a 1.21.11-compatible version ships.
+
+# --- Resource packs (auto-enabled) ---
+[[resourcepacks]]
+slug = "fresh-animations"
+version_id = "xN57JJts"           # 1.10.4 (vanilla-format RP, version-agnostic)
+
+[[resourcepacks]]
+slug = "better-leaves"
+version_id = "XWtayRKd"           # 9.5 (vanilla-format RP)
+
+[[resourcepacks]]
+slug = "clear-glass"
+version_id = "WF83I2Cp"           # 1.2.1 — explicit support up to 1.21.10,
+                                   # vanilla-format RPs are forward-compatible.
+
+# --- Toggleable shaders (off by default; document in client README) ---
+# Iris + Complementary Reimagined are intentionally NOT in this manifest.
+# Shipping shaders auto-enabled chokes school laptops at 12 fps.
+# Players who want shaders install Iris from Modrinth manually.

@@ -55,3 +55,4 @@ PROJECT.md
 EPIC-*.md
 # docs/ is no longer gitignored — design docs are canonical references
 # docs/archive/ contains outdated docs kept for historical reference
+dist/
