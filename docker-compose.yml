@@ -34,6 +34,14 @@ services:
       ENABLE_COMMAND_BLOCK: "true"
       SPAWN_PROTECTION: "0"
       MAX_PLAYERS: "20"
+      # Identity gating (DC-131). With ONLINE_MODE=false anyone who knows a
+      # username can connect AS that name; the whitelist is the floor.
+      # Manage with `whitelist add <name>` / `whitelist remove <name>` via rcon
+      # or by editing server/data/whitelist.json directly.
+      # ⚠️ FIRST-RUN: whitelist.json starts empty after this change; add
+      # current players BEFORE next restart or they'll be kicked. See
+      # server/plugins/whitelist.README.md.
+      ENFORCE_WHITELIST: "true"
       VIEW_DISTANCE: "10"
       SIMULATION_DISTANCE: "10"
       GAME_MODE: "survival"
@@ -55,9 +63,12 @@ services:
       # --- Plugins (auto-installed by itzg from Modrinth, DC-126 + Geyser) ---
       # Pinned version IDs so restarts are deterministic. Bumps land in
       # follow-up PRs after smoke-test. See docs/server-overhaul.md.
+      # --- Plugins (auto-installed by itzg from Modrinth, DC-126 + DC-131 + Geyser) ---
+      # Pinned version IDs so restarts are deterministic. Bumps land in
+      # follow-up PRs after smoke-test. See docs/server-overhaul.md.
       # Geyser only ships beta-tagged continuous builds on Modrinth; we use
       # MODRINTH_ALLOWED_VERSION_TYPE=beta which covers both beta and release.
-      MODRINTH_PROJECTS: "geyser,luckperms:OrIs0S6b,coreprotect:HD2IvrxS,skinsrestorer:2PjHGlwd,decentholograms:t9gURTWO,tab-was-taken:FewsxQmS"
+      MODRINTH_PROJECTS: "geyser,luckperms:OrIs0S6b,coreprotect:HD2IvrxS,skinsrestorer:2PjHGlwd,decentholograms:t9gURTWO,tab-was-taken:FewsxQmS,chatfilter-zepsizola:UlCRrLx8"
       MODRINTH_ALLOWED_VERSION_TYPE: "beta"
 
       # RCON — enabled by default in Purpur; password is pinned here so the
