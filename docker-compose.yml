@@ -57,7 +57,7 @@ services:
       # follow-up PRs after smoke-test. See docs/server-overhaul.md.
       # NOTE: when feat/bedrock-geyser-support merges upstream, this list
       # gains "geyser:R7DKgZlt" — combine the two lists at merge time.
-      MODRINTH_PROJECTS: "luckperms:OrIs0S6b,coreprotect:HD2IvrxS"
+      MODRINTH_PROJECTS: "luckperms:OrIs0S6b,coreprotect:HD2IvrxS,skinsrestorer:2PjHGlwd,decentholograms:t9gURTWO,tab-was-taken:FewsxQmS"
       MODRINTH_ALLOWED_VERSION_TYPE: "release"
 
       # RCON — enabled by default in Purpur; password is pinned here so the
