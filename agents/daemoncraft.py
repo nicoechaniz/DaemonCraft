@@ -179,7 +179,7 @@ def ensure_base_profile() -> Path:
         "toolsets": ["minecraft", "messaging"],
         "platform_toolsets": {"cli": ["minecraft", "clarify", "messaging"]},
         "agent": {
-            "max_turns": 100,
+            "max_turns": 6,
             "gateway_timeout": 1800,
             "restart_drain_timeout": 60,
             "api_max_retries": 3,
@@ -273,9 +273,9 @@ def setup_agent_profile(
     config = yaml.safe_load(config_path.read_text()) or {} if config_path.exists() else {}
 
     # Set model with provider — infer provider from model name if not specified
+    provider = agent.get("provider")
+    base_url = agent.get("base_url")
     if model:
-        provider = agent.get("provider")
-        base_url = agent.get("base_url")
         if not provider:
             # Auto-infer provider from model name
             model_lower = model.lower()
@@ -448,6 +448,9 @@ def start_agent(
         "HERMES_SESSION_PLATFORM": "telegram",
         # DC-132 — activates the JSONL metrics emitter in agent_loop.py.
         "MC_METRICS_CAST": cast_name,
+        # DC-134 — cap iterations and turn wall-clock time for responsiveness
+        "HERMES_MAX_ITERATIONS": "6",
+        "HERMES_TURN_TIMEOUT_SECONDS": "45",
     }
     if max_chat_chars:
         env["MC_MAX_CHAT_CHARS"] = str(max_chat_chars)
