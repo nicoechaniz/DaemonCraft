@@ -104,7 +104,10 @@ services:
       PRUNE_BACKUPS_DAYS: "30"
       RCON_HOST: localhost
       RCON_PORT: "25575"
-      RCON_PASSWORD: ${RCON_PASSWORD:-minecraft}
+      # MUST match the minecraft service default. If they diverge, mc-backup
+      # silently fails to authenticate when the operator hasn't set
+      # RCON_PASSWORD in .env, and backups quietly stop happening.
+      RCON_PASSWORD: ${RCON_PASSWORD:-daemoncraft-rcon}
       SRC_DIR: /data
       DEST_DIR: /backups
       BACKUP_NAME: daemoncraft

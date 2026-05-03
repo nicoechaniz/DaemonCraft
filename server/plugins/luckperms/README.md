@@ -28,10 +28,18 @@ docker exec daemoncraft-minecraft rcon-cli "lp user <username> parent add pampli
 
 ## Updating group definitions
 
-Make changes in-game or via rcon, then re-export:
+Make changes in-game or via rcon, then re-export. Use a fresh export name
+each time — `lp export groups.json` is a no-op if a file with that name
+already exists in the plugin data dir (LuckPerms quietly refuses to
+overwrite). Pick a unique name, decode, overwrite the tracked file, then
+delete the export.
+
 ```bash
-docker exec daemoncraft-minecraft rcon-cli "lp export groups-export.yml"
-# decode the gzip+json, overwrite groups.json, commit
-python3 -c "import gzip,json; open('server/plugins/luckperms/groups.json','w').write(
-  json.dumps(json.loads(gzip.open('server/data/plugins/LuckPerms/groups-export.yml.json.gz').read()),indent=2))"
+EXPORT_NAME="lp-export-$(date +%s)"
+docker exec -u 1000 daemoncraft-minecraft mc-send-to-console "lp export $EXPORT_NAME"
+sleep 2  # let the export thread finish
+docker exec daemoncraft-minecraft sh -c "gunzip -c /data/plugins/LuckPerms/${EXPORT_NAME}.json.gz" \
+  > server/plugins/luckperms/groups.json
+docker exec daemoncraft-minecraft rm /data/plugins/LuckPerms/${EXPORT_NAME}.json.gz
+git diff server/plugins/luckperms/groups.json   # verify before commit
 ```
