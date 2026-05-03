@@ -84,9 +84,13 @@ import {
   recipeDiagnostics,
   recipeIngredientCounts,
 } from './lib/action_feedback.js';
-// mine-photo removed — prismarine-viewer + puppeteer replaced it (see line 253).
-// The package was broken on Node 22 (fs.globSync at module load) and the
-// only call site (Camera ray-tracing init) was removed below.
+let Camera = null;
+try {
+  const minePhoto = await import('mine-photo');
+  Camera = minePhoto.Camera;
+} catch (e) {
+  console.warn('[Photo] mine-photo unavailable (headless?), screenshots disabled:', e.message);
+}
 import { mineflayer as mineflayerViewer } from 'prismarine-viewer';
 import puppeteer from 'puppeteer';
 
@@ -130,19 +134,12 @@ function saveLocations(locs) {
 const PLAN_FILE = path.join(DATA_DIR, `plan-${(process.env.MC_USERNAME || 'HermesBot').toLowerCase()}.json`);
 
 function loadPlan() {
-  try {
-    const plan = JSON.parse(fs.readFileSync(PLAN_FILE, 'utf8'));
-    // Migrate legacy plans without epoch
-    if (typeof plan.epoch !== 'number') plan.epoch = 0;
-    return plan;
-  }
+  try { return JSON.parse(fs.readFileSync(PLAN_FILE, 'utf8')); }
   catch { return null; }
 }
 function savePlan(plan) {
   const dir = path.dirname(PLAN_FILE);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  plan.epoch = (plan.epoch || 0) + 1;
-  plan.updated_at = new Date().toISOString();
   fs.writeFileSync(PLAN_FILE, JSON.stringify(plan, null, 2));
 }
 
@@ -331,7 +328,6 @@ async function handleChat(username, message) {
 
   if (forMe) {
     // Message is for us — add to chatLog (visible in mc read_chat / mc status)
-    const playerEntry = bot?.players?.[username];
     chatLog.push({
       time: Date.now(),
       from: username,
@@ -339,8 +335,6 @@ async function handleChat(username, message) {
       private: !routing.isBroadcast,
       channel: routing.channel,
       targets: routing.targets.length > 0 ? routing.targets : undefined,
-      world: bot?.game?.dimension || 'unknown',
-      uuid: playerEntry?.uuid || null,
     });
     if (chatLog.length > MAX_LOG) chatLog.shift();
     broadcastDashboard('chat', chatLog.slice(-30));
@@ -488,8 +482,7 @@ async function createBotImpl() {
       bot.on('whisper', (username, message) => {
         if (username === bot.username) return;
         // Whispers are always for us — add directly to chatLog + commandQueue
-        const playerEntry = bot?.players?.[username];
-        chatLog.push({ time: Date.now(), from: username, message, whisper: true, world: bot?.game?.dimension || 'unknown', uuid: playerEntry?.uuid || null });
+        chatLog.push({ time: Date.now(), from: username, message, whisper: true });
         if (chatLog.length > MAX_LOG) chatLog.shift();
         log(`[Whisper] <${username}> ${message}`);
         commandQueue.push({
@@ -528,27 +521,6 @@ async function createBotImpl() {
           else if (speed > 0.05) addSoundEvent('walking', e.position, FAIR_PLAY.SOUND_WALK_RADIUS);
         });
       }, 2000);
-
-      // Teleport detection — cancel navigation when forcibly moved by server
-      let lastPos = null;
-      bot.on('move', () => {
-        if (!bot || !bot.entity || !bot.entity.position) return;
-        const pos = bot.entity.position;
-        if (!lastPos) { lastPos = pos.clone(); return; }
-        const dist = pos.distanceTo(lastPos);
-        if (dist > 5) {
-          // Likely teleported — cancel pathfinder and current task
-          try { bot.pathfinder.setGoal(null); } catch {}
-          try { bot.stopDigging(); } catch {}
-          if (currentTask && currentTask.status === 'running') {
-            currentTask.status = 'cancelled';
-            currentTask.error = `Teleported ${dist.toFixed(1)} blocks by server — navigation cancelled`;
-            broadcastDashboard('task', currentTask);
-          }
-          log(`Teleport detected: moved ${dist.toFixed(1)} blocks — cancelled navigation`);
-        }
-        lastPos = pos.clone();
-      });
 
       // Death tracking
       bot.on('death', () => {
@@ -626,10 +598,31 @@ async function createBotImpl() {
         }, delay);
       });
 
-      // Camera init removed with mine-photo — prismarine-viewer below
-      // serves screenshots now. photoCamera/photoScanReady/photoScanPromise
-      // remain declared at module scope as harmless null/false placeholders
-      // so any older /photo/* request handler that reads them still works.
+      // Initialize ray-tracing camera for screenshots
+      if (!Camera) {
+        log('[Photo] Camera disabled — no renderer available');
+      } else {
+        try {
+          photoCamera = new Camera(bot);
+          photoCamera.resize(854, 480);
+          photoCamera.samplesPerPixel = 8;        // default 8 (was 16)
+          photoCamera.renderDistance = 48;
+          photoCamera.maxBounces = 2;
+          photoCamera.fov = 90;
+          photoScanReady = false;
+          log('[Photo] Starting initial world scan...');
+          photoScanPromise = photoCamera.scan(48, 24, 48).then(() => {
+            photoScanReady = true;
+            log(`[Photo] Camera scan complete — screenshots ready`);
+          }).catch(err => {
+            log(`[Photo] Camera scan failed: ${err.message}`);
+            photoScanReady = false;
+          });
+          log(`[Photo] Camera initialized, background scan started...`);
+        } catch (err) {
+          log(`[Photo] Camera init failed: ${err.message}`);
+        }
+      }
 
       botReady = true;
       reconnectAttempts = 0;
@@ -694,7 +687,7 @@ function ensureBot() {
 // Chat Chunking & Delivery
 // ═══════════════════════════════════════════════════════════════════
 
-function chunkForMc(text, maxChars = MC_FRAGMENT_MAX_CHARS, maxFragments = MC_MAX_FRAGMENTS, byteLimit = MC_PROTOCOL_BYTE_LIMIT) {
+function chunkForMc(text, maxChars = MC_FRAGMENT_MAX_CHARS, maxFragments = MC_MAX_FRAGMENTS) {
   text = text.replace(/\s+/g, ' ').trim();
   if (!text) return { fragments: [], truncated: false };
 
@@ -734,7 +727,7 @@ function chunkForMc(text, maxChars = MC_FRAGMENT_MAX_CHARS, maxFragments = MC_MA
     }
   }
 
-  return { fragments: fragments.map(f => byteCap(f, byteLimit)), truncated };
+  return { fragments: fragments.map(byteCap), truncated };
 }
 
 function wordSplit(s, maxChars) {
@@ -754,18 +747,66 @@ function wordSplit(s, maxChars) {
   return out;
 }
 
-function byteCap(s, limit = MC_PROTOCOL_BYTE_LIMIT) {
-  if (Buffer.byteLength(s, 'utf8') <= limit) return s;
+function byteCap(s) {
+  if (Buffer.byteLength(s, 'utf8') <= MC_PROTOCOL_BYTE_LIMIT) return s;
   let cut = s;
-  while (Buffer.byteLength(cut, 'utf8') > limit) cut = cut.slice(0, -1);
+  while (Buffer.byteLength(cut, 'utf8') > MC_PROTOCOL_BYTE_LIMIT) cut = cut.slice(0, -1);
   return cut;
 }
 
-async function sendToMcChat(text, { source = "auto", target = null } = {}) {
-  const overhead = target ? Buffer.byteLength(`/tell ${target} `, 'utf8') : 0;
-  const { fragments, truncated } = chunkForMc(text, MC_FRAGMENT_MAX_CHARS, MC_MAX_FRAGMENTS, MC_PROTOCOL_BYTE_LIMIT - overhead);
-  if (fragments.length === 0) {
-    return { ok: true, fragments_sent: 0, fragments_dropped: 0, reason: "empty" };
+async function sendToMcChat(text, { source = "auto" } = {}) {
+  // Unified chat delivery. The agent_loop is the single source of truth for
+  // formatting, noise filtering, and SAY: parsing. This function only does
+  // chunking, throttling, and delivery.
+  //
+  // For source === "tool": agent already formatted everything. We trust it
+  // and send each line as its own fragment to preserve verses/pacing.
+  //
+  // For source !== "tool" (legacy/dashboard): apply the old SAY: filter so
+  // external callers don't need to know the internal protocol.
+
+  let fragments = [];
+  let truncated = false;
+
+  if (source === "tool") {
+    // Trust the agent. Each non-empty line is a separate fragment.
+    fragments = text.split(/\n/).map(l => l.trim()).filter(Boolean).map(byteCap);
+    if (fragments.length === 0) {
+      return { ok: true, fragments_sent: 0, fragments_dropped: 0, reason: "empty" };
+    }
+    // Hard cap on total fragments to avoid flooding
+    if (fragments.length > MC_MAX_FRAGMENTS) {
+      truncated = true;
+      fragments.length = MC_MAX_FRAGMENTS;
+      const last = fragments[MC_MAX_FRAGMENTS - 1];
+      const ellipsis = " [...]";
+      if (last.length + ellipsis.length <= MC_FRAGMENT_MAX_CHARS) {
+        fragments[MC_MAX_FRAGMENTS - 1] = last + ellipsis;
+      } else {
+        fragments[MC_MAX_FRAGMENTS - 1] = last.slice(0, MC_FRAGMENT_MAX_CHARS - ellipsis.length).trimEnd() + ellipsis;
+      }
+    }
+  } else {
+    // Legacy path for non-migrated callers (dashboard, external scripts)
+    const lines = text.split(/\n/).map(l => l.trim()).filter(Boolean);
+    const commandLines = lines.filter(l => l.startsWith("/"));
+    const sayLines = lines.filter(l => /^SAY:\s*/i.test(l)).map(l => l.replace(/^SAY:\s*/i, ""));
+
+    let payload = "";
+    if (commandLines.length > 0) {
+      payload = commandLines.join("\n");
+    } else if (sayLines.length === 0) {
+      return { ok: true, fragments_sent: 0, fragments_dropped: 0, reason: "no_say_lines" };
+    } else {
+      payload = sayLines.join("\n");
+    }
+
+    const result = chunkForMc(payload);
+    fragments = result.fragments;
+    truncated = result.truncated;
+    if (fragments.length === 0) {
+      return { ok: true, fragments_sent: 0, fragments_dropped: 0, reason: "empty" };
+    }
   }
 
   const now = Date.now();
@@ -781,8 +822,7 @@ async function sendToMcChat(text, { source = "auto", target = null } = {}) {
     }
     const b = ensureBot();
     try {
-      const payload = target ? `/tell ${target} ${frag}` : frag;
-      b.chat(payload);
+      b.chat(frag);
     } catch (e) {
       log(`[chat] b.chat() threw: ${e.message}`);
       dropped++;
@@ -790,19 +830,7 @@ async function sendToMcChat(text, { source = "auto", target = null } = {}) {
     }
     recentFragments.push(now);
     sent++;
-    const entry = {
-      time: Date.now(),
-      from: config.mc.username,
-      message: frag,
-      self: true,
-      world: b?.game?.dimension || 'unknown',
-      uuid: b?.player?.uuid || b?.uuid || null,
-    };
-    if (target) {
-      entry.to = target;
-      entry.whisper = true;
-    }
-    chatLog.push(entry);
+    chatLog.push({ time: Date.now(), from: b.username, message: frag, self: true });
     if (chatLog.length > MAX_LOG) chatLog.shift();
     broadcastDashboard('chat', chatLog.slice(-30));
     if (sent < fragments.length) await sleep(MC_FRAGMENT_DELAY_MS);
@@ -983,6 +1011,48 @@ function buildSceneSummary({ range = 16 } = {}) {
     memory_hints: getMemoryHints(),
     fair_play: fairPlayMode,
     range,
+  };
+}
+
+function scanVolume(x1, y1, z1, x2, y2, z2) {
+  const b = ensureBot();
+  const minX = Math.min(x1, x2), maxX = Math.max(x1, x2);
+  const minY = Math.min(y1, y2), maxY = Math.max(y1, y2);
+  const minZ = Math.min(z1, z2), maxZ = Math.max(z1, z2);
+  const dx = maxX - minX + 1, dy = maxY - minY + 1, dz = maxZ - minZ + 1;
+  const MAX_VOLUME_BLOCKS = 4096;
+  if (dx * dy * dz > MAX_VOLUME_BLOCKS) {
+    throw new Error(`Volume too large: ${dx}x${dy}x${dz} = ${dx*dy*dz} blocks. Max ${MAX_VOLUME_BLOCKS}. Use a smaller area.`);
+  }
+
+  const blocks = [];
+  const counts = {};
+  for (let y = minY; y <= maxY; y++) {
+    for (let z = minZ; z <= maxZ; z++) {
+      for (let x = minX; x <= maxX; x++) {
+        const block = b.blockAt(new Vec3(x, y, z));
+        const name = block ? block.name : 'void';
+        counts[name] = (counts[name] || 0) + 1;
+        if (name !== 'air' && name !== 'cave_air' && name !== 'void_air') {
+          blocks.push({ name, x, y, z });
+        }
+      }
+    }
+  }
+
+  const groundY = blocks.length > 0
+    ? Math.round(blocks.filter(b => ['grass_block','dirt','stone','sand','gravel','podzol','coarse_dirt','mycelium'].includes(b.name))
+                   .reduce((sum, b) => sum + b.y, 0) / Math.max(blocks.filter(b => ['grass_block','dirt','stone','sand','gravel','podzol','coarse_dirt','mycelium'].includes(b.name)).length, 1))
+    : minY;
+
+  return {
+    bounds: { x1: minX, y1: minY, z1: minZ, x2: maxX, y2: maxY, z2: maxZ },
+    dimensions: { x: dx, y: dy, z: dz },
+    total_blocks: dx * dy * dz,
+    non_air_blocks: blocks.length,
+    ground_y: groundY,
+    block_counts: counts,
+    obstacles: blocks.slice(0, 80),
   };
 }
 
@@ -1606,6 +1676,174 @@ const NON_SOLID_BLOCKS = new Set([
   'peony', 'sweet_berry_bush', 'seagrass', 'tall_seagrass', 'kelp',
   'kelp_plant', 'vine', 'glow_lichen', 'cave_vines', 'cave_vines_plant',
 ]);
+
+// ═══════════════════════════════════════════════════════════════════
+// Top-down block-map renderer (node-canvas fallback for headless/Pi4)
+// ═══════════════════════════════════════════════════════════════════
+
+function getBlockColor(name) {
+  const colors = {
+    grass_block: '#4a8f29', dirt: '#8b5a2b', stone: '#808080', cobblestone: '#7a7a7a',
+    bedrock: '#333333', sand: '#d6cf92', gravel: '#857e7e', water: '#3f76e4',
+    lava: '#cf5c00', oak_log: '#6b4f2a', oak_planks: '#b8955a', oak_leaves: '#3a7a2a',
+    spruce_log: '#3e2b18', spruce_leaves: '#2d5a1e', birch_log: '#c4b89b', birch_leaves: '#5a9a3a',
+    dark_oak_log: '#3b2a14', jungle_log: '#6b5a2a', acacia_log: '#8b6a3a',
+    glass: '#aaddff', glowstone: '#ffcc55', torch: '#ffaa00', furnace: '#6e6e6e',
+    chest: '#b8860b', crafting_table: '#8b5a2b', stone_bricks: '#7a7a7a', bricks: '#a05030',
+    coal_ore: '#6e6e6e', iron_ore: '#9a7a6a', gold_ore: '#d4af37', diamond_ore: '#4aedd4',
+    redstone_ore: '#c43a3a', emerald_ore: '#50c878', copper_ore: '#b87333',
+    netherrack: '#6b1a1a', soul_sand: '#4a3a2a', end_stone: '#e0e0a0', obsidian: '#1a0a2a',
+    snow: '#f0f0f0', ice: '#aaddff', packed_ice: '#90ccff', blue_ice: '#74aadd',
+    clay: '#9aa7b8', mossy_cobblestone: '#6a7a5a', mossy_stone_bricks: '#6a7a5a',
+    farmland: '#5a3a1a', wheat: '#c4a32e', carrot: '#ff8c00', potato: '#d4a050',
+    pumpkin: '#e0931f', melon: '#a5c43a', cactus: '#2a8a2a', sugar_cane: '#6aaa3a',
+    vine: '#3a7a2a', lily_pad: '#4a9a3a', seagrass: '#4a9a3a', kelp: '#4a9a3a',
+    tall_grass: '#4a8f29', grass: '#4a8f29', fern: '#4a8f29', dead_bush: '#8b5a2b',
+    flower: '#ff66cc', dandelion: '#ffdd00', poppy: '#ff0000', blue_orchid: '#00ccff',
+    allium: '#cc88ff', azure_bluet: '#eeeeff', red_tulip: '#ff4444', orange_tulip: '#ff8844',
+    white_tulip: '#ffffee', pink_tulip: '#ffaaaa', oxeye_daisy: '#ffffee', cornflower: '#4444ff',
+    lily_of_the_valley: '#ffffff', wither_rose: '#111111', sunflower: '#ffdd00', lilac: '#cc88ff',
+    rose_bush: '#ff0000', peony: '#ffaaaa', oak_sapling: '#4a8f29', spruce_sapling: '#2d5a1e',
+    birch_sapling: '#5a9a3a', jungle_sapling: '#6b5a2a', acacia_sapling: '#8b6a3a',
+    dark_oak_sapling: '#3a7a2a', bamboo: '#6aaa3a', bamboo_sapling: '#6aaa3a',
+    mushroom: '#ccaa88', brown_mushroom: '#aa8866', red_mushroom: '#cc4444',
+    mushroom_stem: '#ddddcc', red_mushroom_block: '#cc4444', brown_mushroom_block: '#aa8866',
+    nether_bricks: '#2a0a0a', red_nether_bricks: '#4a0a0a', basalt: '#4a4a4a',
+    polished_basalt: '#5a5a5a', smooth_basalt: '#4a4a4a', blackstone: '#2a2a2a',
+    polished_blackstone: '#3a3a3a', gilded_blackstone: '#4a3a1a',
+    deepslate: '#3a3a3a', cobbled_deepslate: '#4a4a4a', polished_deepslate: '#5a5a5a',
+    calcite: '#e0e0e0', tuff: '#6a6a5a', dripstone_block: '#7a6a5a',
+    amethyst_block: '#aa88ff', budding_amethyst: '#aa88ff', amethyst_cluster: '#ccaaee',
+    copper_block: '#b87333', exposed_copper: '#8a6a44', weathered_copper: '#5a7a44',
+    oxidized_copper: '#3a6a44', mud: '#4a3a2a', packed_mud: '#6a5a3a', mud_bricks: '#7a6a4a',
+    reinforced_deepslate: '#4a4a3a', sculk: '#0a2a2a', sculk_catalyst: '#1a3a3a',
+    sculk_shrieker: '#2a4a4a', sculk_vein: '#0a2a2a', frogspawn: '#3a5a3a',
+    mangrove_log: '#5a3a2a', mangrove_planks: '#8b6a4a', mangrove_leaves: '#4a7a2a',
+    cherry_log: '#4a3a3a', cherry_planks: '#c4a4a4', cherry_leaves: '#ffaacc',
+    pink_petals: '#ffaaaa', terracotta: '#b07050', concrete: '#888888',
+    white_concrete: '#eeeeee', orange_concrete: '#ff8800', magenta_concrete: '#ff00ff',
+    light_blue_concrete: '#44aaff', yellow_concrete: '#ffdd00', lime_concrete: '#88ff00',
+    pink_concrete: '#ff88aa', gray_concrete: '#555555', light_gray_concrete: '#aaaaaa',
+    cyan_concrete: '#00aaaa', purple_concrete: '#8800ff', blue_concrete: '#0000ff',
+    brown_concrete: '#663300', green_concrete: '#00aa00', red_concrete: '#ff0000',
+    black_concrete: '#111111', wool: '#eeeeee', white_wool: '#eeeeee', orange_wool: '#ffaa44',
+    magenta_wool: '#ff44ff', light_blue_wool: '#88ccff', yellow_wool: '#ffdd44',
+    lime_wool: '#aaff44', pink_wool: '#ff88aa', gray_wool: '#999999', light_gray_wool: '#cccccc',
+    cyan_wool: '#44ffff', purple_wool: '#aa44ff', blue_wool: '#6666ff', brown_wool: '#8b5a2b',
+    green_wool: '#66cc66', red_wool: '#ff6666', black_wool: '#333333',
+    tnt: '#ff4444', sandstone: '#d6c47a', red_sandstone: '#c4a050', quartz_block: '#eeeeee',
+    purpur_block: '#aa88cc', end_rod: '#e0e0e0', chorus_plant: '#6a4a6a', shulker_box: '#cc88cc',
+    sea_lantern: '#ccffff', lantern: '#ffcc88', soul_lantern: '#44ccff',
+    campfire: '#cc6622', soul_campfire: '#4466cc', smoker: '#6e6e6e', blast_furnace: '#6e6e6e',
+    loom: '#8b6a3a', composter: '#6b4f2a', barrel: '#b8955a', bell: '#ffdd44',
+    redstone_lamp: '#ffaa55', piston: '#b8955a', sticky_piston: '#88aa55',
+    redstone_block: '#ff0000', redstone_torch: '#ff4444', repeater: '#ccaa88',
+    observer: '#6e6e6e', daylight_detector: '#8b6a3a', hopper: '#6e6e6e',
+    dropper: '#6e6e6e', dispenser: '#6e6e6e', anvil: '#444444', cauldron: '#444444',
+    water_cauldron: '#3f76e4', lava_cauldron: '#cf5c00', snow_block: '#f0f0f0',
+    slime_block: '#66cc66', honey_block: '#ffaa00', hay_block: '#ffdd44',
+    sponge: '#d4d440', wet_sponge: '#a0a030', prismarine: '#4a9a7a',
+    prismarine_bricks: '#5aaa8a', dark_prismarine: '#3a7a5a',
+    andesite: '#8a8a8a', diorite: '#cccccc', granite: '#aa8866',
+    rooted_dirt: '#5a3a1a', moss_block: '#4a8a3a', azalea: '#6aaa3a',
+    dirt_path: '#d4c47a', stonecutter: '#7a7a7a',
+    rail: '#888888', powered_rail: '#ffaa00', detector_rail: '#cc4444',
+    ladder: '#b8955a', scaffolding: '#d4c47a', bee_nest: '#d4c47a',
+    suspicious_gravel: '#9a8a7a', suspicious_sand: '#d6c47a',
+  };
+  for (const [key, color] of Object.entries(colors)) {
+    if (name.includes(key)) return color;
+  }
+  return '#b0b0b0';
+}
+
+async function topdownScreenshot({ width = 400, height = 400, radius = 40, file_name } = {}) {
+  const { createCanvas } = await import('canvas');
+  const canvas = createCanvas(width, height);
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#1a1a2e';
+  ctx.fillRect(0, 0, width, height);
+
+  // Snapshot position to avoid drift while we yield the event loop between chunks
+  const botPos = { x: bot.entity.position.x, y: bot.entity.position.y, z: bot.entity.position.z };
+  const botYaw = bot.entity.yaw || 0;
+  const scale = Math.min(width, height) / (radius * 2 + 2);
+  const cx = width / 2;
+  const cy = height / 2;
+
+  const w2c = (wx, wz) => ({
+    x: cx + (wx - botPos.x) * scale,
+    y: cy + (wz - botPos.z) * scale,
+  });
+
+  for (let dx = -radius; dx <= radius; dx++) {
+    // Yield event loop every 8 rows — keeps bot responsive during rendering
+    if (dx % 8 === 0) await new Promise(r => setImmediate(r));
+    for (let dz = -radius; dz <= radius; dz++) {
+      const wx = Math.floor(botPos.x) + dx;
+      const wz = Math.floor(botPos.z) + dz;
+      let block = null;
+      for (let dy = 10; dy >= -10; dy--) {
+        const wy = Math.floor(botPos.y) + dy;
+        const b = bot.blockAt(new Vec3(wx, wy, wz));
+        if (b && b.name !== 'air' && b.name !== 'cave_air' && b.name !== 'void_air') {
+          block = b;
+          break;
+        }
+      }
+      if (!block) continue;
+      const pos = w2c(wx, wz);
+      ctx.fillStyle = getBlockColor(block.name);
+      ctx.fillRect(pos.x - scale/2, pos.y - scale/2, scale + 0.5, scale + 0.5);
+    }
+  }
+
+  // === Entity overlay (players, mobs, animals) ===
+  for (const entity of Object.values(bot.entities)) {
+    if (entity === bot.entity) continue;
+    if (!entity || !entity.position) continue;
+    const dist = entity.position.distanceTo(botPos);
+    if (dist > radius) continue;
+    const ep = w2c(entity.position.x, entity.position.z);
+    const isPlayer = entity.type === 'player';
+    const isHostile = ['hostile', 'mob'].includes(entity.type) || ['zombie', 'skeleton', 'creeper', 'spider', 'enderman', 'witch', 'phantom', 'drowned', 'pillager', 'vindicator', 'ravager', 'blaze', 'ghast', 'wither_skeleton', 'piglin_brute'].includes(entity.name);
+    ctx.fillStyle = isPlayer ? '#00ff00' : isHostile ? '#ff4444' : '#ffaa00';
+    ctx.beginPath();
+    ctx.arc(ep.x, ep.y, Math.max(2, scale * 0.7), 0, Math.PI * 2);
+    ctx.fill();
+    if (scale > 3) {
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '8px sans-serif';
+      ctx.fillText(entity.name || entity.username || '?', ep.x + scale, ep.y - 2);
+    }
+  }
+
+  // === Bot dot (red with direction line) ===
+  ctx.fillStyle = '#ff0000';
+  ctx.beginPath();
+  ctx.arc(cx, cy, Math.max(3, scale), 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = '#ff0000';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(cx + Math.sin(botYaw) * scale * 3, cy - Math.cos(botYaw) * scale * 3);
+  ctx.stroke();
+
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '10px sans-serif';
+  ctx.fillText(`Pos: ${Math.floor(botPos.x)}, ${Math.floor(botPos.y)}, ${Math.floor(botPos.z)}`, 4, 12);
+  ctx.fillText(`Holding: ${bot.heldItem?.name || 'hand'}`, 4, 24);
+  ctx.fillText(`Time: ${Math.floor(bot.time.timeOfDay || 0)}`, 4, 36);
+
+  let fname = file_name || `topdown_${(process.env.MC_USERNAME || 'HermesBot')}_${Date.now()}.png`;
+  if (!fname.endsWith('.png')) fname += '.png';
+  const outPath = path.join(SCREENSHOT_DIR, fname);
+  const buf = canvas.toBuffer('image/png');
+  fs.writeFileSync(outPath, buf);
+  return { result: `Topdown screenshot saved: ${outPath}`, path: outPath, width, height };
+}
 
 const ACTIONS = {
   // ── Movement ─────────────────────────────────────
@@ -2535,15 +2773,15 @@ async collect({ block, count = 1 }) {
 
   async chat_to({ player, message }) {
     const b = ensureBot();
-    // Alias for whisper — use native /tell for true server-side private message
-    b.chat(`/tell ${player} ${message}`);
+    // Alias for whisper — use native /msg for true server-side private message
+    b.chat(`/msg ${player} ${message}`);
     rememberSocialEvent({ actor: getMyName(), target: player, kind: 'sent', channel: 'whisper', message });
     return { result: `[→${player}]: ${message}` };
   },
 
   async whisper({ player, message }) {
     const b = ensureBot();
-    b.chat(`/tell ${player} ${message}`);
+    b.chat(`/msg ${player} ${message}`);
     rememberSocialEvent({ actor: getMyName(), target: player, kind: 'sent', channel: 'whisper', message });
     return { result: `[→${player}]: ${message}` };
   },
@@ -3003,9 +3241,9 @@ async collect({ block, count = 1 }) {
     const b = ensureBot();
     if (!teamConfig.team) throw new Error('Not assigned to a team. Use /action/set_team first.');
     
-    // Send to all teammates via /tell
+    // Send to all teammates via /msg
     for (const mate of teamConfig.teammates) {
-      b.chat(`/tell ${mate} [${teamConfig.team.toUpperCase()}] ${message}`);
+      b.chat(`/msg ${mate} [${teamConfig.team.toUpperCase()}] ${message}`);
       await sleep(100); // avoid spam throttle
     }
     teamConfig.teamChat.push({ time: Date.now(), from: config.mc.username, message });
@@ -3047,7 +3285,7 @@ async collect({ block, count = 1 }) {
     // Announce to team
     const msg = message || `Rally at ${teamConfig.rallyPoint.x},${teamConfig.rallyPoint.y},${teamConfig.rallyPoint.z}!`;
     for (const mate of teamConfig.teammates) {
-      b.chat(`/tell ${mate} [RALLY] ${msg}`);
+      b.chat(`/msg ${mate} [RALLY] ${msg}`);
       await sleep(100);
     }
     return { result: `Rally point set and announced to team: ${msg}` };
@@ -3059,7 +3297,7 @@ async collect({ block, count = 1 }) {
     const pos = posObj();
     const fullMsg = `[INTEL] ${message} (at ${pos.x},${pos.y},${pos.z})`;
     for (const mate of teamConfig.teammates) {
-      b.chat(`/tell ${mate} ${fullMsg}`);
+      b.chat(`/msg ${mate} ${fullMsg}`);
       await sleep(100);
     }
     return { result: `Report sent to team: ${fullMsg}` };
@@ -3073,80 +3311,109 @@ async collect({ block, count = 1 }) {
   },
 
   // ──────────────────────────────────────────────────────────────────
-  // Screenshot — Prismarine-viewer + Puppeteer (replaces mine-photo)
+  // Screenshot — Prismarine-viewer + Puppeteer (Pi4-optimised)
   // ──────────────────────────────────────────────────────────────────
 
-  async screenshot({ width = 1280, height = 720, file_name }) {
+  async screenshot({ width = 400, height = 400, file_name, mode = 'topdown' }) {
     ensureBot();
+    // On Pi4/headless environments, prismarine-viewer + puppeteer + WebGL does not work
+    // reliably. Use a fast node-canvas top-down block map instead.
+    if (mode === 'topdown' || !viewerBrowser) {
+      try {
+        const r = await topdownScreenshot({ width, height, radius: Math.min(Math.floor(Math.min(width, height) / 10), 20), file_name });
+        log(`[Screenshot] Topdown saved ${r.path}`);
+        return r;
+      } catch (err) {
+        log(`[Screenshot] Topdown failed: ${err.message}`);
+        // Fall through to puppeteer attempt if topdown fails and mode was not explicitly topdown
+        if (mode === 'topdown') throw err;
+      }
+    }
+    // Legacy 3D viewer pipeline (kept for environments where WebGL works)
     const viewerPort = config.api.port + 1000;
+    const SCREENSHOT_TIMEOUT_MS = 60000;
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(`Screenshot timed out after ${SCREENSHOT_TIMEOUT_MS}ms`)), SCREENSHOT_TIMEOUT_MS);
+    });
 
-    // Lazy-init puppeteer browser (reuse across calls)
-    if (!viewerBrowser) {
-      log('[Screenshot] Launching puppeteer...');
-      viewerBrowser = await puppeteer.launch({
-        headless: 'new',
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--use-angle=swiftshader',
-        ],
-      });
-    }
+    const doScreenshot = async () => {
+      if (!viewerBrowser) {
+        log('[Screenshot] Launching puppeteer...');
+        viewerBrowser = await puppeteer.launch({
+          headless: 'new',
+          executablePath: '/usr/bin/chromium',
+          args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-gpu',
+            '--single-process',
+            '--no-zygote',
+            '--disable-dev-shm-usage',
+          ],
+        });
+      }
 
-    if (!viewerPage) {
-      viewerPage = await viewerBrowser.newPage();
+      if (!viewerPage) {
+        viewerPage = await viewerBrowser.newPage();
+        await viewerPage.setViewport({ width, height });
+        log(`[Screenshot] Opening viewer at :${viewerPort}...`);
+        await viewerPage.goto(`http://localhost:${viewerPort}`, {
+          waitUntil: 'domcontentloaded',
+          timeout: 30000,
+        });
+        log('[Screenshot] Page loaded, waiting for WebGL render...');
+        await new Promise(r => setTimeout(r, 8000));
+        log('[Screenshot] Render delay complete');
+      }
+
       await viewerPage.setViewport({ width, height });
-      log(`[Screenshot] Opening viewer at :${viewerPort}...`);
-      await viewerPage.goto(`http://localhost:${viewerPort}`, {
-        waitUntil: 'networkidle2',
-        timeout: 30000,
-      });
-      // Allow WebGL/Three.js to render a few frames
-      await new Promise(r => setTimeout(r, 4000));
-    }
+      let fname = file_name || `screenshot_${config.mc.username}_${Date.now()}.png`;
+      if (!fname.endsWith('.png')) fname += '.png';
+      const outPath = path.join(SCREENSHOT_DIR, fname);
+      await viewerPage.screenshot({ path: outPath, fullPage: false });
+      log(`[Screenshot] Saved ${outPath}`);
 
-    await viewerPage.setViewport({ width, height });
-    let fname = file_name || `screenshot_${config.mc.username}_${Date.now()}.png`;
-    if (!fname.endsWith('.png')) fname += '.png';
-    const outPath = path.join(SCREENSHOT_DIR, fname);
-    await viewerPage.screenshot({ path: outPath, fullPage: false });
-    log(`[Screenshot] Saved ${outPath}`);
-
-    return {
-      result: `Screenshot saved: ${outPath}`,
-      path: outPath,
-      width,
-      height,
+      return {
+        result: `Screenshot saved: ${outPath}`,
+        path: outPath,
+        width,
+        height,
+      };
     };
+
+    try {
+      return await Promise.race([doScreenshot(), timeoutPromise]);
+    } catch (err) {
+      log(`[Screenshot] Error: ${err.message}`);
+      try { if (viewerPage) await viewerPage.close(); } catch {}
+      try { if (viewerBrowser) await viewerBrowser.close(); } catch {}
+      viewerPage = null;
+      viewerBrowser = null;
+      throw err;
+    }
   },
+
 
   // ═══════════════════════════════════════════════════════════════════
   // Planning — Persistent goal & task state
   // ═══════════════════════════════════════════════════════════════════
 
-  async plan({ action, goal, tasks, task_id, status, result, attempt, expected_epoch }) {
-    const plan = loadPlan() || { goal: '', tasks: [], epoch: 0, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
-
-    // Helper to validate epoch for mutating actions
-    const validateEpoch = () => {
-      if (expected_epoch !== undefined && expected_epoch !== plan.epoch) {
-        throw new Error(`STALE_PLAN: expected epoch ${expected_epoch} but current is ${plan.epoch}. Refetch and retry.`);
-      }
-    };
+  async plan({ action, goal, tasks, task_id, status, result, attempt }) {
+    const plan = loadPlan() || { goal: '', tasks: [], created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
 
     if (action === 'set_goal') {
       if (!goal) throw new Error('goal is required for set_goal');
-      validateEpoch();
       plan.goal = goal;
       plan.tasks = tasks || [];
       plan.created_at = new Date().toISOString();
+      plan.updated_at = new Date().toISOString();
       savePlan(plan);
       broadcastDashboard('plan', plan);
-      return { result: `Goal set: ${goal} (${plan.tasks.length} tasks)`, epoch: plan.epoch };
+      return { result: `Goal set: ${goal} (${plan.tasks.length} tasks)` };
     }
 
     if (action === 'get_plan') {
-      if (!plan.goal) return { result: 'No active goal. Use set_goal first.', epoch: plan.epoch };
+      if (!plan.goal) return { result: 'No active goal. Use set_goal first.' };
       const done = plan.tasks.filter(t => t.status === 'done').length;
       const total = plan.tasks.length;
       const active = plan.tasks.find(t => t.status === 'in_progress');
@@ -3160,48 +3427,47 @@ async collect({ block, count = 1 }) {
           return `  [${sym}] ${i + 1}. ${t.description}${att}`;
         }),
       ];
-      return { result: lines.join('\n'), plan, epoch: plan.epoch };
+      return { result: lines.join('\n'), plan };
     }
 
     if (action === 'update_task') {
       if (task_id == null) throw new Error('task_id is required for update_task');
-      validateEpoch();
       const idx = parseInt(task_id);
       if (idx < 0 || idx >= plan.tasks.length) throw new Error(`Invalid task_id ${idx}`);
       if (status) plan.tasks[idx].status = status;
       if (result !== undefined) plan.tasks[idx].result = result;
       if (attempt !== undefined) plan.tasks[idx].attempts = (plan.tasks[idx].attempts || 0) + 1;
+      plan.updated_at = new Date().toISOString();
       savePlan(plan);
       broadcastDashboard('plan', plan);
-      return { result: `Updated task ${idx + 1}: ${plan.tasks[idx].description} → ${status || 'updated'}`, epoch: plan.epoch };
+      return { result: `Updated task ${idx + 1}: ${plan.tasks[idx].description} → ${status || 'updated'}` };
     }
 
     if (action === 'add_task') {
       if (!goal) throw new Error('goal (task description) is required for add_task');
-      validateEpoch();
       plan.tasks.push({ description: goal, status: status || 'pending', attempts: 0 });
+      plan.updated_at = new Date().toISOString();
       savePlan(plan);
       broadcastDashboard('plan', plan);
-      return { result: `Added task: ${goal}`, epoch: plan.epoch };
+      return { result: `Added task: ${goal}` };
     }
 
     if (action === 'remove_task') {
       if (task_id == null) throw new Error('task_id is required for remove_task');
-      validateEpoch();
       const idx = parseInt(task_id);
       if (idx < 0 || idx >= plan.tasks.length) throw new Error(`Invalid task_id ${idx}`);
       const removed = plan.tasks.splice(idx, 1)[0];
+      plan.updated_at = new Date().toISOString();
       savePlan(plan);
       broadcastDashboard('plan', plan);
-      return { result: `Removed task: ${removed.description}`, epoch: plan.epoch };
+      return { result: `Removed task: ${removed.description}` };
     }
 
     if (action === 'clear_goal') {
-      validateEpoch();
-      const emptyPlan = { goal: '', tasks: [], epoch: plan.epoch + 1, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+      const emptyPlan = { goal: '', tasks: [], created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
       savePlan(emptyPlan);
       broadcastDashboard('plan', emptyPlan);
-      return { result: 'Goal cleared.', epoch: emptyPlan.epoch };
+      return { result: 'Goal cleared.' };
     }
 
     throw new Error(`Unknown plan action: ${action}`);
@@ -3270,11 +3536,6 @@ const httpServer = http.createServer(async (req, res) => {
         return respond(res, 200, { ok: true, data: getFullState() });
       }
 
-      // Aliases for /bot/* consistency
-      if (path === '/bot/status') {
-        return respond(res, 200, { ok: true, data: getFullState() });
-      }
-
       if (path === '/bot/effects') {
         const b = ensureBot();
         const effects = {};
@@ -3304,16 +3565,7 @@ const httpServer = http.createServer(async (req, res) => {
         return respond(res, 200, { ok: true, data: getInventory() });
       }
 
-      if (path === '/bot/inventory') {
-        return respond(res, 200, { ok: true, data: getInventory() });
-      }
-
       if (path === '/nearby') {
-        const radius = parseInt(url.searchParams.get('radius') || '32');
-        return respond(res, 200, { ok: true, data: getNearby(radius) });
-      }
-
-      if (path === '/bot/nearby') {
         const radius = parseInt(url.searchParams.get('radius') || '32');
         return respond(res, 200, { ok: true, data: getNearby(radius) });
       }
@@ -3332,6 +3584,24 @@ const httpServer = http.createServer(async (req, res) => {
       if (path === '/scene') {
         const range = parseInt(url.searchParams.get('range') || '16');
         return respond(res, 200, { ok: true, data: buildSceneSummary({ range: Math.min(range, 24) }) });
+      }
+
+      // 3D volume scan for construction planning
+      if (path === '/volume') {
+        const x1 = parseInt(url.searchParams.get('x1') || '0');
+        const y1 = parseInt(url.searchParams.get('y1') || '0');
+        const z1 = parseInt(url.searchParams.get('z1') || '0');
+        const x2 = parseInt(url.searchParams.get('x2') || '0');
+        const y2 = parseInt(url.searchParams.get('y2') || '0');
+        const z2 = parseInt(url.searchParams.get('z2') || '0');
+        if ([x1,y1,z1,x2,y2,z2].some(v => Number.isNaN(v))) {
+          return respond(res, 400, { ok: false, error: 'x1,y1,z1,x2,y2,z2 required' });
+        }
+        try {
+          return respond(res, 200, { ok: true, data: scanVolume(x1, y1, z1, x2, y2, z2) });
+        } catch (err) {
+          return respond(res, 400, { ok: false, error: err.message });
+        }
       }
 
       // Screenshot via prismarine-viewer + puppeteer
@@ -3513,32 +3783,6 @@ const httpServer = http.createServer(async (req, res) => {
         return respond(res, 200, { ok: true, data: MC_REGISTRY });
       }
 
-      // Serve TTS audio files generated by the gateway adapter
-      const ttsMatch = path.match(/^\/tts\/audio\/(.+)$/);
-      if (ttsMatch) {
-        const filename = ttsMatch[1].replace(/[^a-zA-Z0-9._-]/g, '');
-        if (!filename) return respond(res, 400, { ok: false, error: 'Invalid filename' });
-        const ttsDir = '/tmp/daemoncraft-tts';
-        const filePath = `${ttsDir}/${filename}`;
-        // Belt-and-suspenders: ensure the resolved path stays inside ttsDir
-        if (!filePath.startsWith(ttsDir + '/')) {
-          return respond(res, 400, { ok: false, error: 'Invalid filename' });
-        }
-        try {
-          if (!fs.existsSync(filePath)) {
-            return respond(res, 404, { ok: false, error: 'Audio file not found' });
-          }
-          const ext = filePath.slice(filePath.lastIndexOf('.')).toLowerCase();
-          const mime = ext === '.mp3' ? 'audio/mpeg' : ext === '.ogg' ? 'audio/ogg' : ext === '.opus' ? 'audio/opus' : 'audio/mpeg';
-          res.writeHead(200, { 'Content-Type': mime, 'Access-Control-Allow-Origin': '*' });
-          const stream = fs.createReadStream(filePath);
-          stream.pipe(res);
-          return;
-        } catch (err) {
-          return respond(res, 500, { ok: false, error: 'Failed to serve audio: ' + err.message });
-        }
-      }
-
       const blueprintMatch = path.match(/^\/blueprints\/(.+)$/);
       if (blueprintMatch) {
         const name = blueprintMatch[1].replace(/[^a-zA-Z0-9_-]/g, '');
@@ -3569,38 +3813,6 @@ const httpServer = http.createServer(async (req, res) => {
         return respond(res, 200, { ok: true, result: 'Task cancelled.', state: briefState() });
       }
 
-      // Interrupt agent loop LLM turn (not just physical actions)
-      if (path === '/agent/interrupt') {
-        const b = ensureBot();
-        b.pathfinder.setGoal(null);
-        try { b.stopDigging(); } catch {}
-        if (currentTask && currentTask.status === 'running') {
-          currentTask.status = 'cancelled';
-        }
-        // Broadcast to all WebSocket clients so agent_loop can abort its LLM turn
-        broadcastDashboard('interrupt', { reason: body?.reason || 'gateway_request', time: Date.now() });
-        return respond(res, 200, { ok: true, result: 'Agent interrupted.', state: briefState() });
-      }
-
-      // Direct plan mutation — POST /plan/update
-      // Allows gateway (or any authorized client) to mutate the plan with epoch validation.
-      if (path === '/plan/update') {
-        const { action, goal, tasks, task_id, status, result, attempt, expected_epoch } = body || {};
-        if (!action) {
-          return respond(res, 400, { ok: false, error: "Missing 'action' field" });
-        }
-        try {
-          const result = await ACTIONS.plan({ action, goal, tasks, task_id, status, result, attempt, expected_epoch });
-          return respond(res, 200, { ok: true, ...result });
-        } catch (err) {
-          if (err.message?.startsWith('STALE_PLAN')) {
-            const current = loadPlan();
-            return respond(res, 409, { ok: false, error: err.message, epoch: current?.epoch ?? 0 });
-          }
-          return respond(res, 400, { ok: false, error: err.message });
-        }
-      }
-
       // Agent turn log — POST /agent/log
       if (path === '/agent/log') {
         const turn = body || {};
@@ -3629,42 +3841,12 @@ const httpServer = http.createServer(async (req, res) => {
         return respond(res, 200, { ok: true });
       }
 
-      // Heartbeat context — POST /heartbeat/context
-      // Receives world-state/perception snapshot from agent_loop and broadcasts
-      // it as a WebSocket heartbeat_context event to all connected clients
-      // (gateway adapter + dashboard).
-      if (path === '/heartbeat/context') {
-        const ctx = body || {};
-        const payload = {
-          timestamp: Date.now(),
-          bot_username: config.mc.username,
-          status: ctx.status || null,
-          nearby: ctx.nearby || null,
-          inventory: ctx.inventory || null,
-          plan: ctx.plan || null,
-          events: ctx.events || [],
-        };
-        broadcastDashboard('heartbeat_context', payload);
-        return respond(res, 200, { ok: true });
-      }
-
       // QuestEngine notification — POST /quest/notify
       // Broadcasts a quest_event to all WebSocket clients (agent loop + dashboard).
       if (path === '/quest/notify') {
         const { message, event_type, from_phase, to_phase } = body || {};
         broadcastDashboard('quest_event', { message, event_type, from_phase, to_phase });
         return respond(res, 200, { ok: true });
-      }
-
-      // TTS play request — POST /tts/play
-      // Relays audio playback request to all dashboard WebSocket clients.
-      if (path === '/tts/play') {
-        const { audio_url, chat_id } = body || {};
-        if (!audio_url || typeof audio_url !== 'string') {
-          return respond(res, 400, { ok: false, error: "missing or invalid 'audio_url'" });
-        }
-        broadcastDashboard('tts_play', { audio_url, chat_id: chat_id || null });
-        return respond(res, 200, { ok: true, result: 'TTS relayed to dashboards.' });
       }
 
       // Execute a command as the bot and return the server response
@@ -3710,11 +3892,9 @@ const httpServer = http.createServer(async (req, res) => {
 
       // Send chat message from agent to Minecraft — POST /chat/send
       // Optional body.as: "Server" | player_name — sends as that identity instead of the bot.
-      // Optional body.target: "broadcast" | player_name — destination. Non-broadcast targets are always whispered.
       if (path === '/chat/send') {
         const message = body?.message;
         const sender = body?.as;
-        const target = body?.target;
         if (!message || typeof message !== 'string') {
           return respond(res, 400, { ok: false, error: "missing or invalid 'message'" });
         }
@@ -3736,28 +3916,13 @@ const httpServer = http.createServer(async (req, res) => {
             b.chat(tellrawCmd);
             chatFrom = sender;
           }
-          chatLog.push({
-            time: Date.now(),
-            from: chatFrom,
-            message,
-            self: chatFrom.toLowerCase() === botName.toLowerCase(),
-            world: b?.game?.dimension || 'unknown',
-            uuid: b?.player?.uuid || b?.uuid || null,
-          });
+          chatLog.push({ time: Date.now(), from: chatFrom, message, self: chatFrom.toLowerCase() === botName.toLowerCase() });
           if (chatLog.length > MAX_LOG) chatLog.shift();
           broadcastDashboard('chat', chatLog.slice(-30));
           return respond(res, 200, { ok: true, result: 'Message sent.', from: chatFrom });
         }
 
-        // Gateway-routed messaging: directed whisper or broadcast
-        if (target && typeof target === 'string' && target.toLowerCase() !== 'broadcast') {
-          // Directed messages are always delivered as whispers
-          const result = await sendToMcChat(message, { source: "http", target });
-          return respond(res, 200, { ...result, target });
-        }
-
-        // Default: broadcast / public chat
-        const result = await sendToMcChat(message, { source: "http" });
+        const result = await sendToMcChat(message, { source: "tool" });
         return respond(res, 200, result);
       }
 
@@ -3824,8 +3989,12 @@ const httpServer = http.createServer(async (req, res) => {
         }
         const taskId = `${actionName}_${Date.now()}`;
         currentTask = { id: taskId, action: actionName, status: 'running', started: Date.now(), result: null, error: null };
-        // Fire and forget — runs in background
-        actionFn(body).then(result => {
+        // Background tasks get a 5-minute safety timeout so they can't hang forever
+        const TASK_TIMEOUT_MS = 300000;
+        const taskTimeout = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(`Background task "${actionName}" timed out after ${TASK_TIMEOUT_MS}ms`)), TASK_TIMEOUT_MS)
+        );
+        Promise.race([actionFn(body), taskTimeout]).then(result => {
           if (currentTask && currentTask.id === taskId && currentTask.status === 'running') {
             currentTask.status = 'done';
             currentTask.result = result;
@@ -3865,11 +4034,24 @@ const httpServer = http.createServer(async (req, res) => {
         return respond(res, 400, { ok: false, error: `Unknown action "${actionName}". Available: ${available}` });
       }
 
-      const result = await actionFn(body);
-      actionHistory.push({ action: actionName, status: 'done', time: Date.now() });
-      if (actionHistory.length > MAX_ACTION_HISTORY) actionHistory.shift();
-      broadcastDashboard('actions', actionHistory.slice(-50));
-      return respond(res, 200, { ok: true, ...result, state: briefState() });
+      // Global 30s timeout (60s for screenshot to cover render + vision analysis)
+      const ACTION_TIMEOUT_MS = actionName === "screenshot" ? 60000 : 30000;
+      const actionTimeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`Action "${actionName}" timed out after ${ACTION_TIMEOUT_MS}ms`)), ACTION_TIMEOUT_MS)
+      );
+
+      try {
+        const result = await Promise.race([actionFn(body), actionTimeout]);
+        actionHistory.push({ action: actionName, status: 'done', time: Date.now() });
+        if (actionHistory.length > MAX_ACTION_HISTORY) actionHistory.shift();
+        broadcastDashboard('actions', actionHistory.slice(-50));
+        return respond(res, 200, { ok: true, ...result, state: briefState() });
+      } catch (err) {
+        actionHistory.push({ action: actionName, status: 'error', time: Date.now() });
+        if (actionHistory.length > MAX_ACTION_HISTORY) actionHistory.shift();
+        broadcastDashboard('actions', actionHistory.slice(-50));
+        return respond(res, 500, { ok: false, error: err.message, state: briefState() });
+      }
     }
 
     respond(res, 404, { ok: false, error: `Not found: ${req.method} ${path}` });
