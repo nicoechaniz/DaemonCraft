@@ -609,6 +609,16 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 30):
                 send_agent_heartbeat(next_turn_in=interval, turn_in_progress=False)
                 continue
 
+            # Pause check — dashboard can pause heartbeat context without restarting service
+            try:
+                with urllib.request.urlopen(f"{MC_API_URL}/agent/paused", timeout=2) as _pr:
+                    if json.loads(_pr.read().decode()).get("paused"):
+                        print("[loop] Paused by dashboard — skipping turn", flush=True)
+                        send_agent_heartbeat(next_turn_in=None, turn_in_progress=False)
+                        continue
+            except Exception:
+                pass
+
             # Gather world state
             print(f"[loop] Turn {turn_count} — gathering state...", flush=True)
             turn_in_progress.set()

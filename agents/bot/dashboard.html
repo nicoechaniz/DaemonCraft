@@ -316,6 +316,18 @@
     cursor: not-allowed;
   }
   .bp-save-bar button:hover:not(:disabled) { background: #2ea043; }
+  /* Admin Controls panel */
+  .adm-row { display: flex; gap: 8px; align-items: center; padding: 6px 0; flex-wrap: wrap; }
+  .adm-row label { color: #8b949e; font-size: 0.8rem; min-width: 72px; }
+  .adm-row input[type=text], .adm-row input[type=number], .adm-row input[type=password] {
+    background: #0d1117; border: 1px solid #30363d; color: #c9d1d9;
+    padding: 4px 8px; border-radius: 4px; font-size: 0.82rem; }
+  .adm-row button {
+    background: #21262d; border: 1px solid #30363d; color: #c9d1d9;
+    padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.8rem; }
+  .adm-row button:hover { background: #30363d; }
+  #adm-status { font-size: 0.78rem; color: #8b949e; padding-top: 4px; }
+  #adm-agent-state { font-size: 0.78rem; color: #7ee787; }
 </style>
 </head>
 <body>
@@ -388,6 +400,31 @@
     <div class="panel-header" data-panel="agent" id="agent-header">Bot Mind — Raw Prompts & Responses<button class="panel-toggle">▼</button></div>
     <div class="panel-body" id="agent-panel">
       <div class="empty">Waiting for agent turns...</div>
+    </div>
+  </div>
+
+  <!-- Admin Controls -->
+  <div class="panel">
+    <div class="panel-header" data-panel="admin">Admin Controls<button class="panel-toggle">▼</button></div>
+    <div class="panel-body" id="admin-panel">
+      <div class="adm-row">
+        <label>Servidor MC</label>
+        <input id="adm-host" type="text" style="width:140px" />
+        <span style="color:#8b949e">:</span>
+        <input id="adm-port" type="number" style="width:72px" />
+        <button onclick="adminSwitchServer()">Switch &amp; Restart</button>
+      </div>
+      <div class="adm-row">
+        <label>Token</label>
+        <input id="adm-token" type="password" placeholder="(vacío si no hay token)" style="width:200px" />
+      </div>
+      <div class="adm-row">
+        <button onclick="adminRestart()">Restart Service</button>
+        <button onclick="adminPause()">⏸ Pause Agent</button>
+        <button onclick="adminResume()">▶ Resume Agent</button>
+        <span id="adm-agent-state"></span>
+      </div>
+      <div id="adm-status"></div>
     </div>
   </div>
 </div>
@@ -1350,6 +1387,80 @@ loadPanelState();
 fetchBlueprints();
 
 connect();
+
+// ── Admin Controls ─────────────────────────────────────────
+function adminToken() {
+  return document.getElementById('adm-token')?.value || '';
+}
+
+async function adminLoadConfig() {
+  try {
+    const cfg = await fetch('/config').then(r => r.json());
+    const hostEl = document.getElementById('adm-host');
+    const portEl = document.getElementById('adm-port');
+    if (hostEl && !hostEl.value) hostEl.value = cfg.mc_host || '';
+    if (portEl && !portEl.value) portEl.value = cfg.mc_port || '';
+    const status = document.getElementById('adm-status');
+    if (status) status.textContent = `Conectado a ${cfg.mc_host}:${cfg.mc_port} como ${cfg.username}`;
+  } catch {}
+  try {
+    const p = await fetch('/agent/paused').then(r => r.json());
+    const el = document.getElementById('adm-agent-state');
+    if (el) el.textContent = p.paused ? '⏸ Pausado' : '● Corriendo';
+  } catch {}
+}
+
+async function adminRestart() {
+  if (!confirm('¿Reiniciar el servicio DaemonCraft?')) return;
+  const headers = {};
+  const tok = adminToken();
+  if (tok) headers['Authorization'] = `Bearer ${tok}`;
+  const data = await fetch('/admin/restart', { method: 'POST', headers }).then(r => r.json()).catch(e => ({ error: e.message }));
+  const el = document.getElementById('adm-status');
+  if (el) el.textContent = data.message || data.error || 'Sent';
+}
+
+async function adminSwitchServer() {
+  const host = document.getElementById('adm-host')?.value.trim();
+  const port = parseInt(document.getElementById('adm-port')?.value);
+  if (!host || !port) return alert('Ingresá host y puerto');
+  if (!confirm(`¿Cambiar servidor a ${host}:${port} y reiniciar?`)) return;
+  const tok = adminToken();
+  const headers = { 'Content-Type': 'application/json' };
+  if (tok) headers['Authorization'] = `Bearer ${tok}`;
+  const data = await fetch('/admin/config', { method: 'POST', headers, body: JSON.stringify({ mc_host: host, mc_port: port }) })
+    .then(r => r.json()).catch(e => ({ error: e.message }));
+  const el = document.getElementById('adm-status');
+  if (el) el.textContent = data.message || data.error || 'Sent';
+}
+
+async function adminPause() {
+  const tok = adminToken();
+  const headers = tok ? { 'Authorization': `Bearer ${tok}` } : {};
+  const data = await fetch('/admin/pause', { method: 'POST', headers }).then(r => r.json()).catch(e => ({ error: e.message }));
+  const el = document.getElementById('adm-agent-state');
+  if (el) el.textContent = data.ok ? '⏸ Pausado' : (data.error || 'Error');
+}
+
+async function adminResume() {
+  const tok = adminToken();
+  const headers = tok ? { 'Authorization': `Bearer ${tok}` } : {};
+  const data = await fetch('/admin/resume', { method: 'POST', headers }).then(r => r.json()).catch(e => ({ error: e.message }));
+  const el = document.getElementById('adm-agent-state');
+  if (el) el.textContent = data.ok ? '● Corriendo' : (data.error || 'Error');
+}
+
+// Persist token in localStorage
+document.addEventListener('DOMContentLoaded', () => {
+  const tokEl = document.getElementById('adm-token');
+  if (tokEl) {
+    tokEl.value = localStorage.getItem('dc_admin_token') || '';
+    tokEl.addEventListener('input', e => localStorage.setItem('dc_admin_token', e.target.value));
+  }
+  // Pre-load config on page load so inputs are always populated
+  adminLoadConfig();
+});
+
 </script>
 <audio id="tts-player" preload="none" style="display:none"></audio>
 </body>

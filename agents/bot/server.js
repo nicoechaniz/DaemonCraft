@@ -150,10 +150,19 @@ function savePlan(plan) {
 // Configuration
 // ═══════════════════════════════════════════════════════════════════
 
+// Override file — written by POST /admin/config, loaded at startup
+const BOT_OVERRIDE_PATH = path.join(path.dirname(new URL(import.meta.url).pathname), "bot-override.json");
+let fileOverrides = {};
+try {
+  if (fs.existsSync(BOT_OVERRIDE_PATH)) {
+    fileOverrides = JSON.parse(fs.readFileSync(BOT_OVERRIDE_PATH, "utf8"));
+  }
+} catch (_) {}
+
 const config = {
   mc: {
-    host: process.env.MC_HOST || 'localhost',
-    port: parseInt(process.env.MC_PORT || '25565'),
+    host: fileOverrides.mc_host || process.env.MC_HOST || 'localhost',
+    port: fileOverrides.mc_port || parseInt(process.env.MC_PORT || '25565'),
     username: process.env.MC_USERNAME || 'HermesBot',
     auth: process.env.MC_AUTH || 'offline',
   },
@@ -209,6 +218,7 @@ let actionHistory = []; // { action, status, time }
 const MAX_ACTION_HISTORY = 100;
 let agentLog = []; // { turn, time, prompt, response, tool_calls, error }
 const MAX_AGENT_LOG = 50;
+let agentPaused = false;
 let agentHeartbeat = { nextTurnIn: null, turnInProgress: false }; // countdown for dashboard
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
@@ -3240,13 +3250,22 @@ function respond(res, status, data) {
   res.end(JSON.stringify(data));
 }
 
+function requireAdminToken(req, res) {
+  const token = process.env.DASHBOARD_TOKEN;
+  if (!token) return true;
+  const auth = req.headers['authorization'] || '';
+  if (auth === `Bearer ${token}`) return true;
+  respond(res, 401, { ok: false, error: 'Unauthorized' });
+  return false;
+}
+
 const httpServer = http.createServer(async (req, res) => {
   // CORS preflight
   if (req.method === 'OPTIONS') {
     res.writeHead(200, {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     });
     return res.end();
   }
@@ -3264,6 +3283,21 @@ const httpServer = http.createServer(async (req, res) => {
           username: config.mc.username,
           server: `${config.mc.host}:${config.mc.port}`,
         });
+      }
+
+      if (path === '/config') {
+        return respond(res, 200, {
+          ok: true,
+          mc_host:  config.mc.host,
+          mc_port:  config.mc.port,
+          username: config.mc.username,
+          auth:     config.mc.auth,
+          api_port: config.api.port,
+        });
+      }
+
+      if (path === '/agent/paused') {
+        return respond(res, 200, { ok: true, paused: agentPaused });
       }
 
       if (path === '/status') {
@@ -3850,6 +3884,39 @@ const httpServer = http.createServer(async (req, res) => {
       // Synchronous action: POST /action/ACTION (still supported for quick stuff)
       const actionMatch = path.match(/^\/action\/(\w+)$/);
       if (!actionMatch) {
+      // ── Admin: restart, config switch, pause/resume ─────────────
+      if (path === '/admin/restart') {
+        if (!requireAdminToken(req, res)) return;
+        respond(res, 200, { ok: true, message: 'Restarting in 1s…' });
+        setTimeout(() => process.exit(0), 1000);
+        return;
+      }
+
+      if (path === '/admin/config') {
+        if (!requireAdminToken(req, res)) return;
+        const { mc_host, mc_port } = body;
+        if (!mc_host || !mc_port) return respond(res, 400, { ok: false, error: 'mc_host and mc_port required' });
+        const current = fs.existsSync(BOT_OVERRIDE_PATH)
+          ? JSON.parse(fs.readFileSync(BOT_OVERRIDE_PATH, 'utf8'))
+          : {};
+        fs.writeFileSync(BOT_OVERRIDE_PATH, JSON.stringify({ ...current, mc_host, mc_port: parseInt(mc_port) }, null, 2));
+        respond(res, 200, { ok: true, mc_host, mc_port, message: 'Config saved, restarting…' });
+        setTimeout(() => process.exit(0), 1000);
+        return;
+      }
+
+      if (path === '/admin/pause') {
+        if (!requireAdminToken(req, res)) return;
+        agentPaused = true;
+        return respond(res, 200, { ok: true, paused: true });
+      }
+
+      if (path === '/admin/resume') {
+        if (!requireAdminToken(req, res)) return;
+        agentPaused = false;
+        return respond(res, 200, { ok: true, paused: false });
+      }
+
         // Special: /connect
         if (path === '/connect') {
           await createBot();
