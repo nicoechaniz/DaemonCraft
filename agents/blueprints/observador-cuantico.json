@@ -1,0 +1,286 @@
+{
+  "metadata": {
+    "title": "El Observador Cuántico",
+    "theme": "Un laboratorio de computación cuántica ha perdido el control de sus qubits. Solo un observador consciente puede colapsar la función de onda y restaurar la realidad.",
+    "tone": "Técnico, misterioso, desafiante",
+    "author": "CompAII",
+    "version": "1.0"
+  },
+  "setting": {
+    "biome": "snowy_taiga",
+    "center": {
+      "x": 500,
+      "y": 70,
+      "z": 500
+    },
+    "radius": 60,
+    "time_lock": "midnight",
+    "weather_lock": "clear"
+  },
+  "init": {
+    "description": "Setup sensors for the quantum laboratory adventure.",
+    "sensors": [
+      {
+        "name": "dc_q_llegada",
+        "criterion": "dummy",
+        "poll_command": "/execute as @a at @s positioned 500 70 500 if entity @s[distance=..25] run scoreboard players set @s dc_q_llegada 1"
+      },
+      {
+        "name": "dc_q_superposicion",
+        "criterion": "dummy",
+        "poll_command": "/execute as @a if score @s dc_q_llegada matches 1 at @s positioned 500 70 500 if entity @s[distance=..8] run scoreboard players set @s dc_q_superposicion 1"
+      },
+      {
+        "name": "dc_q_entrelazado",
+        "criterion": "dummy",
+        "poll_command": "/execute as @a if score @s dc_q_superposicion matches 1 at @s positioned 510 70 510 if entity @s[distance=..5] run scoreboard players set @s dc_q_entrelazado 1"
+      },
+      {
+        "name": "dc_q_colapso",
+        "criterion": "dummy",
+        "poll_command": "/execute as @a if score @s dc_q_entrelazado matches 1 at @s positioned 490 70 490 if entity @s[distance=..3] run scoreboard players set @s dc_q_colapso 1"
+      }
+    ]
+  },
+  "cleanup": {
+    "description": "Remove all quantum sensors when adventure ends.",
+    "action": "mc_story(action='cleanup_sensors')"
+  },
+  "phases": [
+    {
+      "name": "llegada",
+      "description": "El jugador descubre el Laboratorio de Computación Cuántica aislado en la taiga nevada.",
+      "timeout_minutes": 30,
+      "trigger": {
+        "type": "scoreboard",
+        "description": "Player gets within 25 blocks of the lab center (500, 70, 500)",
+        "sensor_command": "/execute as @a at @s positioned 500 70 500 if entity @s[distance=..25] run scoreboard players set @s dc_q_llegada 1",
+        "check_command": "/scoreboard players get PLAYER dc_q_llegada",
+        "expected_value": 1
+      },
+      "objectives": [
+        {
+          "id": 0,
+          "title": "Localizar el Laboratorio Cuántico",
+          "description": "Una señal de emergencia emana de las coordenadas (500, ~, 500). Investiga la fuente."
+        }
+      ],
+      "events": [
+        {
+          "type": "command",
+          "description": "Spawn particles around the lab entrance",
+          "command": "/particle portal 500 72 500 2 2 2 0.1 100 force"
+        },
+        {
+          "type": "chat",
+          "as": "narrator",
+          "lines": [
+            "SAY: El aire aquí se siente... incierto. Como si las posibilidades aún no se hubieran decidido.",
+            "SAY: Frente a ti, el Laboratorio Schrödinger. Las luces parpadean en superposición: encendidas y apagadas al mismo tiempo."
+          ]
+        }
+      ],
+      "flags": {
+        "llego_laboratorio": false,
+        "ignoro_senal": false
+      }
+    },
+    {
+      "name": "superposicion",
+      "description": "El jugador debe atravesar la Sala de Superposición, donde dos caminos existen simultáneamente hasta ser observados.",
+      "timeout_minutes": 40,
+      "trigger": {
+        "type": "scoreboard",
+        "description": "Player enters the lab building (within 8 blocks of center)",
+        "sensor_command": "/execute as @a if score @s dc_q_llegada matches 1 at @s positioned 500 70 500 if entity @s[distance=..8] run scoreboard players set @s dc_q_superposicion 1",
+        "check_command": "/scoreboard players get PLAYER dc_q_superposicion",
+        "expected_value": 1
+      },
+      "objectives": [
+        {
+          "id": 1,
+          "title": "Resolver el Puzzle de Superposición",
+          "description": "Dos puertas, una sola realidad. Elige sabiamente... o no elijas en absoluto."
+        }
+      ],
+      "events": [
+        {
+          "type": "command",
+          "description": "Spawn quantum cats (cats in two states)",
+          "command": "/summon cat 498 70 498 {CustomName:'\"Qubit A\"',CollarColor:15}"
+        },
+        {
+          "type": "command",
+          "description": "Spawn second quantum cat",
+          "command": "/summon cat 502 70 502 {CustomName:'\"Qubit B\"',CollarColor:0}"
+        },
+        {
+          "type": "chat",
+          "as": "narrator",
+          "lines": [
+            "SAY: Bienvenido al núcleo. Aquí, todo es 0 y 1 al mismo tiempo.",
+            "SAY: Los qubits gatunos te observan. Si te mueves, colapsarán a un solo estado. Sé cuidadoso."
+          ]
+        }
+      ],
+      "flags": {
+        "resolvio_superposicion": false,
+        "colapso_prematuro": false
+      }
+    },
+    {
+      "name": "entrelazamiento",
+      "description": "El jugador debe activar el Nodo de Entrelazamiento conectando dos qubits separados espacialmente.",
+      "timeout_minutes": 35,
+      "trigger": {
+        "type": "scoreboard",
+        "description": "Player reaches the entanglement node at (510, 70, 510)",
+        "sensor_command": "/execute as @a if score @s dc_q_superposicion matches 1 at @s positioned 510 70 510 if entity @s[distance=..5] run scoreboard players set @s dc_q_entrelazado 1",
+        "check_command": "/scoreboard players get PLAYER dc_q_entrelazado",
+        "expected_value": 1
+      },
+      "objectives": [
+        {
+          "id": 2,
+          "title": "Entrelazar los Qubits",
+          "description": "Lo que le suceda a uno, le sucederá al otro instantáneamente. Sin importar la distancia."
+        }
+      ],
+      "events": [
+        {
+          "type": "command",
+          "description": "Create particle beam between nodes",
+          "command": "/particle end_rod 505 71 505 0.1 0.1 0.1 0.05 50 force"
+        },
+        {
+          "type": "chat",
+          "as": "narrator",
+          "lines": [
+            "SAY: Einstein lo llamaba 'acción espeluznante a distancia'. Tú lo llamarás... tu única salida.",
+            "SAY: El nodo pulsa. Un qubit aquí, otro en (490, ~, 490). Son el mismo."
+          ]
+        }
+      ],
+      "flags": {
+        "activo_entrelazamiento": false,
+        "rompio_enlace": false
+      }
+    },
+    {
+      "name": "colapso",
+      "description": "El jugador debe realizar la Medición Final en el Observatorio, colapsando la función de onda y determinando el destino del laboratorio.",
+      "timeout_minutes": 20,
+      "trigger": {
+        "type": "scoreboard",
+        "description": "Player reaches the observation point at (490, 70, 490)",
+        "sensor_command": "/execute as @a if score @s dc_q_entrelazado matches 1 at @s positioned 490 70 490 if entity @s[distance=..3] run scoreboard players set @s dc_q_colapso 1",
+        "check_command": "/scoreboard players get PLAYER dc_q_colapso",
+        "expected_value": 1
+      },
+      "objectives": [
+        {
+          "id": 3,
+          "title": "Colapsar la Función de Onda",
+          "description": "El Observador define la realidad. Mide el estado final y salva (o destruye) el laboratorio."
+        }
+      ],
+      "events": [
+        {
+          "type": "command",
+          "description": "Dramatic thunder for collapse moment",
+          "command": "/weather thunder 1200"
+        },
+        {
+          "type": "command",
+          "description": "Spawn final observer eye",
+          "command": "/summon enderman 490 71 490 {CustomName:'\"El Observador\"',Silent:1b}"
+        },
+        {
+          "type": "chat",
+          "as": "narrator",
+          "lines": [
+            "SAY: Has llegado al punto de medición. Alrededor de ti, todas las posibilidades luchan por existir.",
+            "SAY: Mira al Observador. Tú decides: ¿0 o 1? ¿Vivo o muerto? ¿Salvado o perdido?",
+            "SAY: La función de onda colapsa... ahora."
+          ]
+        }
+      ],
+      "flags": {
+        "midio_cero": false,
+        "midio_uno": false,
+        "salvo_laboratorio": false
+      }
+    }
+  ],
+  "entities": [
+    {
+      "name": "Qubit A",
+      "type": "cat",
+      "location": {
+        "x": 498,
+        "y": 70,
+        "z": 498
+      },
+      "properties": {
+        "CollarColor": 15,
+        "CustomName": "Qubit A"
+      }
+    },
+    {
+      "name": "Qubit B",
+      "type": "cat",
+      "location": {
+        "x": 502,
+        "y": 70,
+        "z": 502
+      },
+      "properties": {
+        "CollarColor": 0,
+        "CustomName": "Qubit B"
+      }
+    },
+    {
+      "name": "El Observador",
+      "type": "enderman",
+      "location": {
+        "x": 490,
+        "y": 71,
+        "z": 490
+      },
+      "properties": {
+        "Silent": true,
+        "CustomName": "El Observador"
+      }
+    }
+  ],
+  "objects": [
+    {
+      "name": "Diario del Físico Jefe",
+      "type": "written_book",
+      "location": {
+        "x": 499,
+        "y": 70,
+        "z": 499
+      },
+      "content": {
+        "title": "Nota Cuántica #42",
+        "author": "Dr. Schrödinger",
+        "pages": [
+          "Día desconocido. El tiempo ya no es lineal aquí dentro. Los qubits se negaron a colapsar hasta que alguien los observe. Pero todos los observadores están... afuera. O adentro. O ambos."
+        ]
+      }
+    }
+  ],
+  "soundscape": [
+    {
+      "sound": "block.beacon.ambient",
+      "trigger": "dc_q_llegada=1",
+      "volume": 0.3,
+      "pitch": 1.2
+    }
+  ],
+  "completion": {
+    "condition": "dc_q_colapso = 1",
+    "on_complete": "mc_story(action='log_event', event='Aventura completada. El Observador Cuántico midió la realidad y el laboratorio fue salvado... o no.')"
+  }
+}
