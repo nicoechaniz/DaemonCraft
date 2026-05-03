@@ -116,6 +116,43 @@ systemctl --user restart hermes-gateway.service
 - Never leave the deploy with a test merge — always revert before `hermes update`.
 - If `hermes update` complains about local changes, you forgot to revert. Run `git reset --hard origin/main`.
 
+### Hot-Fix / Debug Workflow (When Iterating from a CLI Session)
+
+**NEVER edit files by hand in `~/.hermes/hermes-agent/` during a debug session.** Even when chasing a bug in real-time, the workspace (`~/Projects/hermes-agent/`) is the single source of truth. Hand-editing the deploy creates an unrecorded delta between repo and running code, makes revert impossible, and causes exactly the kind of confusion where the gateway runs a frankenstein of manual patches that don't match any branch.
+
+**Correct hot-fix sequence:**
+
+```bash
+# 1. Edit in workspace ONLY
+v ~/Projects/hermes-agent
+# ... edit files ...
+
+# 2. Stage + WIP commit (so the change is recorded)
+git add <files>
+git commit -m "WIP: debug DC-XXX <brief description>"
+
+# 3. Copy ONLY the changed files to deploy
+# (do NOT run git operations inside the deploy during hot-fix)
+cp ~/Projects/hermes-agent/gateway/run.py ~/.hermes/hermes-agent/gateway/run.py
+cp ~/Projects/hermes-agent/gateway/platforms/daemoncraft.py ~/.hermes/hermes-agent/gateway/platforms/daemoncraft.py
+# ... etc for each changed file ...
+
+# 4. Restart service
+systemctl --user restart hermes-gateway.service
+
+# 5. TEST
+
+# 6. If fix works — clean up workspace commit (amend/squash later into proper commit)
+#    If fix fails — revert workspace with git checkout and try again.
+```
+
+**What NOT to do:**
+- `patch` / `sed` / `echo` inside `~/.hermes/hermes-agent/` directly
+- Edit with vim/nano inside the deploy
+- Run `git merge` inside the deploy for a hot-fix (merge is for testing complete branches, not single-file iterations)
+
+**Exception:** Config-only changes in `~/.hermes/config.yaml` or `~/.hermes/profiles/<name>/` are safe to edit directly because they are not versioned in the hermes-agent repo.
+
 ### hermes-gateway.service — Always points to deploy
 
 The systemd service hardcodes the deploy path:
@@ -631,7 +668,6 @@ Dashboard panels BOT MIND, PLAN & GOALS, BACKGROUND TASK are empty because agent
 ## Current State
 
 **Phase 1 is complete.** All Hermescraft primitives have been migrated and improved.
-**Rolemaster mode (Pamplinas) is the active cast** — currently deployed and running on the live server.
 **DC-105 (Unified Social Routing) is DONE** — merged to main (2026-05-02).
 **DC-112 (Single-LLM Architecture) is DONE** — gateway owns all cognition, loop is heartbeat injector. Merged to main via `feat/dc-112-daemoncraft-gateway` (2026-05-02).
 **DC-123 (Dashboard/TTS regression) is BACKLOG** — dashboard panels empty after DC-112, TTS relay broken.
@@ -639,19 +675,26 @@ Companion and Landfolk modes are **legacy test modes** and will be deprecated.
 
 **Agent model:** MiniMax-M2.7 (via minimax provider, anthropic_messages api_mode for prompt caching).
 
-**Active development:** No active feature branch. Both repos on `main`. Next session will tackle DC-123 (dashboard restoration).
+**Active development (2026-05-03):** Debugging session with ChatGPT identified that Steve's mc_* tools fail because they resolve the bot API URL from a stale process-global `MC_API_URL=3002` (from `hermes-gateway.service` Environment=) instead of the active cast's port (3001). Session routing, profile selection, and model/provider are all correct. The tools ARE present in the LLM session. The bug is endpoint resolution. No code changes made yet — architectural path needs discussion.
 
 **Sandbox mode:** ENDED (2026-05-02). Deploy will be updated via `hermes update` instead of manual file copying.
 
+**Current active cast (2026-05-03):** `companion` (Steve) — agent_loop running manually on port 3001 with MiniMax-M2.7 via `minimax` provider + `anthropic_messages` api_mode. `daemoncraft-cast.service` is stopped for debugging.
+
 ## Known Issues / Next Steps
 
+- **Endpoint resolution bug (ACTIVE — 2026-05-03):** Steve's mc_* tools hit stale port 3002 because `minecraft_tools.py` reads `MC_API_URL` from a process-global env var set in `hermes-gateway.service`. The active cast runs on port 3001. There are three competing truths for bot endpoint:
+  1. `~/.config/daemoncraft/cast.conf` + profile `~/.hermes/profiles/steve/.env` (port 3001 — correct for current cast)
+  2. `~/.hermes/config.yaml` `platforms.daemoncraft.extra.bot_api_url` (port 3001 — correct but not read by tools)
+  3. `hermes-gateway.service` `Environment=MC_API_URL=3002` (port 3002 — stale, but this is what tools actually use)
+  `minecraft_tools.py` is untracked in both repos (ad-hoc drop-in). `check_minecraft_available()` returns True even on connection failure. Architectural fix needed: derive bot URL per DaemonCraft session, not from global env var.
 - **Quest phase engine**: Implemented. Phases have triggers, objectives, and `timeout_minutes`. `record_activity` resets timer. `check_timeout` auto-abandons stale quests. Players can retake or restart.
 - **Scoreboard sensor architecture**: Consolidated 3-command API. `setup_sensors` creates scoreboards + registers metadata. `poll_sensors` batch-checks all sensors (runs poll_command for dummies, reads native scores for real criteria, auto-resets fired sensors). `cleanup_sensors` removes all. Bot server.js has native `GET /scoreboard?objective=X&player=Y` endpoint via Mineflayer API. `check_score` uses this endpoint instead of parsing chat.
 - **Sensor persistence**: `active_sensors` tracked in `story.json` as `{name, criterion, poll_command}`. `setup_sensors` is idempotent — safe to call on every startup. State survives server/agent restarts.
 - **Vision/screenshots**: ✅ **RESUELTO (DC-57)**. Reemplazamos `mine-photo` (corrupto) por `prismarine-viewer` + `puppeteer` con flag `--use-angle=swiftshader`. WebGL headless funciona. Endpoint `GET /screenshot` y `mc_perceive(type="screenshot")` operativos. `vision` toolset re-habilitado en `rolemaster.yaml`.
 - **Standby mode**: ✅ **IMPLEMENTADO**. `python3 -m agents.daemoncraft pause rolemaster [Pamplinas]` pausa turns autónomos sin desconectar el bot del juego. `resume` vuelve a activar. Controlado via archivo `STANDBY_FILE` + señal `SIGUSR1`.
-- **Pamplinas status**: ⚠️ **NO CORRIENDO** — `daemoncraft-cast.service` está detenido. El código de DC-105 está en la branch `feat/dc-105-unified-social-routing` pero aún no se hizo validación end-to-end.
-- **No truncation policy**: Chat lines > 240 chars son REJECTED con visible error (`CHAT TOO LONG — NOT SENT`). Todos los agentes aprenden brevedad vía prompt (máx 180 chars por línea, eficiencia poética). El `final_response` del modelo va directo al chat; Hermes separa nativamente tool_calls de content.
+- **Pamplinas status**: `daemoncraft-cast.service` está detenido. Steve (companion) es el agente activo en debugging.
+- **No truncation policy**: Chat lines > 240 chars son REJECTED con visible error (`CHAT TOO LONG — NOT SENT`). Todos los agentes aprenden brevedad via prompt (máx 180 chars por línea, eficiencia poética). El `final_response` del modelo va directo al chat; Hermes separa nativamente tool_calls de content.
 - **Verify before narrate**: SOUL rule — Pamplinas debe verificar mundo con `mc_perceive` antes de describir objetos/entidades.
 - **Narrative branching**: SOUL documenta exits success/failure/surrender/chaos por fase. `get_events` tool lee historial reciente.
 - **Sensor consequence detection**: Native criteria tipo `minecraft.mined:minecraft.stone_bricks` detectan cuando jugadores rompen estructuras de quest.
@@ -809,3 +852,10 @@ Mineflayer-pathfinder v2.4.5 has a bug where `allowSprinting = true` causes the 
 - Dashboard voice toggle + audio player — unchanged
 - Deduplication logic — unchanged
 - Voice config in `casts/rolemaster.yaml` (edge / es-MX-JorgeNeural)
+
+### DC-94 Debugging Findings (moved from global memory)
+
+- Claude CLI stores credentials in `~/.claude/.credentials.json` but will NOT auto-login in non-interactive mode even if the file exists. The session must be explicitly established via interactive `/login` first.
+- After login, `--print` works reliably in non-interactive `terminal()` calls.
+- The `claude` binary in `~/.npm-global/bin/` may differ from the one in `~/.local/bin/` (check `which claude`). Ensure PATH priority if there are conflicts.
+- Do NOT pipe large diffs via stdin to `claude -p` without `--dangerously-skip-permissions` or the tool approval prompts will hang the subprocess.

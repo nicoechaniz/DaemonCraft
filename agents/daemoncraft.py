@@ -299,9 +299,14 @@ def setup_agent_profile(
             config["model"]["provider"] = provider
         if base_url:
             config["providers"] = config.get("providers", {})
+            # Remove stale providers that don't match the current one
+            stale = [k for k in config["providers"].keys() if k != provider]
+            for k in stale:
+                del config["providers"][k]
             config["providers"][provider] = {
                 "provider": provider,
                 "base_url": base_url,
+                "api_mode": "anthropic_messages",
             }
 
     config_path.write_text(yaml.dump(config, default_flow_style=False, sort_keys=False))
@@ -321,7 +326,7 @@ def setup_agent_profile(
         config_path.write_text(yaml.dump(config, default_flow_style=False, sort_keys=False))
         log(f"Added extra toolsets for {name}: {extra_toolsets}", cast_name)
 
-    # Update .env with MC_API_URL
+    # Update .env with MC_API_URL and provider-specific overrides
     env_path = profile_dir / ".env"
     env_lines = []
     if env_path.exists():
@@ -329,6 +334,16 @@ def setup_agent_profile(
 
     new_lines = [ln for ln in env_lines if not ln.startswith("MC_API_URL=")]
     new_lines.append(f"MC_API_URL=http://localhost:{port}")
+
+    # Ensure provider-specific base_url is in .env (source of truth for agents)
+    if provider and base_url:
+        prov_upper = provider.upper().replace("-", "_").replace("_OAUTH", "")
+        base_url_key = f"{prov_upper}_BASE_URL"
+        # Remove any existing line for this provider's base_url
+        new_lines = [ln for ln in new_lines if not ln.startswith(f"{base_url_key}=")]
+        new_lines.append(f"{base_url_key}={base_url}")
+        log(f"Set {base_url_key}={base_url} in profile .env for {name}", cast_name)
+
     env_path.write_text("\n".join(new_lines) + "\n")
 
     # Install behavior skills
@@ -454,6 +469,32 @@ def start_agent(
 
 # ── Commands ─────────────────────────────────────────────────────────────────
 
+def update_hermes_platform_config(bot_api_url: str, bot_username: str) -> None:
+    """Update the global Hermes config.yaml with the active DaemonCraft bot endpoint.
+
+    The gateway adapter reads platforms.daemoncraft.extra.bot_api_url to know
+    which Mineflayer bot to connect to. This eliminates the need for a stale
+    process-global MC_API_URL env var in the systemd service.
+    """
+    config_path = Path.home() / ".hermes" / "config.yaml"
+    if not config_path.exists():
+        log(f"Warning: Hermes config not found at {config_path}")
+        return
+    try:
+        import yaml
+        config = yaml.safe_load(config_path.read_text()) or {}
+        platforms = config.setdefault("platforms", {})
+        daemoncraft = platforms.setdefault("daemoncraft", {})
+        daemoncraft["enabled"] = True
+        extra = daemoncraft.setdefault("extra", {})
+        extra["bot_api_url"] = bot_api_url
+        extra["bot_username"] = bot_username
+        config_path.write_text(yaml.dump(config, default_flow_style=False, sort_keys=False))
+        log(f"Updated Hermes config: daemoncraft bot -> {bot_api_url} ({bot_username})")
+    except Exception as e:
+        log(f"Warning: failed to update Hermes config: {e}")
+
+
 def cmd_start(cast_name: str, cast: dict, mc_host: str, mc_port: int):
     agents = cast.get("agents", [])
     soul_file = None
@@ -463,6 +504,14 @@ def cmd_start(cast_name: str, cast: dict, mc_host: str, mc_port: int):
             soul_file = Path(cast["soul_file"]).resolve()
 
     log(f"Launching {len(agents)} agents for '{cast_name}' mode...", cast_name)
+
+    # Update Hermes gateway config with the primary bot endpoint
+    if agents:
+        primary = agents[0]
+        update_hermes_platform_config(
+            f"http://localhost:{primary['port']}",
+            primary["name"],
+        )
 
     for agent in agents:
         name = agent["name"]
