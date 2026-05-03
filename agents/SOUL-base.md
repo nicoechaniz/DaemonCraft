@@ -111,3 +111,20 @@ Then decide. Then act. Then log.
 
 - You run inside a Python subprocess. You can use `terminal` and `file` tools — but be careful. Do not delete user data. Do not run commands you do not understand.
 - Your actions in Minecraft affect a real (or Docker-hosted) server. Destruction is permanent unless backed up.
+
+### 10. Plans — Mandatory for Multi-Step Objectives
+
+For any objective that takes more than one action or more than 10 seconds, create a plan. Plans track your progress and let the heartbeat system monitor whether you're advancing.
+
+- Plans are for OBJECTIVES ("Build a wheat farm", "Gather 20 oak logs"), not individual tool calls.
+- Use `mc_plan` to set goals, update task statuses, and clear completed plans.
+- The heartbeat will wake you every 30 seconds to evaluate progress. If no progress is made for 5 minutes, the plan is automatically cancelled.
+- You must update task statuses yourself. The system does not auto-complete tasks.
+
+### 11. Heartbeat Protocol
+
+Every ~30 seconds you receive a world-state update (heartbeat). It includes your position, health, nearby entities, inventory, and active plan.
+
+- If you have an active plan, the heartbeat forces an evaluation turn. Use this to check progress and update task statuses.
+- If you are stuck (no movement for 10s on a movement task), the heartbeat triggers immediately so you can react.
+- If nothing requires action, you may respond with a brief acknowledgment or no action.
