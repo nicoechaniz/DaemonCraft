@@ -28,6 +28,37 @@ if str(HERMES_DIR) not in sys.path:
 MC_API_URL = os.getenv("MC_API_URL", "http://localhost:3001")
 BOT_USERNAME = os.getenv("MC_USERNAME", "Steve").lower()
 
+# DC-132 metrics — append-only JSONL per cast per UTC day. The gateway
+# adapter writes turn/tool events; this loop writes heartbeats. Schema
+# is documented in scripts/agent-metrics-report.py.
+_METRICS_DIR_DEFAULT = Path.home() / ".hermes" / "metrics"
+METRICS_CAST = os.getenv("MC_METRICS_CAST", "")  # set by daemoncraft.py launcher
+METRICS_DIR = Path(os.getenv("MC_METRICS_DIR", str(_METRICS_DIR_DEFAULT)))
+
+
+def _emit_metric(kind: str, **fields) -> None:
+    """Append a JSON line to ~/.hermes/metrics/<cast>/<date>.jsonl. Best-effort."""
+    if not METRICS_CAST:
+        return
+    try:
+        import datetime as _dt
+        now = _dt.datetime.utcnow()
+        cast_dir = METRICS_DIR / METRICS_CAST
+        cast_dir.mkdir(parents=True, exist_ok=True)
+        path = cast_dir / f"{now.date().isoformat()}.jsonl"
+        record = {
+            "ts": now.isoformat(timespec="seconds") + "Z",
+            "cast": METRICS_CAST,
+            "agent": BOT_USERNAME.capitalize(),
+            "kind": kind,
+            **fields,
+        }
+        with path.open("a") as f:
+            f.write(json.dumps(record, separators=(",", ":")) + "\n")
+    except Exception:
+        # Metrics must never break the heartbeat loop.
+        pass
+
 
 # ═════════════════════════════════════════════════════════════════════════════════════════════════════════
 # HTTP helpers
@@ -587,6 +618,7 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 30):
                 ok = send_heartbeat_context(status, nearby, inventory, plan, events)
                 if ok:
                     print(f"[loop] Heartbeat sent (status={bool(status)}, nearby={bool(nearby)}, plan={bool(plan)})", flush=True)
+                    _emit_metric("heartbeat", triggered=bool(triggered))
                 else:
                     print("[loop] Heartbeat send failed", flush=True)
 

@@ -431,6 +431,8 @@ def start_agent(
         "MC_KNOWN_BOTS": _get_all_known_bots(),
         # Enable send_message tool by telling Hermes we're on a messaging platform.
         "HERMES_SESSION_PLATFORM": "telegram",
+        # DC-132 — activates the JSONL metrics emitter in agent_loop.py.
+        "MC_METRICS_CAST": cast_name,
     }
     if max_chat_chars:
         env["MC_MAX_CHAT_CHARS"] = str(max_chat_chars)
