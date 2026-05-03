@@ -2,6 +2,14 @@
 server/data/
 server/geyser/*.jar
 server/geyser/logs/
+server/geyser/dumps/
+server/geyser/packs/
+server/geyser/key.pem
+server/geyser/public-key.pem
+server/geyser/saved-refresh-tokens.json
+
+# Local environment overrides
+.env
 server/world/
 server/world_nether/
 server/world_the_end/

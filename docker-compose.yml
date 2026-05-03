@@ -45,6 +45,16 @@ services:
       # MODPACK: "/modpacks/phi-craft.zip"
       # MODPACK_PLATFORM: ""
 
+      # --- Bedrock Edition support via Geyser ---
+      # itzg auto-installs the Geyser-Spigot plugin from Modrinth on boot.
+      # Geyser binds UDP/19132 (host network mode) and responds to RakNet
+      # unconnected pings, so Bedrock clients on the LAN auto-discover the
+      # server. No Floodgate: the Java side runs ONLINE_MODE=false, and
+      # Geyser's auth-type=offline matches (see server/geyser/config.yml).
+      # Note: Geyser only ships beta-tagged continuous builds on Modrinth.
+      MODRINTH_PROJECTS: "geyser"
+      MODRINTH_ALLOWED_VERSION_TYPE: "beta"
+
       # --- Logging ---
       TZ: "UTC"
     volumes:
@@ -53,6 +63,10 @@ services:
       - ./server/plugins/denizen:/data/plugins/Denizen/scripts:ro
       # Mount for manual modpack fallback zip (read-only)
       - ./server/modpacks:/modpacks:ro
+      # Geyser plugin config (versioned in repo). The plugin reads from
+      # plugins/Geyser-Spigot/, so we mount our config tree there. itzg drops
+      # the auto-downloaded jar one level up, in plugins/.
+      - ./server/geyser:/data/plugins/Geyser-Spigot
     tty: true
     stdin_open: true
     healthcheck:
