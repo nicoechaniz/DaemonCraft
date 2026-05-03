@@ -36,12 +36,10 @@ services:
       MAX_PLAYERS: "20"
       # Identity gating (DC-131). With ONLINE_MODE=false anyone who knows a
       # username can connect AS that name; the whitelist is the floor.
-      # Manage with `whitelist add <name>` / `whitelist remove <name>` via rcon
-      # or by editing server/data/whitelist.json directly.
-      # ⚠️ FIRST-RUN: whitelist.json starts empty after this change; add
-      # current players BEFORE next restart or they'll be kicked. See
-      # server/plugins/whitelist.README.md.
-      ENFORCE_WHITELIST: "true"
+      # Currently DISABLED during home testing so existing players are not
+      # locked out. Re-enable before any public exposure.
+      # server/plugins/whitelist.README.md has the seed procedure.
+      ENFORCE_WHITELIST: "false"
       VIEW_DISTANCE: "10"
       SIMULATION_DISTANCE: "10"
       GAME_MODE: "survival"
@@ -60,9 +58,6 @@ services:
       # MODPACK: "/modpacks/phi-craft.zip"
       # MODPACK_PLATFORM: ""
 
-      # --- Plugins (auto-installed by itzg from Modrinth, DC-126 + Geyser) ---
-      # Pinned version IDs so restarts are deterministic. Bumps land in
-      # follow-up PRs after smoke-test. See docs/server-overhaul.md.
       # --- Plugins (auto-installed by itzg from Modrinth, DC-126 + DC-131 + Geyser) ---
       # Pinned version IDs so restarts are deterministic. Bumps land in
       # follow-up PRs after smoke-test. See docs/server-overhaul.md.
