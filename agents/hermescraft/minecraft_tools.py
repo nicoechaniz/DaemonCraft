@@ -38,18 +38,43 @@ Environment:
     MC_API_URL  - Bot server URL (default: http://localhost:3001)
 """
 
+import asyncio
 import json
 import os
 import re
 import threading
+import time
 import urllib.request
 import urllib.error
 from typing import Any, Dict, Optional
 
 from tools.registry import registry, tool_error
 
+# Vision integration — mc_screenshot auto-analyzes via vision_analyze
+try:
+    from model_tools import _run_async
+    from tools.vision_tools import vision_analyze_tool
+    _VISION_AVAILABLE = True
+except Exception:
+    _VISION_AVAILABLE = False
+
 
 MC_API_URL = os.getenv("MC_API_URL", "http://localhost:3001")
+
+# ═─ Anti-loop throttle for /tp commands ─════════════════════════════
+_tp_history: list[float] = []
+_MAX_TP_PER_WINDOW = 3
+_TP_WINDOW_SECONDS = 60
+
+def _check_tp_throttle() -> bool:
+    """Return True if this /tp should be allowed, False if throttled."""
+    now = time.time()
+    global _tp_history
+    _tp_history = [t for t in _tp_history if now - t < _TP_WINDOW_SECONDS]
+    if len(_tp_history) >= _MAX_TP_PER_WINDOW:
+        return False
+    _tp_history.append(now)
+    return True
 
 # Global cancel event — set by agent_loop.py when chat arrives during a turn
 _cancel_event: Optional[threading.Event] = None
@@ -182,7 +207,7 @@ def _fmt(resp: dict) -> str:
 
 def check_minecraft_available() -> bool:
     try:
-        _api_get("/health", timeout=3)
+        _api_get("/status", timeout=3)
         return True
     except Exception:
         return False
@@ -199,6 +224,7 @@ _PERCEIVE_GET_ENDPOINTS = {
     "look": "/look",
     "scene": "/scene",
     "screenshot": "/screenshot",
+    "volume": "/volume",
     "map": "/map",
     "read_chat": "/chat",
     "overhear": "/overhear",
@@ -237,6 +263,11 @@ def _handle_mc_perceive(args: dict, **kwargs) -> str:
             w = args.get("width", 1280)
             h = args.get("height", 720)
             path += f'?width={w}&height={h}'
+        elif ptype == "volume":
+            for coord in ("x1", "y1", "z1", "x2", "y2", "z2"):
+                if coord not in args:
+                    return f"Error: {coord} is required for volume perceive"
+            path += f'?x1={args["x1"]}&y1={args["y1"]}&z1={args["z1"]}&x2={args["x2"]}&y2={args["y2"]}&z2={args["z2"]}'
         return _fmt(_api_get(path))
 
     if ptype in _PERCEIVE_POST_ENDPOINTS:
@@ -336,7 +367,9 @@ def _handle_mc_mine(args: dict, **kwargs) -> str:
 
 def _handle_mc_build(args: dict, **kwargs) -> str:
     """Build, place blocks, fill areas, interact with blocks, and utility actions."""
-    action = args.get("action", "use")
+    action = args.get("action", "")
+    if not action:
+        return "Error: action is required for mc_build. Valid actions: place, fill, clear, interact, till, bonemeal, flatten, ignite, fish, close, use, toss, sleep, wait, connect"
     payload: Dict[str, Any] = {}
 
     if action == "place":
@@ -345,8 +378,9 @@ def _handle_mc_build(args: dict, **kwargs) -> str:
         for coord in ("x", "y", "z"):
             if coord not in args:
                 return f"Error: {coord} is required for place"
-        payload = {"block": args["block"], "x": args["x"], "y": args["y"], "z": args["z"]}
-        return _fmt(_api_post("/action/place", payload))
+        # Use /setblock command directly (works in creative, no pathfinder needed)
+        cmd = f"/setblock {args['x']} {args['y']} {args['z']} {args['block']}"
+        return _fmt(_api_post("/chat/send", {"message": cmd}))
 
     if action == "fill":
         if "block" not in args:
@@ -354,13 +388,18 @@ def _handle_mc_build(args: dict, **kwargs) -> str:
         for coord in ("x1", "y1", "z1", "x2", "y2", "z2"):
             if coord not in args:
                 return f"Error: {coord} is required for fill"
-        payload = {
-            "block": args["block"],
-            "x1": args["x1"], "y1": args["y1"], "z1": args["z1"],
-            "x2": args["x2"], "y2": args["y2"], "z2": args["z2"],
-            "hollow": args.get("hollow", False),
-        }
-        return _fmt(_api_post("/action/place_fill", payload))
+        # Use /fill command directly (works in creative, no pathfinder needed)
+        hollow = args.get("hollow", False)
+        mode = "hollow" if hollow else "replace"
+        cmd = f"/fill {args['x1']} {args['y1']} {args['z1']} {args['x2']} {args['y2']} {args['z2']} {args['block']} {mode}"
+        return _fmt(_api_post("/chat/send", {"message": cmd}))
+
+    if action == "clear":
+        for coord in ("x1", "y1", "z1", "x2", "y2", "z2"):
+            if coord not in args:
+                return f"Error: {coord} is required for clear"
+        cmd = f"/fill {args['x1']} {args['y1']} {args['z1']} {args['x2']} {args['y2']} {args['z2']} air replace"
+        return _fmt(_api_post("/chat/send", {"message": cmd}))
 
     if action == "interact":
         for coord in ("x", "y", "z"):
@@ -984,11 +1023,24 @@ MC_PLAN_SCHEMA = {
 # 10. mc_screenshot — Ray-traced world capture
 # ═══════════════════════════════════════════════════════════════════
 
-def _handle_mc_screenshot(args: dict, **kwargs) -> str:
-    """Take a screenshot of the Minecraft world from the bot's first-person perspective.
+_MINECRAFT_VISION_PROMPT = (
+    "Analizás un mapa top-down de Minecraft (bloque-por-pixel). "
+    "El punto rojo con línea es el bot (la línea muestra hacia dónde mira). "
+    "Los puntos verdes son jugadores, los rojos son mobs hostiles, los naranjas son animales. "
+    "Describí en 3-4 oraciones BREVES en español: "
+    "1) terreno (bioma, agua, árboles), "
+    "2) entidades peligrosas y su distancia/dirección aproximada, "
+    "3) recursos o estructuras notables, "
+    "4) recomendación táctica (¿peligro? ¿refugio? ¿explorar?)."
+)
 
-    Uses prismarine-viewer (Three.js WebGL renderer) + puppeteer headless Chrome.
-    The image is saved as PNG to the bot server and the path is returned.
+
+def _handle_mc_screenshot(args: dict, **kwargs) -> str:
+    """Take a screenshot of the Minecraft world and analyze it visually.
+
+    Uses the bot's top-down block-map renderer (node-canvas, no GPU needed).
+    The image is then fed through vision_analyze (Gemini 3 Flash via OpenRouter)
+    to produce a textual description the model can read.
     """
     payload: Dict[str, Any] = {}
     if "width" in args:
@@ -1001,19 +1053,51 @@ def _handle_mc_screenshot(args: dict, **kwargs) -> str:
             fname += ".png"
         payload["file_name"] = fname
 
-    resp = _api_post("/action/screenshot", payload, timeout=300)
+    resp = _api_post("/action/screenshot", payload, timeout=60)
     if not resp.get("ok", True):
         return f"Error: {resp.get('error', 'Screenshot failed')}"
 
     path = resp.get("path", "unknown")
     width = resp.get("width", "?")
     height = resp.get("height", "?")
-    return f"Screenshot saved to {path} ({width}x{height})"
+
+    if not _VISION_AVAILABLE or not path or path == "unknown":
+        return f"Screenshot saved to {path} ({width}x{height})"
+
+    # Auto-analyze the image so the model can "see" without calling vision_analyze manually
+    try:
+        result = _run_async(
+            asyncio.wait_for(
+                vision_analyze_tool(
+                    image_url=path,
+                    user_prompt=_MINECRAFT_VISION_PROMPT,
+                ),
+                timeout=25,
+            )
+        )
+        # result is a JSON string: {"success": bool, "analysis": str}
+        data = json.loads(result)
+        if data.get("success"):
+            analysis = data.get("analysis", "")
+            return (
+                f"Screenshot ({width}x{height}) — Visual analysis:\n{analysis}\n"
+                f"[Original file: {path}]"
+            )
+        else:
+            return (
+                f"Screenshot saved to {path} ({width}x{height}). "
+                f"Vision analysis failed: {data.get('analysis', 'Unknown error')}"
+            )
+    except Exception as exc:
+        return (
+            f"Screenshot saved to {path} ({width}x{height}). "
+            f"Vision analysis unavailable: {exc}"
+        )
 
 
 MC_SCREENSHOT_SCHEMA = {
     "name": "mc_screenshot",
-    "description": "Take a screenshot of the Minecraft world from the bot's eyes. Uses a WebGL renderer (prismarine-viewer) served on a local port and captured via headless Chrome. Produces a PNG image. Specify width/height (default 1280x720, max 1920x1080) and optionally a custom file_name. The returned path is an absolute PNG file path. If you need to SEE what is in the image, call vision_analyze with the returned path.",
+    "description": "Take a visual snapshot of the Minecraft world around the bot. On headless/Pi4 environments this produces a top-down block map (like a minimap) showing terrain, trees, water, and structures in a 40-block radius. On desktop environments with GPU it can produce a 3D first-person view. The image is automatically analyzed by a vision AI (Gemini 3 Flash) and returned as a TEXTUAL DESCRIPTION of the terrain, elevation, water, trees, structures, and landmarks. Use this BEFORE building to assess the terrain, or AFTER building to verify results. If something looks wrong, adjust your coordinates.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -1041,6 +1125,11 @@ def _handle_mc_command(args: dict, **kwargs) -> str:
         return "Error: command is required"
     if not command.startswith("/"):
         command = "/" + command
+
+    # Throttle excessive /tp usage to prevent exploration loops
+    if command.strip().lower().startswith("/tp"):
+        if not _check_tp_throttle():
+            return "Error: /tp throttled — too many teleports in the last minute. Use mc_move or mc_perceive from your current location instead."
 
     # ═─ Intercept /godmode toggle ─══════════════════════════════════════
     stripped = command.strip().lower()
@@ -1309,6 +1398,24 @@ def _handle_mc_story(args: dict, **kwargs) -> str:
         target.write_text(json.dumps(blueprint, indent=2))
         return f"Blueprint saved: {blueprint.get('metadata', {}).get('title', 'Untitled')}"
 
+    if action == "list_blueprints":
+        try:
+            bps = sorted(_BLUEPRINTS_DIR.glob("*.json"))
+            if not bps:
+                return "No blueprints found."
+            lines = ["Available blueprints:"]
+            for bp_path in bps:
+                try:
+                    bp = json.loads(bp_path.read_text())
+                    title = bp.get("metadata", {}).get("title", bp_path.stem)
+                    phases = len(bp.get("phases", []))
+                    lines.append(f"  • {bp_path.stem} — '{title}' ({phases} phases)")
+                except Exception:
+                    lines.append(f"  • {bp_path.stem} — (unreadable)")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Error listing blueprints: {e}"
+
     if action == "load_blueprint":
         name = args.get("name")
         if name:
@@ -1392,9 +1499,11 @@ def _handle_mc_story(args: dict, **kwargs) -> str:
         for s in sensors:
             name = s.get("name")
             poll_command = s.get("poll_command")
-            # Execute poll command for dummy sensors (proximity, zone, etc.)
-            if poll_command:
-                _api_post("/chat/send", {"message": poll_command})
+            # NOTE: Poll commands are executed by the quest engine via rcon-cli,
+            # NOT via chat. Sending /execute commands to public chat spams players
+            # and exposes internals. We only read scores here.
+            # If manual execution is needed, use mc_command directly.
+            _ = poll_command  # keep available for reference
             # Read score via native API
             result = _api_get(f"/scoreboard?objective={name}&player={player}")
             if result.get("ok"):
@@ -1436,7 +1545,7 @@ MC_STORY_SCHEMA = {
                     "get_state", "set_flag", "advance_phase", "advance_day",
                     "add_objective", "complete_objective", "log_event", "get_events",
                     "set_title", "record_choice", "reset",
-                    "save_blueprint", "load_blueprint",
+                    "save_blueprint", "load_blueprint", "list_blueprints",
                     "record_activity", "check_timeout", "reset_phase",
                     "check_score", "set_score", "run_function",
                     "setup_sensors", "poll_sensors", "cleanup_sensors",
