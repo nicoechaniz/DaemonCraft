@@ -13,8 +13,8 @@ loader_version = "latest"   # build script asks Modrinth for the latest stable
 
 [meta]
 name = "DaemonCraft"
-version = "0.2.0"
-summary = "Two-click client install for DaemonCraft. AI-driven roleplay world. Fixes: cloth-config dep, pack_format 64, Fabric Loader 0.19.2."
+version = "0.3.0"
+summary = "SOTA visual upgrade: Sodium + Iris + Complementary Reimagined, Distant Horizons LOD, Particular ambience, Wakes, Particle Rain. v0.2.0 baseline + stunning visuals."
 
 # --- Required mods (Fabric) ---
 [[mods]]
@@ -53,6 +53,36 @@ version_id = "wbSSx6vc"           # 3.2.2-fabric-1.21.11 — Fresh Animations pa
 slug = "continuity"
 version_id = "mX1iknM1"           # 3.0.1-beta.1+1.21.11 — connected textures
 
+# --- SOTA Visual Upgrade (v0.3.0) ---
+[[mods]]
+slug = "iris"
+version_id = "fDpuVzVr"           # 1.10.7+1.21.11-fabric — shader pipeline
+
+[[mods]]
+slug = "distanthorizons"
+version_id = "B1HnfKO7"           # 3.0.3-b-1.21.11 — LOD render distance
+
+[[mods]]
+slug = "particular"
+version_id = "L6A8meKZ"           # 1.3.2+1.21.11-fabric — fireflies, waterfalls, ambience
+
+[[mods]]
+slug = "wakes"
+version_id = "4zYKqDML"           # 0.5.1+1.21.11 — water wakes & splashes
+
+[[mods]]
+slug = "particle-rain"
+version_id = "HDPId4fr"           # 4.0.0-beta.9+1.21.11-fabric — directional rain particles
+
+# --- Dependencies of visual mods ---
+[[mods]]
+slug = "yet-another-config-lib"
+version_id = "pHWDw3Vc"           # 3.8.2+1.21.11-fabric — config UI for Particular, Wakes, Particle Rain
+
+[[mods]]
+slug = "forge-config-api-port"
+version_id = "uXrWPsCu"           # 21.11.1+mc1.21.11-fabric — config API for Particular
+
 # --- Vanity (low overhead, on by default) ---
 [[mods]]
 slug = "lambdynamiclights"
@@ -62,13 +92,10 @@ version_id = "5Tp7kdU0"           # 4.9.1+1.21.11
 slug = "fallingleaves"
 version_id = "U7hPBr6x"           # 2.0.3+1.21.11
 
-# --- Required dependencies (not in base pack) ---
+# --- Required dependencies ---
 [[mods]]
 slug = "cloth-config"
 version_id = "xuX40TN5"           # 21.11.153+fabric for 1.21.11 — required by FallingLeaves
-
-# Note: 'particular' only has 1.21.1 builds on Modrinth as of 2026-05-03.
-# Re-add when a 1.21.11-compatible version ships.
 
 # --- Resource packs (auto-enabled) ---
 [[resourcepacks]]
@@ -81,10 +108,12 @@ version_id = "XWtayRKd"           # 9.5 (vanilla-format RP)
 
 [[resourcepacks]]
 slug = "clear-glass"
-version_id = "WF83I2Cp"           # 1.2.1 — explicit support up to 1.21.10,
-                                   # vanilla-format RPs are forward-compatible.
+version_id = "WF83I2Cp"           # 1.2.1 — vanilla-format RP, forward-compatible
 
-# --- Toggleable shaders (off by default; document in client README) ---
-# Iris + Complementary Reimagined are intentionally NOT in this manifest.
-# Shipping shaders auto-enabled chokes school laptops at 12 fps.
-# Players who want shaders install Iris from Modrinth manually.
+# --- Shaders (included, off by default) ---
+# Complementary Reimagined ships with the pack but is NOT auto-enabled.
+# Players toggle it in Video Settings -> Shader Packs.
+# This avoids choking low-end laptops while giving high-end PCs the full experience.
+[[shaders]]
+slug = "complementary-reimagined"
+version_id = "836bPNGo"           # r5.7.1 — included in overrides/shaderpacks/
