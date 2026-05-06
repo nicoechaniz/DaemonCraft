@@ -1,0 +1,22 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "DaemonCraft Rapid Prototype",
+    "description": "AI PLACEHOLDER — Bedrock pack for Geyser, NOT FOR RELEASE",
+    "uuid": "e5f6a7b8-c9d0-8e1f-2a3b-4c5d6e7f8a9b",
+    "version": [0, 1, 0],
+    "min_engine_version": [1, 21, 0]
+  },
+  "modules": [
+    {
+      "type": "resources",
+      "uuid": "f6a7b8c9-d0e1-9f2a-3b4c-5d6e7f8a9b0c",
+      "version": [0, 1, 0]
+    }
+  ],
+  "metadata": {
+    "authors": ["DaemonCraft Team (AI placeholder)"],
+    "license": "Not copyrightable — AI-generated placeholder",
+    "url": "https://github.com/altermundi/daemoncraft"
+  }
+}

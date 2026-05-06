@@ -13,8 +13,8 @@ loader_version = "latest"   # build script asks Modrinth for the latest stable
 
 [meta]
 name = "DaemonCraft"
-version = "0.1.0"
-summary = "Two-click client install for DaemonCraft. AI-driven roleplay world."
+version = "0.2.0"
+summary = "Two-click client install for DaemonCraft. AI-driven roleplay world. Fixes: cloth-config dep, pack_format 64, Fabric Loader 0.19.2."
 
 # --- Required mods (Fabric) ---
 [[mods]]
@@ -61,6 +61,11 @@ version_id = "5Tp7kdU0"           # 4.9.1+1.21.11
 [[mods]]
 slug = "fallingleaves"
 version_id = "U7hPBr6x"           # 2.0.3+1.21.11
+
+# --- Required dependencies (not in base pack) ---
+[[mods]]
+slug = "cloth-config"
+version_id = "xuX40TN5"           # 21.11.153+fabric for 1.21.11 — required by FallingLeaves
 
 # Note: 'particular' only has 1.21.1 builds on Modrinth as of 2026-05-03.
 # Re-add when a 1.21.11-compatible version ships.

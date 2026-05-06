@@ -1,0 +1,23 @@
+{
+  "formatVersion": 1,
+  "game": "minecraft",
+  "versionId": "0.1.0-rapid-prototype",
+  "name": "DaemonCraft Rapid Prototype",
+  "summary": "AI placeholder pack for alpha testing — DO NOT DISTRIBUTE",
+  "files": [
+    {
+      "path": "mods/sodium-fabric-0.6.0.jar",
+      "hashes": {
+        "sha1": "0000000000000000000000000000000000000000",
+        "sha512": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "env": { "client": "required", "server": "unsupported" },
+      "downloads": ["https://cdn.modrinth.com/data/AANobbMI/versions/.../sodium-fabric-0.6.0.jar"],
+      "fileSize": 1234567
+    }
+  ],
+  "dependencies": {
+    "minecraft": "1.21.1",
+    "fabric-loader": "0.16.9"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "packs": [
+    "file/daemoncraft-ui",
+    "file/FreshAnimations_v1.10.4",
+    "file/Better-Leaves-9.5",
+    "file/Clear Glass 1.2.1"
+  ],
+  "force_enabled": true,
+  "force_disabled": []
+}

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "packs": {
+    "file/DaemonCraft-Rapid-Prototype.zip": {
+      "fixed": true,
+      "hidden": false,
+      "default": true
+    }
+  }
+}

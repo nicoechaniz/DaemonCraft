@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "packs": {
+    "file/DaemonCraft-Branded-Hybrid.zip": {
+      "fixed": true,
+      "hidden": false,
+      "default": true
+    }
+  }
+}
