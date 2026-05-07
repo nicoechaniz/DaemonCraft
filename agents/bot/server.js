@@ -3532,6 +3532,17 @@ const httpServer = http.createServer(async (req, res) => {
         }
       }
 
+      if (path === '/voice') {
+        const htmlPath = new URL('voice-chat.html', import.meta.url).pathname;
+        try {
+          const html = fs.readFileSync(htmlPath, 'utf8');
+          res.writeHead(200, { 'Content-Type': 'text/html', 'Access-Control-Allow-Origin': '*' });
+          return res.end(html);
+        } catch {
+          return respond(res, 500, { ok: false, error: 'voice-chat.html not found' });
+        }
+      }
+
       if (path === '/blueprints') {
         try {
           const files = fs.readdirSync(BLUEPRINTS_DIR).filter(f => f.endsWith('.json'));
