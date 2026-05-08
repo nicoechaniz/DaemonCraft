@@ -142,27 +142,12 @@ HERMES_HOME={hermes_home}
     env_path.write_text(env_content)
     _log(f".env written: {env_path}", cast_name)
 
-    # ── 4. Clone hermes-agent fork as app/ ─────────────────────
+    # ── 4. Link hermes-agent from deploy (shared code) ──────────
     app_dir = workspace / "app"
+    deploy = Path.home() / ".hermes" / "hermes-agent"
     if not app_dir.exists():
-        _log(f"Cloning hermes-agent fork → {app_dir}", cast_name)
-        subprocess.run(
-            ["git", "clone", str(HERMES_FORK_DIR), str(app_dir)],
-            capture_output=True,
-        )
-        # Fix remotes
-        subprocess.run(
-            ["git", "-C", str(app_dir), "remote", "set-url", "origin",
-             "git@github.com:nicoechaniz/hermes-agent.git"],
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "-C", str(app_dir), "remote", "add", "upstream",
-             "https://github.com/NousResearch/hermes-agent.git"],
-            capture_output=True,
-        )
-    else:
-        _log(f"App dir exists: {app_dir}", cast_name)
+        app_dir.symlink_to(deploy)
+        _log(f"Symlinked app/ → {deploy}", cast_name)
 
     # ── 5. Create venv ─────────────────────────────────────────
     venv_dir = app_dir / "venv"
