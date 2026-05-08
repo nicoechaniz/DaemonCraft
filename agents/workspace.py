@@ -180,7 +180,18 @@ HERMES_HOME={hermes_home}
 
     _log(f"Venv ready: {venv_dir}", cast_name)
 
-    # ── 6. Install systemd service ─────────────────────────────
+    # ── 6. Symlink shared skills ────────────────────────────────
+    shared_skills = [
+        (Path.home() / ".hermes" / "skills" / "mariano-memory-kit", "mariano-memory-kit"),
+    ]
+    skills_dir = hermes_home / "skills"
+    for src, name in shared_skills:
+        dst = skills_dir / name
+        if src.exists() and not dst.exists():
+            dst.symlink_to(src)
+            _log(f"Symlinked skill: {name}", cast_name)
+
+    # ── 7. Install systemd service ─────────────────────────────
     service_dst = SYSTEMD_USER_DIR / "hermes-gateway@.service"
     if not service_dst.exists():
         shutil.copy2(SYSTEMD_TEMPLATE, service_dst)
@@ -193,7 +204,7 @@ HERMES_HOME={hermes_home}
         capture_output=True,
     )
 
-    # ── 7. Initialize memory DB ────────────────────────────────
+    # ── 8. Initialize memory DB ────────────────────────────────
     hmk_script = workspace / "scripts" / "hmk"
     if hmk_script.exists():
         subprocess.run(

@@ -574,13 +574,60 @@ def cmd_start(cast_name: str, cast: dict, mc_host: str, mc_port: int):
         )
         workspace_dir = str(workspace)
 
-        # 1b. Copy SOUL.md to workspace
-        if soul_file and soul_file.exists():
-            soul_dst = workspace / "hermes-home" / "SOUL.md"
-            soul_dst.write_text(soul_file.read_text())
-            log(f"SOUL.md written for {name}", cast_name)
+        # 1b. Compose SOUL: base + cast + character + memory infrastructure
+        soul_parts = []
 
-        # 1c. Start the gateway for this agent
+        # Base SOUL — universal DaemonCraft rules
+        if BASE_SOUL_FILE.exists():
+            soul_parts.append(BASE_SOUL_FILE.read_text())
+
+        # Cast-specific SOUL — mode behavior (e.g. companion, landfolk)
+        if soul_file and soul_file.exists():
+            soul_parts.append(f"\n\n---\n\n{soul_file.read_text()}")
+
+        # Character prompt — individual personality
+        template = agent.get("template", name.lower())
+        prompt_file = PROMPTS_DIR / f"{template}.md"
+        if not prompt_file.exists():
+            prompt_file = PROMPTS_DIR / template / f"{template}.md"
+        if prompt_file.exists():
+            soul_parts.append(f"\n\n---\n\n{prompt_file.read_text()}")
+        else:
+            log(f"Warning: no prompt found for template '{template}'", cast_name)
+
+        # Memory infrastructure section
+        memory_section = """
+## Memory Infrastructure
+
+Your durable memory lives in `agent-memory/library.db` (SQLite + semantic search).  
+It is NOT injected into every turn — you must actively retrieve when context is missing.
+
+**To recall past work or search memory:** load the `mariano-memory-kit` skill first  
+(`skill_view(name='mariano-memory-kit')`), then use `memoryctl.py hybrid-pack`.
+
+**The `hmk-memory` plugin auto-injects relevant memories** on each turn via prefetch.  
+You don't need to do anything for this — it happens automatically.
+
+**Quick retrieval without the skill:**
+```
+./scripts/hmk memoryctl.py hybrid-pack --query "what matters here" --budget 1500
+```
+
+**When to query memory:**
+- Player references past events → `--shelf mc-episodic`
+- You need to know a location → `--shelf mc-places`
+- You need crafting/building techniques → `--shelf mc-skills`
+- You need facts about other players → `--shelf mc-social`
+- You need project plans or architecture → `--shelf plans` or `--shelf library`
+"""
+        soul_parts.append(memory_section.strip())
+
+        if soul_parts:
+            soul_dst = workspace / "hermes-home" / "SOUL.md"
+            soul_dst.write_text("\n".join(soul_parts))
+            log(f"Composed SOUL for {name} ({len(soul_parts)} parts)", cast_name)
+
+        # 1c. Copy BODY.md if present
         start_agent_gateway(name, cast_name)
 
         # 2. Start bot
