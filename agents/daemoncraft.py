@@ -460,40 +460,40 @@ def start_agent(
     immortal: bool = False,
 ) -> int:
     """Start the Hermes agent using the native persistent loop. Returns PID."""
-    profile_name = agent_name.lower().replace(" ", "-")
+    from agents.workspace import get_agent_venv_python
+
     lf = log_file(cast_name, agent_name, "agent")
     out = open(lf, "a")
 
-    # Use the Hermes venv Python so imports work
-    hermes_venv_python = str(Path.home() / ".hermes" / "hermes-agent" / "venv" / "bin" / "python")
+    hermes_venv_python = get_agent_venv_python(agent_name)
     agent_loop_script = str(SCRIPT_DIR / "agent_loop.py")
 
     standby_file = str(get_pid_dir(cast_name) / f"{agent_name}_standby")
 
+    safe_name = agent_name.lower().replace(" ", "-")
+    hermes_home = str(Path.home() / "agents" / safe_name / "hermes-home")
+
     env = {
         **os.environ,
+        "HERMES_HOME": hermes_home,
         "MC_API_URL": f"http://localhost:{port}",
         "MC_USERNAME": agent_name,
         "STANDBY_FILE": standby_file,
         "MC_KNOWN_BOTS": _get_all_known_bots(),
-        # Enable send_message tool by telling Hermes we're on a messaging platform.
         "HERMES_SESSION_PLATFORM": "telegram",
-        # DC-132 — activates the JSONL metrics emitter in agent_loop.py.
         "MC_METRICS_CAST": cast_name,
-        # DC-134 — cap iterations and turn wall-clock time for responsiveness
         "HERMES_MAX_ITERATIONS": "6",
         "HERMES_TURN_TIMEOUT_SECONDS": "45",
     }
     if max_chat_chars:
         env["MC_MAX_CHAT_CHARS"] = str(max_chat_chars)
 
-    # Only enable daemon guardian for immortal agents (e.g. rolemaster)
     if immortal:
         env["DAEMON_GUARDIAN"] = "1"
 
     log(f"Starting persistent agent for {agent_name}...", cast_name)
     proc = subprocess.Popen(
-        [hermes_venv_python, agent_loop_script, "--profile", profile_name, "--prompt", "Begin.", "--interval", str(interval)],
+        [hermes_venv_python, agent_loop_script, "--prompt", "Begin.", "--interval", str(interval)],
         env=env,
         stdout=out,
         stderr=subprocess.STDOUT,
@@ -535,6 +535,8 @@ def update_hermes_platform_config(bot_api_url: str, bot_username: str, profile_n
 
 
 def cmd_start(cast_name: str, cast: dict, mc_host: str, mc_port: int):
+    from agents.workspace import bootstrap_agent_workspace, start_agent_gateway
+
     agents = cast.get("agents", [])
     soul_file = None
     if "soul_file" in cast:
@@ -543,16 +545,6 @@ def cmd_start(cast_name: str, cast: dict, mc_host: str, mc_port: int):
             soul_file = Path(cast["soul_file"]).resolve()
 
     log(f"Launching {len(agents)} agents for '{cast_name}' mode...", cast_name)
-
-    # Update Hermes gateway config with the primary bot endpoint + profile
-    if agents:
-        primary = agents[0]
-        profile_name = primary["name"].lower().replace(" ", "-")
-        update_hermes_platform_config(
-            f"http://localhost:{primary['port']}",
-            primary["name"],
-            profile_name,
-        )
 
     for agent in agents:
         name = agent["name"]
@@ -565,14 +557,36 @@ def cmd_start(cast_name: str, cast: dict, mc_host: str, mc_port: int):
             log(f"{name} already running (bot {bot_pid}, agent {agent_pid})", cast_name)
             continue
 
-        # 1. Setup profile
-        profile_dir = setup_agent_profile(cast_name, agent, soul_file)
-        workspace_dir = str(profile_dir / "workspace")
+        # 1. Bootstrap per-agent workspace with its own gateway
+        model = agent.get("model", "MiniMax-M2.7")
+        provider = agent.get("provider", "minimax")
+        base_url = agent.get("base_url", "https://api.minimax.io/anthropic")
+        extra_toolsets = agent.get("extra_toolsets", [])
+
+        workspace = bootstrap_agent_workspace(
+            agent_name=name,
+            port=port,
+            model=model,
+            provider=provider,
+            base_url=base_url,
+            extra_toolsets=extra_toolsets,
+            cast_name=cast_name,
+        )
+        workspace_dir = str(workspace)
+
+        # 1b. Copy SOUL.md to workspace
+        if soul_file and soul_file.exists():
+            soul_dst = workspace / "hermes-home" / "SOUL.md"
+            soul_dst.write_text(soul_file.read_text())
+            log(f"SOUL.md written for {name}", cast_name)
+
+        # 1c. Start the gateway for this agent
+        start_agent_gateway(name, cast_name)
 
         # 2. Start bot
         start_bot(cast_name, name, port, mc_host, mc_port, workspace_dir, agent.get("bot_config"))
 
-        # 2b. Set gamemode if specified in cast config
+        # 2b. Set gamemode if specified
         gamemode = agent.get("gamemode")
         if gamemode:
             try:
@@ -594,7 +608,7 @@ def cmd_start(cast_name: str, cast: dict, mc_host: str, mc_port: int):
         max_chat_chars = agent.get("max_chat_chars")
         start_agent(cast_name, name, port, max_chat_chars=max_chat_chars, immortal=agent.get("immortal", False))
 
-        time.sleep(2)  # Stagger to avoid resource spikes
+        time.sleep(2)
 
     log(f"Cast '{cast_name}' launched.", cast_name)
 

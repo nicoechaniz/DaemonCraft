@@ -645,7 +645,7 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 30):
 
 def main():
     parser = argparse.ArgumentParser(description="DaemonCraft heartbeat injector")
-    parser.add_argument("--profile", required=True, help="Hermes profile name")
+    parser.add_argument("--profile", default="", help="Agent name (for logging)")
     parser.add_argument("--prompt", default="Begin.", help="Unused legacy arg")
     parser.add_argument("--interval", type=int, default=30, help="Seconds between heartbeats")
     args = parser.parse_args()
