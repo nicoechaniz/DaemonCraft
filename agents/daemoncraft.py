@@ -506,7 +506,7 @@ def start_agent(
 
 # ── Commands ─────────────────────────────────────────────────────────────────
 
-def update_hermes_platform_config(bot_api_url: str, bot_username: str) -> None:
+def update_hermes_platform_config(bot_api_url: str, bot_username: str, profile_name: str | None = None) -> None:
     """Update the global Hermes config.yaml with the active DaemonCraft bot endpoint.
 
     The gateway adapter reads platforms.daemoncraft.extra.bot_api_url to know
@@ -526,8 +526,10 @@ def update_hermes_platform_config(bot_api_url: str, bot_username: str) -> None:
         extra = daemoncraft.setdefault("extra", {})
         extra["bot_api_url"] = bot_api_url
         extra["bot_username"] = bot_username
+        if profile_name:
+            extra["profile"] = profile_name
         config_path.write_text(yaml.dump(config, default_flow_style=False, sort_keys=False))
-        log(f"Updated Hermes config: daemoncraft bot -> {bot_api_url} ({bot_username})")
+        log(f"Updated Hermes config: daemoncraft bot -> {bot_api_url} ({bot_username}) profile={profile_name or '(unchanged)'}")
     except Exception as e:
         log(f"Warning: failed to update Hermes config: {e}")
 
@@ -542,12 +544,14 @@ def cmd_start(cast_name: str, cast: dict, mc_host: str, mc_port: int):
 
     log(f"Launching {len(agents)} agents for '{cast_name}' mode...", cast_name)
 
-    # Update Hermes gateway config with the primary bot endpoint
+    # Update Hermes gateway config with the primary bot endpoint + profile
     if agents:
         primary = agents[0]
+        profile_name = primary["name"].lower().replace(" ", "-")
         update_hermes_platform_config(
             f"http://localhost:{primary['port']}",
             primary["name"],
+            profile_name,
         )
 
     for agent in agents:
