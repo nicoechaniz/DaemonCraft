@@ -178,6 +178,61 @@ async function handleIntent(req, res) {
       error: err.message,
       raw_excerpt: ollama_result.raw.slice(0, 400),
     });
+    // Mitigation: if the model returned an empty string, synthesize a
+    // signal so upstream can act. This is a regression observed in
+    // field-test 2026-05-09 — distinct from `empty_tool_calls` (where
+    // the model produced JSON with tool_calls=[]); here the model
+    // produced literally nothing. See lib/mitigations.js for the
+    // post-parse counterpart.
+    const isEmptyResponse = !ollama_result.raw || !ollama_result.raw.trim();
+    if (isEmptyResponse) {
+      const synthesized = {
+        name: "raise_guardian_event",
+        arguments: {
+          category: "model_unavailable",
+          reason: "Gemma-Andy returned empty response; consumer-side mitigation surfaces as guardian event",
+          command_excerpt: (intent || "").slice(0, 200),
+        },
+      };
+      logEvent({
+        event: "mitigation_applied",
+        context_id,
+        regression: "empty_model_response",
+        pattern_detected: "Ollama returned empty raw output",
+        action_taken: "synthesized raise_guardian_event(model_unavailable) so upstream sees a signal",
+      });
+      const r = await dispatch(synthesized);
+      const elapsed_seconds = (Date.now() - t0) / 1000;
+      logEvent({
+        event: "intent_done",
+        context_id,
+        ok: false,
+        elapsed_seconds,
+        tool_call_count: 1,
+        mitigation_count: 1,
+        operational_risk: "none",
+      });
+      return jsonResponse(res, 200, {
+        ok: false,
+        context_id,
+        plan: {
+          body_plan: ["model returned empty response; consumer-side mitigation"],
+          checks: ["parse_failed with empty raw — likely Ollama or model availability issue"],
+          tool_calls: [synthesized],
+          failure_policy: "retry once; if persists, escalate via raise_guardian_event(model_unavailable)",
+          operational_risk: "none",
+        },
+        mitigations: [{
+          regression: "empty_model_response",
+          pattern_detected: "Ollama returned empty raw output (parser would fail)",
+          action_taken: "synthesized raise_guardian_event(model_unavailable)",
+          synthesized_tool_calls: [synthesized],
+        }],
+        execution_results: [r],
+        elapsed_seconds,
+        model: ollama_result.model,
+      });
+    }
     return jsonResponse(res, 502, {
       ok: false,
       context_id,

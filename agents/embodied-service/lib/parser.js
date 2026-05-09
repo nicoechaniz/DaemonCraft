@@ -48,7 +48,42 @@ export function stripThink(text) {
   };
 }
 
+/**
+ * Bracket fallback: try multiple strategies to extract a parseable
+ * JSON object from messy model output.
+ *
+ * Strategy ladder (returns the parsed object on first success):
+ *   1. Whole input.
+ *   2. Brace-balanced scan starting from each `{` — finds the first
+ *      well-formed top-level object.
+ *   3. Naive first-`{` to last-`}` slice (legacy behavior).
+ *
+ * Returns null if all strategies fail.
+ */
 function bracketFallback(s) {
+  // Strategy 2: find a balanced top-level object.
+  for (let start = 0; start < s.length; start++) {
+    if (s[start] !== "{") continue;
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    for (let i = start; i < s.length; i++) {
+      const c = s[i];
+      if (escape) { escape = false; continue; }
+      if (c === "\\" && inString) { escape = true; continue; }
+      if (c === '"') { inString = !inString; continue; }
+      if (inString) continue;
+      if (c === "{") depth++;
+      else if (c === "}") {
+        depth--;
+        if (depth === 0) {
+          const candidate = s.slice(start, i + 1);
+          try { JSON.parse(candidate); return candidate; } catch { break; }
+        }
+      }
+    }
+  }
+  // Strategy 3: naive first-to-last slice.
   const first = s.indexOf("{");
   const last = s.lastIndexOf("}");
   if (first === -1 || last === -1 || last <= first) return null;
