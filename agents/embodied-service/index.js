@@ -138,10 +138,12 @@ async function handleIntent(req, res) {
     previous_error: previous_error ?? null,
   };
 
+  // Full payload logged for audit replay. Per E002 Phase 6 acceptance,
+  // logs must capture "the assembled payload" — not just keys.
   logEvent({
     event: "ollama_call_start",
     context_id,
-    payload_keys: Object.keys(payload).sort(),
+    payload,
     allowed_count: filtered_allowed_tools.length,
   });
 
@@ -184,6 +186,8 @@ async function handleIntent(req, res) {
     });
   }
 
+  // Full parsed plan logged for audit replay. Per E002 Phase 6
+  // acceptance — "the parsed plan" — the whole plan, not just metrics.
   logEvent({
     event: "ollama_call_done",
     context_id,
@@ -191,6 +195,8 @@ async function handleIntent(req, res) {
     operational_risk: parsed.plan.operational_risk,
     tool_call_count: parsed.plan.tool_calls.length,
     had_think: parsed.think != null,
+    plan: parsed.plan,
+    think: parsed.think,
   });
 
   // Apply consumer-side mitigations for known model regressions
@@ -220,6 +226,17 @@ async function handleIntent(req, res) {
 
   const elapsed_seconds = (Date.now() - t0) / 1000;
   const all_ok = execution_results.every((r) => r.ok);
+
+  // E002 Phase 6 acceptance — total elapsed_seconds.
+  logEvent({
+    event: "intent_done",
+    context_id,
+    ok: all_ok,
+    elapsed_seconds,
+    tool_call_count: mitigated_plan.tool_calls.length,
+    mitigation_count: mitigations.length,
+    operational_risk: mitigated_plan.operational_risk,
+  });
 
   return jsonResponse(res, 200, {
     ok: all_ok,

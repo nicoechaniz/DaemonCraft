@@ -1,0 +1,56 @@
+[Unit]
+Description=DaemonCraft Embodied Service v1 (Path B canonical bridge to Gemma-Andy)
+Documentation=file://%h/REPOS/daemoncraft/agents/embodied-service/README.md
+After=network-online.target
+Wants=network-online.target
+# StartLimit lives in [Unit], not [Service]
+StartLimitIntervalSec=120
+StartLimitBurst=10
+
+[Service]
+Type=simple
+# Adjust WorkingDirectory + ExecStart to your deployment layout. The
+# unit assumes a clone of daemoncraft under $HOME/REPOS/. For a system
+# install (e.g. /opt/daemoncraft), copy this file under /etc/systemd/system/
+# and replace %h with the absolute path.
+WorkingDirectory=%h/REPOS/daemoncraft/agents/embodied-service
+ExecStart=/usr/bin/env node index.js
+
+# Environment — override per host. The defaults match the dev layout.
+Environment=EMBODIED_SERVICE_PORT=7790
+Environment=BOT_API_URL=http://localhost:3001
+Environment=OLLAMA_URL=http://10.10.20.1:11434
+Environment=GEMMA_ANDY_MODEL=gemma-andy:e4b-v2-2-3-q8_0
+# Set NODE_ENV=production to mute development warnings; logs stay JSON.
+Environment=NODE_ENV=production
+
+# Restart on crash, but back off so a wedged dependency (Ollama down,
+# bot disconnected) doesn't churn the unit and the journal.
+Restart=on-failure
+RestartSec=5s
+
+# Keep the process well-behaved.
+TimeoutStartSec=20
+TimeoutStopSec=10
+
+# Sandboxing. The service only needs network + the schema file under
+# its own working directory; nothing else.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+# allow writing to the journal only — no fs writes
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# We don't write any files; the schema is read at startup.
+ReadWritePaths=
+
+# Logs to journal. Each line is already JSON from logEvent().
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=embodied-service
+
+[Install]
+WantedBy=default.target
