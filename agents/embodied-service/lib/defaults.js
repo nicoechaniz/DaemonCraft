@@ -35,40 +35,39 @@ export const DEFAULT_ALLOWED_TOOLS = [
   "mine_block",
   "mine_blocks",
   "collect_drops",
-  // building
+  // building (ignite is here per canonical, not combat)
   "place_block",
   "fill_volume",
   "build_blueprint",
-  "replace_block",
   // crafting
   "craft_item",
   "view_craftable",
   "smelt_item",
-  "deposit_furnace",
-  "withdraw_furnace",
+  "check_furnace",
+  "take_from_furnace",
   // inventory
   "get_inventory",
   "equip_item",
   "view_chest",
   "take_from_chest",
   "put_in_chest",
-  "drop_item",
-  "swap_hands",
-  // combat (defensive only by default — caller opts into ignite/crit_attack)
+  "toss_item",
+  "pickup_item",
+  // combat (defensive only by default — caller opts into ignite/crit_attack/strafe)
   "attack_entity",
   "flee_from",
   "raise_shield",
   // consumables
-  "eat_food",
-  "use_consumable",
+  "consume_food",
+  "apply_bonemeal",
   // farming
   "till_soil",
   // physical_memory
-  "remember_place",
+  "remember_here",
   "forget_place",
-  "list_places",
+  "goto_remembered_place",
   // sleep
-  "sleep_in_bed",
+  "sleep",
   // fishing
   "fish",
   // signals — ALWAYS include the floats per the integration guide

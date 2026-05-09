@@ -6,24 +6,24 @@
  * implements today. The model knows all 68; we filter to the supported
  * subset before every Ollama call.
  *
- * Canonical version lives in Mariano's training repo at
- * `experiments/gemma_andy_body_smoke/data/processed/tool_schema_v2.json`.
- * Until that is shared as a fixed artifact we ship a placeholder derived
- * from team docs (see lib/tool_schema_v2.placeholder.json `_meta`).
+ * The shipped `tool_schema_v2.json` was fetched from the canonical repo
+ * at `Mar-IA-no/deamoncraft-gemma4-andy:schema/tool_schema_v2.json`
+ * (provenance recorded in the JSON's `_meta` block). When a newer
+ * version drops, re-fetch and replace the file in place.
  *
- * Override path via SCHEMA_PATH env var when the canonical file is
- * available locally.
+ * Override path via SCHEMA_PATH env var when consuming a different
+ * version (e.g., a v3 trial).
  */
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PLACEHOLDER_PATH = path.join(__dirname, "tool_schema_v2.placeholder.json");
+const DEFAULT_SCHEMA_PATH = path.join(__dirname, "tool_schema_v2.json");
 
 let _cache = null;
 
-export function loadSchema(schemaPath = process.env.SCHEMA_PATH || PLACEHOLDER_PATH) {
+export function loadSchema(schemaPath = process.env.SCHEMA_PATH || DEFAULT_SCHEMA_PATH) {
   if (_cache && _cache._loaded_from === schemaPath) return _cache;
   const raw = fs.readFileSync(schemaPath, "utf-8");
   const parsed = JSON.parse(raw);

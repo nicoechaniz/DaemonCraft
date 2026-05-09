@@ -41,7 +41,7 @@ console.log(
     port: PORT,
     ollama_url: OLLAMA_URL,
     model: GEMMA_ANDY_MODEL,
-    schema_version: schema._meta?.version,
+    schema_version: schema.version ?? schema._meta?.version_label ?? schema._meta?.version,
     schema_total: schema.allowed_tools.length,
     schema_supported: schema._supported.size,
     schema_loaded_from: schema._loaded_from,
@@ -234,7 +234,7 @@ const server = http.createServer(async (req, res) => {
       port: PORT,
       ollama_url: OLLAMA_URL,
       model: GEMMA_ANDY_MODEL,
-      schema_version: schema._meta?.version,
+      schema_version: schema.version ?? schema._meta?.version_label ?? schema._meta?.version,
       schema_total: schema.allowed_tools.length,
       schema_supported: schema._supported.size,
     });

@@ -80,8 +80,9 @@ const HANDLERS = {
     botPost("/command", { action: "fill_volume", block: args.block, from: args.from, to: args.to }),
   build_blueprint: async (args) =>
     botPost("/blueprints", { action: "build", blueprint_id: args.blueprint_id, anchor: args.anchor }),
-  replace_block: async (args) =>
-    botPost("/command", { action: "replace_block", position: args.position, block: args.block }),
+  // ignite is `building` per canonical (place_fire stays blocked separately)
+  ignite: async (args) =>
+    botPost("/command", { action: "ignite", target: args.target, purpose: args.purpose }),
 
   // ── Crafting ────────────────────────────────────────────────────────
   craft_item: async (args) =>
@@ -89,10 +90,10 @@ const HANDLERS = {
   view_craftable: async (_args) => botPost("/command", { action: "view_craftable" }),
   smelt_item: async (args) =>
     botPost("/furnaces", { action: "smelt", item: args.item, fuel: args.fuel, quantity: args.quantity ?? 1 }),
-  deposit_furnace: async (args) =>
-    botPost("/furnaces", { action: "deposit", furnace_position: args.furnace_position, items: args.items }),
-  withdraw_furnace: async (args) =>
-    botPost("/furnaces", { action: "withdraw", furnace_position: args.furnace_position }),
+  check_furnace: async (args) =>
+    botPost("/furnaces", { action: "check", furnace_ref: args.furnace_ref }),
+  take_from_furnace: async (args) =>
+    botPost("/furnaces", { action: "take", furnace_ref: args.furnace_ref, items: args.items }),
 
   // ── Inventory ───────────────────────────────────────────────────────
   get_inventory: async (_args) => botGet("/inventory"),
@@ -104,9 +105,10 @@ const HANDLERS = {
     botPost("/command", { action: "take_from_chest", chest_position: args.chest_position, items: args.items }),
   put_in_chest: async (args) =>
     botPost("/command", { action: "put_in_chest", chest_position: args.chest_position, items: args.items }),
-  drop_item: async (args) =>
-    botPost("/command", { action: "drop", item: args.item, quantity: args.quantity ?? 1 }),
-  swap_hands: async (_args) => botPost("/command", { action: "swap_hands" }),
+  toss_item: async (args) =>
+    botPost("/command", { action: "toss", item: args.item, quantity: args.quantity ?? 1, target: args.target }),
+  pickup_item: async (args) =>
+    botPost("/command", { action: "pickup", item: args.item, radius: args.radius ?? 8 }),
 
   // ── Combat ──────────────────────────────────────────────────────────
   attack_entity: async (args) =>
@@ -116,25 +118,29 @@ const HANDLERS = {
   raise_shield: async (args) => botPost("/command", { action: "raise_shield", on: !!args.on }),
   crit_attack: async (args) => botPost("/command", { action: "crit_attack", target: args.target }),
   shoot_bow: async (args) => botPost("/command", { action: "shoot_bow", target: args.target }),
-  ignite: async (args) => botPost("/command", { action: "ignite", target: args.target }),
+  strafe: async (args) =>
+    botPost("/command", { action: "strafe", around: args.around, duration_seconds: args.duration_seconds ?? 5 }),
 
   // ── Consumables ─────────────────────────────────────────────────────
-  eat_food: async (args) => botPost("/command", { action: "eat", item: args.item }),
-  use_consumable: async (args) => botPost("/command", { action: "use", item: args.item }),
+  consume_food: async (args) =>
+    botPost("/command", { action: "eat", food: args.food, min_hunger_before: args.min_hunger_before }),
+  apply_bonemeal: async (args) =>
+    botPost("/command", { action: "bonemeal", target: args.target, quantity: args.quantity ?? 1 }),
 
   // ── Farming ─────────────────────────────────────────────────────────
   till_soil: async (args) => botPost("/command", { action: "till", position: args.position }),
 
   // ── Physical memory ────────────────────────────────────────────────
-  remember_place: async (args) =>
-    botPost("/command", { action: "remember_place", name: args.name, position: args.position }),
+  remember_here: async (args) =>
+    botPost("/command", { action: "mark", name: args.name, description: args.description }),
   forget_place: async (args) =>
     botPost("/command", { action: "forget_place", name: args.name }),
-  list_places: async (_args) => botGet("/command?action=list_places"),
+  goto_remembered_place: async (args) =>
+    botPost("/command", { action: "go_mark", name: args.name }),
 
   // ── Sleep ───────────────────────────────────────────────────────────
-  sleep_in_bed: async (args) =>
-    botPost("/command", { action: "sleep_in_bed", bed_position: args.bed_position }),
+  sleep: async (args) =>
+    botPost("/command", { action: "sleep", bed_ref: args.bed_ref, only_if_night: args.only_if_night ?? true }),
 
   // ── Fishing ─────────────────────────────────────────────────────────
   fish: async (args) =>
