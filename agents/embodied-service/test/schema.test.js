@@ -10,10 +10,13 @@ describe("schema", () => {
     assert.equal(s._all.size, 68);
   });
 
-  it("flags 43 tools as executor_supported per the team docs", () => {
+  it("flags 42 tools as executor_supported (43 canonical − 1 consumer override for build_blueprint)", () => {
     _reset();
     const s = loadSchema();
-    assert.equal(s._supported.size, 43);
+    // Canonical schema marks 43 supported. Local consumer override flips
+    // build_blueprint to false because bot/server.js's /blueprints serves
+    // quest scripts, not block-placement specs (see schema._meta.consumer_overrides).
+    assert.equal(s._supported.size, 42);
   });
 
   it("recognizes canonical names", () => {
@@ -39,7 +42,7 @@ describe("schema", () => {
   it("filterSupported with null returns the full supported set", () => {
     _reset();
     const out = filterSupported(null);
-    assert.equal(out.length, 43);
+    assert.equal(out.length, 42);
     assert.ok(out.includes("scan_nearby"));
     assert.ok(!out.includes("plant_crop"));
   });

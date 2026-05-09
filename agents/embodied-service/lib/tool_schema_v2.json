@@ -299,14 +299,15 @@
     {
       "name": "build_blueprint",
       "category": "building",
-      "executor_supported": true,
+      "executor_supported": false,
       "args_schema": {
         "blueprint": "BlueprintName",
         "origin": "Position3D | relative ref",
         "materials_check": "bool optional default true"
       },
       "risk_default": "medium",
-      "notes": "Partially supported via mc_build actions."
+      "notes": "Partially supported via mc_build actions. [embodied-service override 2026-05-09: bot/server.js has no block-placement blueprint executor; the bot's /blueprints serves quest scripts, not block specs. Consumer flips this to false until a real blueprint-build action lands.]",
+      "executor_supported_overridden_by_consumer": true
     },
     {
       "name": "ignite",
@@ -828,6 +829,16 @@
     "fetched_from": "https://raw.githubusercontent.com/Mar-IA-no/deamoncraft-gemma4-andy/main/schema/tool_schema_v2.json",
     "fetched_at_utc": "2026-05-09T19:42:12.296511Z",
     "blob_sha": "5896efa3cfd736f43a071c1378d4612564365ef8",
-    "note": "Canonical schema fetched from Mariano repo. Replaces 2026-05-09 placeholder. The _meta block is local annotation, not part of the upstream schema."
+    "note": "Canonical schema fetched from Mariano repo. Replaces 2026-05-09 placeholder. The _meta block is local annotation, not part of the upstream schema.",
+    "consumer_overrides": [
+      {
+        "tool": "build_blueprint",
+        "field": "executor_supported",
+        "from": true,
+        "to": false,
+        "date": "2026-05-09",
+        "reason": "bot/server.js exposes /blueprints for quest scripts (sensors/phases), not block-placement specs"
+      }
+    ]
   }
 }

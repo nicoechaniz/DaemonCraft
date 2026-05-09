@@ -114,14 +114,17 @@ const HANDLERS = {
     });
   },
 
-  build_blueprint: async (args) => {
-    const origin = await resolvePositionRef(args.origin);
-    return botAction("place_fill", {
-      // build_blueprint isn't a single bot action; the bot has /blueprints
-      // but the embodied service treats this as not-yet-supported.
-    }).then(() => ({ ok: false, error_type: "tool_not_implemented",
-      details: "build_blueprint requires /blueprints/build endpoint orchestration; not wired yet." }));
-  },
+  // build_blueprint: kept canonical but executor_supported flipped to false
+  // in our local schema annotation — bot/server.js's /blueprints serves
+  // quest scripts (sensors / phases / scoreboards), not block-placement
+  // specs. Real building requires Hermes to issue place_block / fill_volume
+  // sequences directly. The schema filter excludes it before each Ollama
+  // call, so this handler will never run.
+  build_blueprint: async (_args) => ({
+    ok: false,
+    error_type: "tool_not_implemented",
+    details: "build_blueprint blocked at consumer: bot/server.js has no block-placement blueprint executor. Use place_block + fill_volume directly for v1.",
+  }),
 
   ignite: async (args) => {
     const pos = await resolveTarget(args.target, "block");
@@ -132,12 +135,19 @@ const HANDLERS = {
   craft_item: async (args) =>
     botAction("craft", { item: args.item, count: args.quantity ?? 1 }),
 
-  view_craftable: async (_args) => {
-    // No exact bot equivalent; recipes(item) needs an item. Fall back to inventory.
-    return botAction("recipes", { item: "" }).then(() => ({
-      ok: false, error_type: "tool_not_implemented",
-      details: "view_craftable needs a richer recipes endpoint than bot/server.js exposes today.",
-    }));
+  view_craftable: async (args) => {
+    // Canonical: {filter: "str optional"}. Bot's recipes(item) takes one
+    // item name. We treat the filter as the item to look up. If no filter,
+    // return a structured response explaining the bot needs a target.
+    const item = (args.filter ?? "").trim();
+    if (!item) {
+      return {
+        ok: false,
+        error_type: "missing_filter",
+        details: "view_craftable on this executor requires a filter (single item name). Pass `filter: \"<item>\"` to look up its recipes.",
+      };
+    }
+    return botAction("recipes", { item });
   },
 
   smelt_item: async (args) =>
