@@ -1,150 +1,251 @@
 /**
- * Tool dispatcher: maps canonical Gemma-Andy tool names to bot/server.js
- * HTTP endpoints + arg-shape transformations.
+ * Tool dispatcher: translates canonical Gemma-Andy v2 tool_calls into
+ * bot/server.js HTTP actions.
  *
- * Keeps the executor-side mapping decoupled from the schema. When
- * bot/server.js gains a new endpoint, you flip the schema flag
- * (executor_supported: true) AND register the mapping here. Tests that
- * iterate the schema will catch any mismatch.
+ * Two layers of translation, both required:
+ *
+ *   1. **Endpoint shape**. The bot exposes `POST /action/<actionName>`
+ *      with a JSON body holding the action's args. There is no generic
+ *      `/command` body action endpoint. (Bot's `/command` is a chat
+ *      slash-command relay — `/give`, `/tp`, etc.)
+ *
+ *   2. **Arg shape**. Canonical tools use semantic refs (e.g.
+ *      `{target: "oak_log", target_type: "block"}`). The bot's ACTIONS
+ *      take coord-pure args (e.g. `{x, y, z}`). We resolve refs via
+ *      lib/refs.js (find_blocks / find_entities / marks).
  *
  * Signal tools (ask_clarification, raise_guardian_event,
- * report_execution_error) DO NOT dispatch to bot/server.js — they're
- * consumer-side signals returned to Hermes verbatim. The dispatcher
- * recognizes them and returns a structured result without making an
- * HTTP call.
+ * report_execution_error) DO NOT dispatch — they're consumer-side
+ * signals returned to Hermes verbatim.
+ *
+ * When the model emits a tool that's canonical but not executor_supported,
+ * we return `error_type: "tool_not_implemented"` so Hermes can replanify
+ * via previous_error.
  */
 import { isSupported, getToolDef } from "./schema.js";
-
-const BOT_API_URL = process.env.BOT_API_URL || "http://localhost:3001";
+import { resolveTarget, resolveFrom, asPosition, botPost, botGet, RefResolveError, BOT_API_URL } from "./refs.js";
 
 /**
- * Mapping: canonical tool name → handler function.
+ * Mapping: canonical Gemma-Andy tool name → handler.
  *
  * Each handler receives the tool_call.arguments object and returns
- * `{ok, data?, error?}` matching bot/server.js conventions.
- *
- * Most handlers are thin wrappers around `botPost` / `botGet`.
+ * `{ok, data?, error?, error_type?, status?}` matching the shape
+ * dispatch() folds together. Most handlers either:
+ *   - call botAction(name, args) for a pure rename, or
+ *   - resolve refs first, then call botAction.
  */
 const HANDLERS = {
-  // ── Perception ──────────────────────────────────────────────────────
-  scan_nearby: async (args) => botGet(`/nearby?radius=${args.radius ?? 16}`),
-  take_screenshot: async (_args) => botPost("/screenshot", {}),
+  // ── Perception ─────────────────────────────────────────────────
+  scan_nearby: async (args) => {
+    // Bot's GET /nearby returns full local scan; canonical's
+    // optional `blocks`/`entities` filters narrow client-side.
+    const radius = args.radius ?? 16;
+    const r = await botGet(`/nearby?radius=${radius}`);
+    if (!r.ok) return botFail(r);
+    let data = r.body?.data ?? r.body;
+    if (args.blocks?.length || args.entities?.length) {
+      data = { ...data };
+      if (args.blocks?.length && Array.isArray(data.blocks)) {
+        const want = new Set(args.blocks.map((b) => b.toLowerCase()));
+        data.blocks = data.blocks.filter((b) => want.has(b.name.toLowerCase()));
+      }
+      if (args.entities?.length && Array.isArray(data.entities)) {
+        const want = new Set(args.entities.map((e) => e.toLowerCase()));
+        data.entities = data.entities.filter((e) => want.has((e.type || e.name || "").toLowerCase()));
+      }
+    }
+    return { ok: true, data };
+  },
 
-  // ── Movement ────────────────────────────────────────────────────────
+  take_screenshot: async (args) =>
+    botAction("screenshot", { width: 1280, height: 720, file_name: args?.reason }),
+
+  // ── Movement ───────────────────────────────────────────────────
   goto: async (args) => {
-    return botPost("/command", {
-      action: "goto",
-      target: args.target,
-      target_type: args.target_type ?? "position",
-      max_distance: args.max_distance,
-      avoid_hazards: args.avoid_hazards ?? true,
+    const pos = await resolveTarget(args.target, args.target_type, {
+      radius: args.max_distance ?? 32,
+    });
+    // GoalNear with range=2 if max_distance is small; fallback GoalBlock.
+    return botAction("goto_near", { x: pos.x, y: pos.y, z: pos.z, range: 2 });
+  },
+
+  follow: async (args) => {
+    // Bot follow takes a player username string. EntityRef is usually
+    // already a player username from the model's perspective.
+    if (typeof args.target !== "string") {
+      throw new RefResolveError("bad_target", "follow.target must be a player name string");
+    }
+    return botAction("follow", { player: args.target });
+  },
+
+  stop_movement: async (_args) => botAction("stop", {}),
+
+  move_away: async (args) => {
+    const pos = await resolveFrom(args.from ?? args.from_target);
+    return botAction("flee", { from: `${pos.x},${pos.y},${pos.z}`, distance: args.distance ?? 8 });
+  },
+
+  sneak: async (args) => botAction("sneak", { enable: !!args.enabled }),
+
+  // ── Mining ─────────────────────────────────────────────────────
+  mine_block: async (args) => {
+    // Canonical: {block, quantity=1, near_player?}. Bot collect handles
+    // the find+dig loop; we use that for both single + multi.
+    return botAction("collect", { block: args.block, count: args.quantity ?? 1 });
+  },
+
+  mine_blocks: async (args) =>
+    botAction("collect", { block: args.block, count: args.quantity ?? 1 }),
+
+  collect_drops: async (args) =>
+    botAction("pickup", {}),  // Bot's pickup grabs nearby items.
+
+  // ── Building ───────────────────────────────────────────────────
+  place_block: async (args) => {
+    const pos = await resolvePositionRef(args.position);
+    return botAction("place", { block: args.block, x: pos.x, y: pos.y, z: pos.z });
+  },
+
+  fill_volume: async (args) => {
+    const a = await resolvePositionRef(args.from);
+    const b = await resolvePositionRef(args.to);
+    return botAction("place_fill", {
+      block: args.block, x1: a.x, y1: a.y, z1: a.z, x2: b.x, y2: b.y, z2: b.z, hollow: false,
     });
   },
-  follow: async (args) =>
-    botPost("/command", { action: "follow", target: args.target, distance: args.distance }),
-  stop_movement: async (_args) => botPost("/command", { action: "stop" }),
-  move_away: async (args) =>
-    botPost("/command", {
-      action: "move_away",
-      from_target: args.from_target,
-      distance: args.distance ?? 8,
-    }),
-  sneak: async (args) => botPost("/command", { action: "sneak", on: !!args.on }),
 
-  // ── Mining ──────────────────────────────────────────────────────────
-  mine_block: async (args) =>
-    botPost("/command", {
-      action: "mine_block",
-      block: args.block,
-      quantity: args.quantity ?? 1,
-      max_radius: args.max_radius ?? 16,
-      near_player: args.near_player ?? false,
-    }),
-  mine_blocks: async (args) =>
-    botPost("/command", {
-      action: "mine_blocks",
-      blocks: args.blocks,
-      quantity: args.quantity ?? 1,
-    }),
-  collect_drops: async (args) =>
-    botPost("/command", {
-      action: "collect_drops",
-      items: args.items,
-      radius: args.radius ?? 6,
-    }),
+  build_blueprint: async (args) => {
+    const origin = await resolvePositionRef(args.origin);
+    return botAction("place_fill", {
+      // build_blueprint isn't a single bot action; the bot has /blueprints
+      // but the embodied service treats this as not-yet-supported.
+    }).then(() => ({ ok: false, error_type: "tool_not_implemented",
+      details: "build_blueprint requires /blueprints/build endpoint orchestration; not wired yet." }));
+  },
 
-  // ── Building ────────────────────────────────────────────────────────
-  place_block: async (args) =>
-    botPost("/command", { action: "place_block", block: args.block, position: args.position, face: args.face }),
-  fill_volume: async (args) =>
-    botPost("/command", { action: "fill_volume", block: args.block, from: args.from, to: args.to }),
-  build_blueprint: async (args) =>
-    botPost("/blueprints", { action: "build", blueprint_id: args.blueprint_id, anchor: args.anchor }),
-  // ignite is `building` per canonical (place_fire stays blocked separately)
-  ignite: async (args) =>
-    botPost("/command", { action: "ignite", target: args.target, purpose: args.purpose }),
+  ignite: async (args) => {
+    const pos = await resolveTarget(args.target, "block");
+    return botAction("ignite", { x: pos.x, y: pos.y, z: pos.z });
+  },
 
-  // ── Crafting ────────────────────────────────────────────────────────
+  // ── Crafting ───────────────────────────────────────────────────
   craft_item: async (args) =>
-    botPost("/command", { action: "craft_item", item: args.item, quantity: args.quantity ?? 1 }),
-  view_craftable: async (_args) => botPost("/command", { action: "view_craftable" }),
+    botAction("craft", { item: args.item, count: args.quantity ?? 1 }),
+
+  view_craftable: async (_args) => {
+    // No exact bot equivalent; recipes(item) needs an item. Fall back to inventory.
+    return botAction("recipes", { item: "" }).then(() => ({
+      ok: false, error_type: "tool_not_implemented",
+      details: "view_craftable needs a richer recipes endpoint than bot/server.js exposes today.",
+    }));
+  },
+
   smelt_item: async (args) =>
-    botPost("/furnaces", { action: "smelt", item: args.item, fuel: args.fuel, quantity: args.quantity ?? 1 }),
-  check_furnace: async (args) =>
-    botPost("/furnaces", { action: "check", furnace_ref: args.furnace_ref }),
-  take_from_furnace: async (args) =>
-    botPost("/furnaces", { action: "take", furnace_ref: args.furnace_ref, items: args.items }),
+    botAction("smelt", { input: args.item, fuel: args.fuel ?? "coal", count: args.quantity ?? 1 }),
 
-  // ── Inventory ───────────────────────────────────────────────────────
-  get_inventory: async (_args) => botGet("/inventory"),
+  check_furnace: async (args) => {
+    const pos = await resolvePositionRef(args.furnace_ref);
+    return botAction("furnace_check", { x: pos.x, y: pos.y, z: pos.z });
+  },
+
+  take_from_furnace: async (args) => {
+    const pos = await resolvePositionRef(args.furnace_ref);
+    return botAction("furnace_take", { x: pos.x, y: pos.y, z: pos.z });
+  },
+
+  // ── Inventory ──────────────────────────────────────────────────
+  get_inventory: async (_args) => botGet("/inventory").then(toResult),
+
   equip_item: async (args) =>
-    botPost("/command", { action: "equip", item: args.item, slot: args.slot ?? "hand" }),
-  view_chest: async (args) =>
-    botPost("/command", { action: "view_chest", chest_position: args.chest_position }),
-  take_from_chest: async (args) =>
-    botPost("/command", { action: "take_from_chest", chest_position: args.chest_position, items: args.items }),
-  put_in_chest: async (args) =>
-    botPost("/command", { action: "put_in_chest", chest_position: args.chest_position, items: args.items }),
+    botAction("equip", { item: args.item, slot: args.slot ?? "hand" }),
+
   toss_item: async (args) =>
-    botPost("/command", { action: "toss", item: args.item, quantity: args.quantity ?? 1, target: args.target }),
-  pickup_item: async (args) =>
-    botPost("/command", { action: "pickup", item: args.item, radius: args.radius ?? 8 }),
+    botAction("toss", { item: args.item, count: args.quantity ?? 1 }),
 
-  // ── Combat ──────────────────────────────────────────────────────────
-  attack_entity: async (args) =>
-    botPost("/command", { action: "attack", target: args.target, weapon: args.weapon }),
-  flee_from: async (args) =>
-    botPost("/command", { action: "flee_from", from_target: args.from_target, distance: args.distance ?? 16 }),
-  raise_shield: async (args) => botPost("/command", { action: "raise_shield", on: !!args.on }),
-  crit_attack: async (args) => botPost("/command", { action: "crit_attack", target: args.target }),
-  shoot_bow: async (args) => botPost("/command", { action: "shoot_bow", target: args.target }),
-  strafe: async (args) =>
-    botPost("/command", { action: "strafe", around: args.around, duration_seconds: args.duration_seconds ?? 5 }),
+  pickup_item: async (_args) => botAction("pickup", {}),
 
-  // ── Consumables ─────────────────────────────────────────────────────
-  consume_food: async (args) =>
-    botPost("/command", { action: "eat", food: args.food, min_hunger_before: args.min_hunger_before }),
-  apply_bonemeal: async (args) =>
-    botPost("/command", { action: "bonemeal", target: args.target, quantity: args.quantity ?? 1 }),
+  put_in_chest: async (args) => {
+    const pos = await resolvePositionRef(args.chest_ref);
+    return botAction("deposit", { x: pos.x, y: pos.y, z: pos.z, item: args.item, count: args.quantity ?? 1 });
+  },
 
-  // ── Farming ─────────────────────────────────────────────────────────
-  till_soil: async (args) => botPost("/command", { action: "till", position: args.position }),
+  take_from_chest: async (args) => {
+    const pos = await resolvePositionRef(args.chest_ref);
+    return botAction("withdraw", { x: pos.x, y: pos.y, z: pos.z, item: args.item, count: args.quantity ?? 1 });
+  },
 
-  // ── Physical memory ────────────────────────────────────────────────
+  view_chest: async (args) => {
+    const pos = await resolvePositionRef(args.chest_ref);
+    return botAction("list_container", { x: pos.x, y: pos.y, z: pos.z });
+  },
+
+  // ── Consumables ────────────────────────────────────────────────
+  consume_food: async (_args) => botAction("eat", {}),
+
+  apply_bonemeal: async (args) => {
+    const pos = await resolveTarget(args.target, "block");
+    return botAction("bonemeal", { x: pos.x, y: pos.y, z: pos.z });
+  },
+
+  // ── Combat ─────────────────────────────────────────────────────
+  attack_entity: async (args) => {
+    // Bot's attack/fight/critical_hit take entity name/type, not coords.
+    const target = typeof args.target === "string" ? args.target : null;
+    if (!target) throw new RefResolveError("bad_target", "attack_entity.target must be string entity name");
+    const style = args.attack_style;
+    if (style === "crit") return botAction("critical_hit", { target });
+    if (style === "sprint") return botAction("sprint_attack", { target });
+    return botAction("attack", { target });
+  },
+
+  shoot_bow: async (args) => {
+    const target = typeof args.target === "string" ? args.target : null;
+    if (!target) throw new RefResolveError("bad_target", "shoot_bow.target must be string entity name");
+    return botAction("shoot", { target, predict: true });
+  },
+
+  raise_shield: async (args) =>
+    botAction("shield_block", { duration: args.duration_seconds ?? 3 }),
+
+  crit_attack: async (args) => {
+    const target = typeof args.target === "string" ? args.target : null;
+    if (!target) throw new RefResolveError("bad_target", "crit_attack.target must be string entity name");
+    return botAction("critical_hit", { target });
+  },
+
+  strafe: async (args) => {
+    const target = typeof args.around === "string" ? args.around : null;
+    if (!target) throw new RefResolveError("bad_target", "strafe.around must be string entity name");
+    return botAction("strafe", { target, duration: args.duration_seconds ?? 5 });
+  },
+
+  flee_from: async (args) => {
+    const pos = await resolveFrom(args.threat ?? args.from_target);
+    return botAction("flee", { from: `${pos.x},${pos.y},${pos.z}`, distance: args.distance ?? 12 });
+  },
+
+  // ── Farming ────────────────────────────────────────────────────
+  till_soil: async (args) => {
+    // Bot till takes one tile at a time; we till the bot's current spot.
+    const status = await botGet("/status");
+    const p = status.body?.data?.position;
+    if (!p) return { ok: false, error_type: "world_state_unavailable", details: "couldn't read bot position for till_soil" };
+    return botAction("till", { x: Math.floor(p.x), y: Math.floor(p.y) - 1, z: Math.floor(p.z) });
+  },
+
+  // ── Fishing ────────────────────────────────────────────────────
+  fish: async (_args) => botAction("fish", {}),
+
+  // ── Sleep ──────────────────────────────────────────────────────
+  sleep: async (_args) => botAction("sleep_bed", {}),
+
+  // ── Physical memory ────────────────────────────────────────────
   remember_here: async (args) =>
-    botPost("/command", { action: "mark", name: args.name, description: args.description }),
-  forget_place: async (args) =>
-    botPost("/command", { action: "forget_place", name: args.name }),
-  goto_remembered_place: async (args) =>
-    botPost("/command", { action: "go_mark", name: args.name }),
+    botAction("mark", { name: args.name, note: args.description ?? "" }),
 
-  // ── Sleep ───────────────────────────────────────────────────────────
-  sleep: async (args) =>
-    botPost("/command", { action: "sleep", bed_ref: args.bed_ref, only_if_night: args.only_if_night ?? true }),
+  forget_place: async (args) => botAction("unmark", { name: args.name }),
 
-  // ── Fishing ─────────────────────────────────────────────────────────
-  fish: async (args) =>
-    botPost("/command", { action: "fish", duration_seconds: args.duration_seconds ?? 60 }),
+  goto_remembered_place: async (args) => botAction("go_mark", { name: args.name }),
 };
 
 /** Signal tools — never hit the executor. */
@@ -154,75 +255,96 @@ const SIGNAL_TOOLS = new Set([
   "report_execution_error",
 ]);
 
-async function botGet(path) {
-  const res = await fetch(`${BOT_API_URL}${path}`);
-  const text = await res.text();
-  let data;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    data = { raw: text };
+/**
+ * Resolve a Position3D ref. Accepts {x,y,z}, [x,y,z], or null/undefined
+ * (which is invalid for refs that require a position).
+ */
+async function resolvePositionRef(ref) {
+  const pos = asPosition(ref);
+  if (!pos) {
+    throw new RefResolveError("missing_target", `position ref required, got ${JSON.stringify(ref)}`);
   }
-  return res.ok ? { ok: true, data: data.data ?? data } : { ok: false, error: data, status: res.status };
+  return pos;
 }
 
-async function botPost(path, body) {
-  const res = await fetch(`${BOT_API_URL}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const text = await res.text();
-  let data;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    data = { raw: text };
-  }
-  return res.ok ? { ok: true, data: data.data ?? data } : { ok: false, error: data, status: res.status };
+/** POST /action/<name> with the given body, fold the bot's response shape. */
+async function botAction(name, body) {
+  const r = await botPost(`/action/${name}`, body);
+  return foldBotResponse(r);
 }
+
+/** Fold the bot's `{ok, status, body}` into `{ok, data?, error?, error_type?, status?}`. */
+function foldBotResponse(r) {
+  if (r.ok) {
+    // Strip `state` key from data — that's bot-side bookkeeping noise
+    // for the dispatcher, though the embodied service still surfaces it
+    // verbatim if callers want it.
+    const { state, ...rest } = r.body ?? {};
+    return { ok: true, data: rest };
+  }
+  return {
+    ok: false,
+    error_type: "bot_action_failed",
+    details: r.body?.error ?? `bot returned status ${r.status}`,
+    status: r.status,
+  };
+}
+
+function botFail(r) {
+  return {
+    ok: false,
+    error_type: "bot_action_failed",
+    details: r.body?.error ?? `bot returned status ${r.status}`,
+    status: r.status,
+  };
+}
+
+function toResult(r) { return foldBotResponse(r); }
 
 /**
  * Dispatch one tool_call. Returns `{tool, ok, data?, error?, error_type?}`.
  *
- * Defensive: if the model emits a tool that's not supported (despite our
- * filter on the consumer side), return `error_type: "tool_not_implemented"`
- * so Hermes can replanify with previous_error.
+ * Defensive: if the model emits a tool that's canonical but not
+ * executor_supported, return `tool_not_implemented` so Hermes can
+ * replanify with previous_error.
  */
 export async function dispatch(toolCall) {
   const { name, arguments: args = {} } = toolCall ?? {};
   const result = { tool: name };
 
   if (SIGNAL_TOOLS.has(name)) {
-    // Pass through to Hermes; not an executor call.
-    result.ok = true;
-    result.signal = true;
-    result.data = args;
-    return result;
+    return { ...result, ok: true, signal: true, data: args };
   }
 
   if (!isSupported(name)) {
     const def = getToolDef(name);
-    result.ok = false;
-    result.error_type = def ? "tool_not_implemented" : "tool_not_canonical";
-    result.details = def
-      ? `'${name}' is canonical but executor_supported=false in schema`
-      : `'${name}' is not in tool_schema_v2.placeholder.json allowed_tools`;
-    return result;
+    return {
+      ...result,
+      ok: false,
+      error_type: def ? "tool_not_implemented" : "tool_not_canonical",
+      details: def
+        ? `'${name}' is canonical but executor_supported=false in schema`
+        : `'${name}' is not in tool_schema_v2.json allowed_tools`,
+    };
   }
 
   const handler = HANDLERS[name];
   if (!handler) {
-    result.ok = false;
-    result.error_type = "dispatcher_mapping_missing";
-    result.details = `schema marks '${name}' as supported but no handler is registered in dispatcher.js — bug, fix me`;
-    return result;
+    return {
+      ...result,
+      ok: false,
+      error_type: "dispatcher_mapping_missing",
+      details: `schema marks '${name}' supported but no handler is registered — fix in dispatcher.js`,
+    };
   }
 
   try {
     const out = await handler(args);
     return { ...result, ...out };
   } catch (err) {
+    if (err instanceof RefResolveError) {
+      return { ...result, ok: false, error_type: err.error_type, details: err.details };
+    }
     return {
       ...result,
       ok: false,
