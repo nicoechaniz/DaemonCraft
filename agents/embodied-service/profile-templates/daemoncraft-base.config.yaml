@@ -1,0 +1,48 @@
+# DaemonCraft base profile — Path B (embodied service) integration.
+#
+# Body orchestration is delegated to Gemma-Andy via the embodied service
+# at http://localhost:7790. The Hermes cloud LLM (Kimi-coding) acts as
+# the strategic / narrative layer; Gemma-Andy is the tactical body
+# orchestrator. See vault/concepts/gemma-andy-embodied-service.md and
+# vault/epics/E002-body-protocol-wireup.md.
+#
+# This profile is the metric of success for the 2026-05-09 refactor —
+# all body work goes through `embodied_plan`, no direct mc_* body tools.
+
+model:
+  default: kimi-k2.6
+  provider: kimi-coding
+
+providers: {}
+fallback_providers: []
+credential_pool_strategies: {}
+
+# Body orchestration is ONE tool now — embodied_plan — backed by
+# Gemma-Andy via the embodied service. Granular mc_* body tools (move,
+# mine, build, craft, combat, manage, perceive, screenshot) are
+# intentionally NOT in this profile. The narrative agent describes the
+# intent; Gemma-Andy decomposes it into Mineflayer calls.
+toolsets:
+- embodiment       # the new way — single tool: embodied_plan
+- messaging        # Telegram / Discord chat surface
+
+platform_toolsets:
+  cli:
+  - embodiment
+  - clarify
+  - messaging
+
+agent:
+  max_turns: 100
+  gateway_timeout: 1800
+  restart_drain_timeout: 60
+  api_max_retries: 3
+  service_tier: ''
+  tool_use_enforcement: auto
+  gateway_timeout_warning: 900
+  gateway_notify_interval: 600
+  reasoning_effort: xhigh
+  verbose: false
+
+compression:
+  enabled: false

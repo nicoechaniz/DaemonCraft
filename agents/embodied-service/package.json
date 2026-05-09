@@ -1,0 +1,16 @@
+{
+  "name": "daemoncraft-embodied-service",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Path B canonical: HTTP service that mediates Hermes ↔ Gemma-Andy ↔ bot/server.js",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test test/"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "license": "MIT"
+}
