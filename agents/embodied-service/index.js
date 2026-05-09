@@ -25,6 +25,7 @@ import { composeWorldState } from "./lib/world_state.js";
 import { callGemmaAndy, GEMMA_ANDY_MODEL, OLLAMA_URL } from "./lib/ollama.js";
 import { parseGemmaAndyResponse } from "./lib/parser.js";
 import { dispatch } from "./lib/dispatcher.js";
+import { applyMitigations } from "./lib/mitigations.js";
 import {
   DEFAULT_GUARDIAN_CONSTRAINTS,
   DEFAULT_ALLOWED_TOOLS,
@@ -192,10 +193,19 @@ async function handleIntent(req, res) {
     had_think: parsed.think != null,
   });
 
+  // Apply consumer-side mitigations for known model regressions
+  // (recovery naive-retry, empty tool_calls). See lib/mitigations.js.
+  const { plan: mitigated_plan, mitigations } = applyMitigations(body, parsed);
+  if (mitigations.length > 0) {
+    for (const m of mitigations) {
+      logEvent({ event: "mitigation_applied", context_id, ...m });
+    }
+  }
+
   // Dispatch each tool_call in order. Stop on first failure (Hermes
   // can resend with previous_error).
   const execution_results = [];
-  for (const call of parsed.plan.tool_calls) {
+  for (const call of mitigated_plan.tool_calls) {
     const r = await dispatch(call);
     execution_results.push(r);
     logEvent({
@@ -214,8 +224,10 @@ async function handleIntent(req, res) {
   return jsonResponse(res, 200, {
     ok: all_ok,
     context_id,
-    plan: parsed.plan,
+    plan: mitigated_plan,
+    plan_original: mitigations.length > 0 ? parsed.plan : undefined,
     think: parsed.think,
+    mitigations: mitigations.length > 0 ? mitigations : undefined,
     execution_results,
     elapsed_seconds,
     model: ollama_result.model,
