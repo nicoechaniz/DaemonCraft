@@ -49,6 +49,10 @@ async function botGet(path) {
 /**
  * Resolve a Position3D-shaped value.
  * Accepts {x,y,z} object or [x,y,z] array.
+ *
+ * Note: string keywords like "current" / "here" / "in_front" are NOT
+ * resolved here (they need an HTTP call to the bot for current pos).
+ * Use `resolvePositionKeyword` for that path.
  */
 function asPosition(p) {
   if (p == null) return null;
@@ -57,6 +61,44 @@ function asPosition(p) {
   }
   if (Array.isArray(p) && p.length === 3 && p.every((n) => typeof n === "number")) {
     return { x: Math.floor(p[0]), y: Math.floor(p[1]), z: Math.floor(p[2]) };
+  }
+  return null;
+}
+
+/**
+ * Some Gemma-Andy outputs fabricate string keywords like "current",
+ * "here", or "in_front" for position args (regression observed
+ * 2026-05-09 in field-test 3). When a handler gets a non-canonical
+ * string ref, try resolving via the bot's `/status` endpoint.
+ *
+ * Returns null if the keyword isn't recognized.
+ */
+async function resolvePositionKeyword(keyword) {
+  if (typeof keyword !== "string") return null;
+  const k = keyword.trim().toLowerCase();
+  // Read bot's current position
+  let pos;
+  try {
+    const r = await botGet("/status");
+    pos = r.body?.data?.position;
+    if (!pos) return null;
+  } catch {
+    return null;
+  }
+  const cur = { x: Math.floor(pos.x), y: Math.floor(pos.y), z: Math.floor(pos.z) };
+  if (["current", "here", "self", "bot", "my_position", "current_position"].includes(k)) {
+    return cur;
+  }
+  if (["in_front", "front", "ahead", "forward"].includes(k)) {
+    // Place one block ahead of bot in z+ direction. Simple heuristic;
+    // a smarter version reads bot.entity.yaw to pick the actual facing.
+    return { x: cur.x, y: cur.y - 1, z: cur.z + 1 };
+  }
+  if (["below", "under", "feet"].includes(k)) {
+    return { x: cur.x, y: cur.y - 1, z: cur.z };
+  }
+  if (["above", "over", "head"].includes(k)) {
+    return { x: cur.x, y: cur.y + 1, z: cur.z };
   }
   return null;
 }
@@ -179,6 +221,7 @@ export {
   resolveTarget,
   resolveFrom,
   asPosition,
+  resolvePositionKeyword,
   botPost,
   botGet,
   RefResolveError,

@@ -23,7 +23,7 @@
  * via previous_error.
  */
 import { isSupported, getToolDef } from "./schema.js";
-import { resolveTarget, resolveFrom, asPosition, botPost, botGet, RefResolveError, BOT_API_URL } from "./refs.js";
+import { resolveTarget, resolveFrom, asPosition, resolvePositionKeyword, botPost, botGet, RefResolveError, BOT_API_URL } from "./refs.js";
 
 /**
  * Mapping: canonical Gemma-Andy tool name → handler.
@@ -133,21 +133,21 @@ const HANDLERS = {
 
   // ── Crafting ───────────────────────────────────────────────────
   craft_item: async (args) =>
-    botAction("craft", { item: args.item, count: args.quantity ?? 1 }),
+    botAction("craft", { item: normalizeItemName(args.item), count: args.quantity ?? 1 }),
 
   view_craftable: async (args) => {
     // Canonical: {filter: "str optional"}. Bot's recipes(item) takes one
     // item name. We treat the filter as the item to look up. If no filter,
     // return a structured response explaining the bot needs a target.
-    const item = (args.filter ?? "").trim();
-    if (!item) {
+    const raw = (args.filter ?? "").trim();
+    if (!raw) {
       return {
         ok: false,
         error_type: "missing_filter",
         details: "view_craftable on this executor requires a filter (single item name). Pass `filter: \"<item>\"` to look up its recipes.",
       };
     }
-    return botAction("recipes", { item });
+    return botAction("recipes", { item: normalizeItemName(raw) });
   },
 
   smelt_item: async (args) =>
@@ -266,15 +266,43 @@ const SIGNAL_TOOLS = new Set([
 ]);
 
 /**
- * Resolve a Position3D ref. Accepts {x,y,z}, [x,y,z], or null/undefined
- * (which is invalid for refs that require a position).
+ * Resolve a Position3D ref. Accepts {x,y,z}, [x,y,z], or string
+ * keywords like "current"/"here"/"in_front" (model regression observed
+ * 2026-05-09 — we resolve via bot's current position rather than fail).
  */
 async function resolvePositionRef(ref) {
   const pos = asPosition(ref);
-  if (!pos) {
-    throw new RefResolveError("missing_target", `position ref required, got ${JSON.stringify(ref)}`);
+  if (pos) return pos;
+  // Try string keyword fallback (model fabrication regression)
+  if (typeof ref === "string") {
+    const resolved = await resolvePositionKeyword(ref);
+    if (resolved) return resolved;
   }
-  return pos;
+  throw new RefResolveError("missing_target", `position ref required, got ${JSON.stringify(ref)}`);
+}
+
+/**
+ * Normalize common LLM item-name regressions to the canonical Minecraft
+ * names. Catches the "sticks" → "stick" plural-form regression observed
+ * in field-test 3 (2026-05-09). Add aliases as new regressions surface.
+ */
+const ITEM_ALIASES = {
+  sticks: "stick",
+  torches: "torch",
+  planks: "oak_planks",            // ambiguous — defaults to oak; model can specify
+  logs: "oak_log",
+  apples: "apple",
+  arrows: "arrow",
+  string: "string",                // already canonical
+  cobble: "cobblestone",
+  cobblestones: "cobblestone",
+  wood: "oak_log",                  // pre-1.13-style
+};
+
+function normalizeItemName(name) {
+  if (typeof name !== "string") return name;
+  const lower = name.trim().toLowerCase();
+  return ITEM_ALIASES[lower] ?? lower;
 }
 
 /** POST /action/<name> with the given body, fold the bot's response shape. */
