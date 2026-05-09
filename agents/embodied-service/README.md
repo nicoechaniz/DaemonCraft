@@ -8,7 +8,7 @@ handles the rest:
 ```
 Hermes ── HTTP intent ──▶ embodied-service ── /api/chat ──▶ Ollama (Gemma-Andy)
                                 │
-                                │ HTTP per tool_call
+                                │ HTTP per tool_call (translated)
                                 ▼
                           bot/server.js
                                 │
@@ -21,26 +21,56 @@ Hermes ── HTTP intent ──▶ embodied-service ── /api/chat ──▶ 
 
 See `vault/concepts/gemma-andy-embodied-service.md` for the architectural
 context and `vault/epics/E002-body-protocol-wireup.md` for the active
-roadmap.
+roadmap. Lattice: HRM-128 (T002.11).
 
-## Status
+---
 
-**v1, sprint 1-3 complete.** Skeleton + Ollama integration + tool
-dispatcher in place. Schema is a placeholder pending Mariano's canonical
-`tool_schema_v2.json`. Hermes-side tool registration is in
-`hermes-agent/tools/embodied_plan_tool.py` (separate repo).
+## Status (2026-05-09)
+
+**v1 functional, field-test gate not yet passed.**
+
+What works end-to-end (validated against AlterCraft + live Gemma-Andy):
+
+- Hermes calls `embodied_plan` → service composes canonical Gemma-Andy
+  v2 payload → Ollama → parsed plan → tool_calls dispatched to bot →
+  real-world side effects (e.g. "Mine 2 oak logs" → 2 oak_log in
+  bot inventory in 14s).
+- Canonical schema from `Mar-IA-no/deamoncraft-gemma4-andy` (blob
+  `5896efa3`) shipped at `lib/tool_schema_v2.json` — 68 tools / 42
+  executor-supported (1 consumer override: `build_blueprint`).
+- Translator dispatcher resolves canonical refs (BlockType, EntityRef,
+  Position3D, PlaceName) into the coord-pure args bot/server.js
+  expects, via `find_blocks` / `find_entities` / `marks` lookups.
+
+What does NOT work yet — **gating signal for the field-test gate
+(E002 Phase 7)**:
+
+- 5 reference cases from the integration guide: 3/5 pass.
+  - ✓ positive, ambiguous, unsafe
+  - ✗ recovery (3/3 retries: model ignores `previous_error`)
+  - ✗ out_of_scope (2/3 silent `tool_calls: []`, 1/3 in-game treatment)
+- These are reproducible **model regressions** vs the integration
+  guide's promised behavior, not wireup failures. See `test/reference_cases.test.js`.
+
+Recommendation: surface to Mariano (training team) before declaring
+`gemma-andy:e4b-v2-2-3-q8_0` the production target.
+
+---
 
 ## Run
 
+Local development (assumes the bot is up at `localhost:3001` and
+Gemma-Andy is reachable at `inference01:11434`):
+
 ```bash
 cd agents/embodied-service
+npm install
 node index.js
 ```
 
 Or via npm: `npm start`.
 
-The service listens on **port 7790** by default. Override with
-`EMBODIED_SERVICE_PORT`.
+The service listens on **port 7790** by default.
 
 ### Environment variables
 
@@ -50,13 +80,40 @@ The service listens on **port 7790** by default. Override with
 | `BOT_API_URL` | `http://localhost:3001` | Where bot/server.js is reachable |
 | `OLLAMA_URL` | `http://10.10.20.1:11434` | Ollama HTTP endpoint |
 | `GEMMA_ANDY_MODEL` | `gemma-andy:e4b-v2-2-3-q8_0` | Tag served by Ollama |
-| `SCHEMA_PATH` | `lib/tool_schema_v2.placeholder.json` | Override when canonical schema is shipped |
+| `SCHEMA_PATH` | `lib/tool_schema_v2.json` | Override to test a different schema version |
+
+### Bot setup (one-time per session)
+
+The bot is a Mineflayer client. Point it at the MC server:
+
+```bash
+cd agents/bot
+MC_HOST=10.10.20.1 MC_PORT=25565 MC_USERNAME=HermesBot MC_AUTH=offline node server.js
+```
+
+Verified to work against AlterCraft (Paper 1.21.11, protocol 774,
+inference01:25565). Server-agnostic in design — DaemonCraft (Purpur
+1.21.11) works identically once the bot connects.
+
+---
 
 ## API
 
 ### `GET /health`
 
-Returns service version + Ollama target + schema metadata.
+```json
+{
+  "ok": true,
+  "service": "daemoncraft-embodied-service",
+  "version": "0.1.0",
+  "port": 7790,
+  "ollama_url": "http://10.10.20.1:11434",
+  "model": "gemma-andy:e4b-v2-2-3-q8_0",
+  "schema_version": "gemma-andy-tools-v2",
+  "schema_total": 68,
+  "schema_supported": 42
+}
+```
 
 ### `POST /intent`
 
@@ -100,10 +157,11 @@ Error responses include `error: { error_type, details }` plus an
 appropriate HTTP status code (400 client error, 502 upstream error,
 500 handler bug).
 
+---
+
 ## The 6 hard rules
 
-These are non-negotiable and live in code (`lib/ollama.js`,
-`lib/parser.js`):
+These are non-negotiable and live in code:
 
 1. **No system prompt in the request.** The Gemma-Andy Modelfile bakes
    the contract byte-exact with training (fix `7205b0a`, 2026-05-08).
@@ -119,34 +177,66 @@ These are non-negotiable and live in code (`lib/ollama.js`,
 6. **Tolerant parser.** ~1% of outputs may have residual text around
    the JSON; the parser falls back to first-`{` to last-`}` extraction.
 
-## Tools-not-implemented pattern
+---
 
-The schema flags 25 of 68 tools as `executor_supported: false`. Workflow
-when adding an endpoint to `bot/server.js`:
+## Architecture notes
 
-1. Implement the endpoint
-2. Add the canonical tool name → endpoint mapping in
-   `lib/dispatcher.js` (`HANDLERS` table)
-3. Flip `executor_supported: true` in `lib/tool_schema_v2.placeholder.json`
-   (or in the canonical schema once Mariano ships it)
+### Translator dispatcher (`lib/dispatcher.js` + `lib/refs.js`)
+
+The bot's ACTIONS table is coord-pure — `goto({x, y, z})`,
+`dig({x, y, z})`, `place({block, x, y, z})`. Canonical Gemma-Andy v2
+emits semantic refs — `goto({target: "oak_log", target_type: "block"})`,
+etc. The dispatcher is a real translator:
+
+1. Receives a canonical tool_call from the parsed Gemma-Andy response.
+2. Resolves any reference args via `lib/refs.js` (calls
+   `find_blocks` / `find_entities` / `marks` on the bot, picks nearest).
+3. Maps the canonical tool name to the bot's action name (e.g.
+   `mine_block` → `collect`, `consume_food` → `eat`,
+   `place_block` → `place`).
+4. POSTs `/action/<name>` with the translated body.
+
+Signal tools (`ask_clarification`, `raise_guardian_event`,
+`report_execution_error`) bypass the bot — they're consumer-side
+signals returned to Hermes verbatim.
+
+### Schema as source of truth
+
+The canonical schema lives at `lib/tool_schema_v2.json`, fetched from
+`Mar-IA-no/deamoncraft-gemma4-andy:schema/tool_schema_v2.json`.
+Provenance (URL, fetched_at, blob_sha) is recorded in `_meta`.
+
+When a canonical flag must be overridden for our specific bot (e.g.
+`build_blueprint` is canonical-supported but our bot has no
+block-placement blueprint executor), the override is recorded in
+`_meta.consumer_overrides` with date and reason.
+
+### When to add a new bot endpoint
+
+1. Implement the endpoint in `agents/bot/server.js` ACTIONS table
+2. Add a canonical → bot mapping in `lib/dispatcher.js` HANDLERS
+3. If the canonical tool was `executor_supported: false`, flip it to
+   `true` (or remove from `consumer_overrides` if previously overridden)
 4. Restart the service
 
-The model is not retrained, the prompt is not touched.
+Tests catch the schema-vs-handler drift: every supported canonical tool
+must have a HANDLERS entry.
+
+---
 
 ## Tests
 
 ```bash
-node --test test/
+# Pure unit tests (no network, no live model):
+node --test test/parser.test.js test/schema.test.js test/ollama.test.js test/dispatcher.test.js
+# 31/31 pass
+
+# Live reference-case tests (requires Ollama + Gemma-Andy reachable):
+LIVE_OLLAMA_TESTS=1 node --test --test-timeout=120000 test/reference_cases.test.js
+# 3/5 pass — see Status section above
 ```
 
-Pure tests cover: parser (with/without `<think>`, bracket fallback,
-required-field validation), schema (loading, filtering, supported set),
-canonical stringifier (alphabetical keys, ASCII escaping, emoji
-surrogate pairs), dispatcher (signal tool short-circuits,
-tool_not_implemented gate, handler coverage of every supported tool).
-
-End-to-end against live Ollama + live `bot/server.js` is covered by the
-field session in E002 Phase 6 (not in `node --test`).
+---
 
 ## Disciplina v1 — what NOT to add
 
@@ -160,3 +250,28 @@ field session in E002 Phase 6 (not in `node --test`).
 These are v2+ territory. Per the team architectural decision
 (2026-05-08): "Path B canonical, v1 minimal, capabilities only when
 field signal demands them."
+
+---
+
+## Path 0 vs Path B — when to use which
+
+There used to be a third path on the Hermes side: a 70-tool `altercraft`
+toolset (`tools/altercraft_tool.py` in `hermes-agent`, retired
+2026-05-09 — see `legacy/altercraft-toolsets` branch in
+`Fede654/hermes-agent`) that wrapped each bot ACTION as a Hermes tool
+directly.
+
+**Decision (2026-05-09):** retired in favor of Path B for all
+DaemonCraft profiles.
+
+| Concern | Path 0 (retired) | Path B (canonical) |
+|---|---|---|
+| Tools on Hermes' side | 70 `altercraft_*` tools | 1 `embodied_plan` tool |
+| Body micro-planning | Hermes (expensive cloud LLM) | Gemma-Andy (4B local) |
+| Token cost per body action | High (Hermes plans every step) | Low (Gemma-Andy plans, Hermes delegates) |
+| Guardrails enforcement | Per-tool, scattered | Centralized in service |
+| Adding a new tool | New file, registry, schema | Update `tool_schema_v2.json` + dispatcher |
+
+If you find yourself needing direct bot access for a specific debugging
+session, the bot's HTTP API at `/action/<name>` is still the same and
+can be hit from `curl` without going through the embodied service.
