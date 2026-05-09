@@ -104,8 +104,13 @@ def bootstrap_agent_workspace(
                 "extra": {
                     "bot_api_url": f"http://localhost:{port}",
                     "bot_username": agent_name,
-                    "profile": safe_name,
                 },
+            },
+        },
+        "tts": {
+            "provider": "edge",
+            "edge": {
+                "voice": "es-MX-JorgeNeural",
             },
         },
     }
@@ -124,6 +129,25 @@ def bootstrap_agent_workspace(
     # ── 3. Write .env ──────────────────────────────────────────
     env_path = hermes_home / ".env"
     prov_upper = provider.upper().replace("-", "_").replace("_OAUTH", "")
+
+    # Inherit provider API keys from global .env (avoid "Connection error" on update)
+    provider_keys = ""
+    platform_keys = ""  # NVIDIA, embed provider, etc.
+    global_env = Path.home() / ".hermes" / ".env"
+    if global_env.exists():
+        for line in global_env.read_text().splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if "=" in stripped:
+                key_name = stripped.split("=", 1)[0].strip()
+                # Match provider-specific keys: MINIMAX_API_KEY, KIMI_API_KEY, etc.
+                if key_name.startswith(prov_upper) and key_name.endswith("_API_KEY"):
+                    provider_keys += f"{stripped}\n"
+                # Also inherit platform-level keys: NVIDIA, embed provider
+                elif key_name in ("NVIDIA_API_KEY", "HERMES_EMBED_PROVIDER"):
+                    platform_keys += f"{stripped}\n"
+
     env_content = f"""# {agent_name} — DaemonCraft Minecraft Agent
 MC_API_URL=http://localhost:{port}
 MC_USERNAME={agent_name}
@@ -137,7 +161,7 @@ HMK_AGENT_MEMORY_BASE={workspace}/agent-memory
 HERMES_HOME={hermes_home}
 
 # Provider
-{prov_upper}_BASE_URL={base_url}
+{platform_keys}{provider_keys}{prov_upper}_BASE_URL={base_url}
 """
     env_path.write_text(env_content)
     _log(f".env written: {env_path}", cast_name)
