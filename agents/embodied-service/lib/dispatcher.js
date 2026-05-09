@@ -132,8 +132,26 @@ const HANDLERS = {
   },
 
   // ── Crafting ───────────────────────────────────────────────────
-  craft_item: async (args) =>
-    botAction("craft", { item: normalizeItemName(args.item), count: args.quantity ?? 1 }),
+  craft_item: async (args) => {
+    // Field-test 2026-05-09 round 4: model emits craft_item without
+    // ensuring proximity to a crafting table. Bot rejects with
+    // "recipe appears craftable; try again near a crafting table".
+    // If `use_crafting_table` is requested, find the nearest table
+    // and goto_near it first. Best-effort — if no table is visible,
+    // we let the craft attempt proceed and surface the bot's error.
+    const wantsTable = args.use_crafting_table !== false;
+    if (wantsTable) {
+      try {
+        const r = await botPost("/action/find_blocks", { block: "crafting_table", radius: 32, count: 1 });
+        const locs = r.body?.locations ?? [];
+        if (locs.length) {
+          const t = locs[0];
+          await botPost("/action/goto_near", { x: t.x, y: t.y, z: t.z, range: 2 });
+        }
+      } catch { /* fallthrough to craft attempt */ }
+    }
+    return botAction("craft", { item: normalizeItemName(args.item), count: args.quantity ?? 1 });
+  },
 
   view_craftable: async (args) => {
     // Canonical: {filter: "str optional"}. Bot's recipes(item) takes one
