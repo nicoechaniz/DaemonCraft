@@ -329,13 +329,29 @@ async function botAction(name, body) {
   return foldBotResponse(r);
 }
 
-/** Fold the bot's `{ok, status, body}` into `{ok, data?, error?, error_type?, status?}`. */
+/**
+ * Fold the bot's `{ok, status, body}` into `{ok, data?, error?, error_type?, status?}`.
+ *
+ * The bot returns HTTP 200 with `{ok: true, result: "Mined 0/1 oak_log..."}`
+ * for **soft failures** — the action ran without throwing but didn't
+ * accomplish the goal (block out of reach, drops despawned, partial
+ * yield, etc.). Plain HTTP-code mapping reports these as ok=true,
+ * which misleads upstream agents trying to recover. Detected via
+ * `result` string patterns and surfaced as `ok=false` with
+ * `error_type: "bot_soft_failure"`.
+ */
 function foldBotResponse(r) {
   if (r.ok) {
-    // Strip `state` key from data — that's bot-side bookkeeping noise
-    // for the dispatcher, though the embodied service still surfaces it
-    // verbatim if callers want it.
     const { state, ...rest } = r.body ?? {};
+    const softFailure = detectSoftFailure(rest);
+    if (softFailure) {
+      return {
+        ok: false,
+        error_type: "bot_soft_failure",
+        details: softFailure,
+        data: rest,
+      };
+    }
     return { ok: true, data: rest };
   }
   return {
@@ -344,6 +360,41 @@ function foldBotResponse(r) {
     details: r.body?.error ?? `bot returned status ${r.status}`,
     status: r.status,
   };
+}
+
+/**
+ * Inspect bot's success-shaped response for soft-failure markers.
+ * Returns a string description of the soft failure, or null if the
+ * action genuinely succeeded.
+ *
+ * Patterns recognized (all from real bot responses observed in
+ * field-test 2026-05-09):
+ *   - "Mined 0/N <block>" — collect found blocks but couldn't dig any
+ *   - "Mined K/N <block>" with K<N — partial yield
+ *   - "No items to pick up" — pickup found no drops (often legitimate
+ *     but ambiguous; we leave this as ok=true for now since intent
+ *     "collect what's around" is satisfiable by an empty collection)
+ *   - "Can't ..." — bot's standard error prefix on inability
+ *   - "Failed to ..." — explicit failure prefix
+ */
+function detectSoftFailure(body) {
+  const result = body?.result;
+  if (typeof result !== "string") return null;
+  // "Mined K/N" partial-yield detector
+  const m = result.match(/Mined\s+(\d+)\/(\d+)/i);
+  if (m) {
+    const yielded = parseInt(m[1], 10);
+    const requested = parseInt(m[2], 10);
+    if (yielded < requested) {
+      return `bot yielded ${yielded}/${requested} (partial mine): ${result.slice(0, 200)}`;
+    }
+  }
+  // Generic failure-prefix detectors (bot returns 200 with these for
+  // recoverable in-world rejections)
+  if (/^(Can't|Failed to|Refusing to|No mineable block|Unknown block|Unknown item)/i.test(result)) {
+    return result.slice(0, 200);
+  }
+  return null;
 }
 
 function botFail(r) {
@@ -410,4 +461,4 @@ export async function dispatch(toolCall) {
   }
 }
 
-export { SIGNAL_TOOLS, HANDLERS, BOT_API_URL };
+export { SIGNAL_TOOLS, HANDLERS, BOT_API_URL, foldBotResponse, detectSoftFailure };

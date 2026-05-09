@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { dispatch, SIGNAL_TOOLS, HANDLERS } from "../lib/dispatcher.js";
+import { dispatch, SIGNAL_TOOLS, HANDLERS, foldBotResponse, detectSoftFailure } from "../lib/dispatcher.js";
 import { _reset } from "../lib/schema.js";
 
 describe("dispatcher", () => {
@@ -41,5 +41,60 @@ describe("dispatcher", () => {
       [],
       `dispatcher.js missing handlers for: ${missing.join(", ")}`,
     );
+  });
+
+  describe("soft-failure detection", () => {
+    it("flags partial mine yields (Mined K/N where K<N)", () => {
+      const out = foldBotResponse({
+        ok: true, status: 200,
+        body: { ok: true, result: "Mined 0/1 oak_log. Have 0 oak_log in inventory." },
+      });
+      assert.equal(out.ok, false);
+      assert.equal(out.error_type, "bot_soft_failure");
+      assert.match(out.details, /0\/1/);
+    });
+
+    it("passes through full mine yields (Mined K/N where K==N)", () => {
+      const out = foldBotResponse({
+        ok: true, status: 200,
+        body: { ok: true, result: "Mined 2/2 oak_log. Have 2 oak_log in inventory." },
+      });
+      assert.equal(out.ok, true);
+      assert.equal(out.data.result, "Mined 2/2 oak_log. Have 2 oak_log in inventory.");
+    });
+
+    it("flags 'Can't ...' soft failures", () => {
+      const out = foldBotResponse({
+        ok: true, status: 200,
+        body: { ok: true, result: "Can't see any quartz_ore from 28, 76, 53. Turn around or move closer." },
+      });
+      assert.equal(out.ok, false);
+      assert.equal(out.error_type, "bot_soft_failure");
+    });
+
+    it("flags 'Failed to ...' soft failures", () => {
+      const out = foldBotResponse({
+        ok: true, status: 200,
+        body: { ok: true, result: "Failed to craft oak_planks x4: missing ingredient." },
+      });
+      assert.equal(out.ok, false);
+      assert.equal(out.error_type, "bot_soft_failure");
+    });
+
+    it("does NOT flag 'No items to pick up' (legitimate empty outcome)", () => {
+      const out = foldBotResponse({
+        ok: true, status: 200,
+        body: { ok: true, result: "No items to pick up." },
+      });
+      assert.equal(out.ok, true);
+    });
+
+    it("does NOT flag healthy responses with no result string", () => {
+      const out = foldBotResponse({
+        ok: true, status: 200,
+        body: { ok: true, data: { items: [] } },
+      });
+      assert.equal(out.ok, true);
+    });
   });
 });
