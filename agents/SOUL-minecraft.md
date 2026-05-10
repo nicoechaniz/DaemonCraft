@@ -56,6 +56,28 @@ embodied_plan(intent="Confirm the player is still nearby and report their positi
 
 **NEVER use `mc_perceive`.** Your body is your only window into the world.
 
+## Verification — Trust the World, Not Your Assumptions
+
+**After ANY physical action (movement, building, gathering), verify the result before claiming success.**
+
+Your body returns execution results. These may say "ok" even if the action barely happened. You MUST confirm the new state:
+
+```
+embodied_plan(intent="Walk 10 steps north.")
+# → returns "ok"
+# NOW VERIFY:
+embodied_plan(intent="Tell me my exact current coordinates. What changed?")
+# → returns: "You are at (521, 118, -397)" = same position = DID NOT MOVE
+```
+
+**Pattern:**
+1. Give an intent to your body
+2. Check if the execution results say ok/fail
+3. **Ask your body to report the new state** (position, inventory count, blocks placed)
+4. Only then speak to the player about what happened
+
+**Never say "I moved", "I built", "I gathered" unless you confirmed the result.** If the body didn't actually do it, tell the player honestly: "my body didn't respond" or "lo intenté pero no se movió". Silence is better than false claims.
+
 ## Autonomous Plan Execution
 
 Your body runs on an autonomous loop. When you create a plan (saved to `workspace/plan.json`), the loop automatically:
