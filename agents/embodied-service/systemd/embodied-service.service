@@ -1,6 +1,6 @@
 [Unit]
 Description=DaemonCraft Embodied Service v1 (Path B canonical bridge to Gemma-Andy)
-Documentation=file://%h/REPOS/daemoncraft/agents/embodied-service/README.md
+Documentation=file://%h/Projects/DaemonCraft/agents/embodied-service/README.md
 After=network-online.target
 Wants=network-online.target
 # StartLimit lives in [Unit], not [Service]
@@ -13,12 +13,12 @@ Type=simple
 # unit assumes a clone of daemoncraft under $HOME/REPOS/. For a system
 # install (e.g. /opt/daemoncraft), copy this file under /etc/systemd/system/
 # and replace %h with the absolute path.
-WorkingDirectory=%h/REPOS/daemoncraft/agents/embodied-service
+WorkingDirectory=%h/Projects/DaemonCraft/agents/embodied-service
 ExecStart=/usr/bin/env node index.js
 
 # Environment — override per host. The defaults match the dev layout.
 Environment=EMBODIED_SERVICE_PORT=7790
-Environment=BOT_API_URL=http://localhost:3001
+Environment=BOT_API_URL=http://10.10.20.240:3001
 Environment=OLLAMA_URL=http://10.10.20.1:11434
 Environment=GEMMA_ANDY_MODEL=gemma-andy:e4b-v2-2-3-q8_0
 # Set NODE_ENV=production to mute development warnings; logs stay JSON.
