@@ -240,6 +240,8 @@ let actionHistory = []; // { action, status, time }
 const MAX_ACTION_HISTORY = 100;
 let agentLog = []; // { turn, time, prompt, response, tool_calls, error }
 const MAX_AGENT_LOG = 50;
+let embodiedLog = []; // { time, context_id, intent, plan, execution_results, elapsed_seconds, ... }
+const MAX_EMBODIED_LOG = 50;
 let agentHeartbeat = { nextTurnIn: null, turnInProgress: false }; // countdown for dashboard
 
 // ════════════════════════════════════════════════════════════════════════════════════════════
@@ -3902,6 +3904,25 @@ const httpServer = http.createServer(async (req, res) => {
       // Synchronous action: POST /action/ACTION (still supported for quick stuff)
       const actionMatch = path.match(/^\/action\/(\w+)$/);
       if (!actionMatch) {
+        // POST /embodied-log — receive intent results from embodied service for dashboard display
+        if (path === '/embodied-log' && req.method === 'POST') {
+          const entry = {
+            time: Date.now(),
+            context_id: body?.context_id,
+            intent: body?.intent,
+            plan: body?.plan,
+            plan_original: body?.plan_original,
+            execution_results: body?.execution_results,
+            elapsed_seconds: body?.elapsed_seconds,
+            think: body?.think,
+            mitigations: body?.mitigations,
+            model: body?.model,
+          };
+          embodiedLog.push(entry);
+          if (embodiedLog.length > MAX_EMBODIED_LOG) embodiedLog.shift();
+          broadcastDashboard('embodied', embodiedLog.slice(-MAX_EMBODIED_LOG));
+          return respond(res, 200, { ok: true });
+        }
         // Special: /connect
         if (path === '/connect') {
           await createBot();
@@ -3995,6 +4016,7 @@ wss.on('connection', (ws) => {
     ws.send(JSON.stringify({ type: 'chat', data: chatLog.slice(-30) }));
     ws.send(JSON.stringify({ type: 'task', data: currentTask || null }));
     ws.send(JSON.stringify({ type: 'agent', data: agentLog.slice(-50) }));
+    ws.send(JSON.stringify({ type: 'embodied', data: embodiedLog.slice(-MAX_EMBODIED_LOG) }));
   } catch {}
 
   ws.on('close', () => {

@@ -390,6 +390,13 @@
       <div class="empty">Waiting for agent turns...</div>
     </div>
   </div>
+
+  <div class="panel" style="grid-column: 1 / -1; max-height: 600px;">
+    <div class="panel-header" data-panel="embodied" id="embodied-header">&#x1f916; Embodied — Gemma-Andy Tool Calls<button class="panel-toggle">▼</button></div>
+    <div class="panel-body" id="embodied-panel">
+      <div class="empty">Waiting for embodied intents...</div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -585,6 +592,7 @@ function handleMessage(msg) {
     case 'agent': renderAgent(msg.data); break;
     case 'heartbeat': renderHeartbeat(msg.data); break;
     case 'tts_play': handleTtsPlay(msg.data); break;
+    case 'embodied': renderEmbodied(msg.data); break;
   }
 }
 
@@ -744,6 +752,62 @@ function renderHeartbeat(data) {
   } else {
     header.innerHTML = 'Bot Mind — <span style="color:#3fb950">🔄 Turn starting...</span>';
   }
+}
+
+function renderEmbodied(entries) {
+  const panel = document.getElementById('embodied-panel');
+  if (!entries || entries.length === 0) {
+    panel.innerHTML = '<div class="empty">Waiting for embodied intents...</div>';
+    return;
+  }
+  let html = '';
+  for (const entry of entries.slice(-30).reverse()) {
+    const okIcon = entry.execution_results?.every(r => r.ok) ? '✅' : '❌';
+    const riskColor = { low: '#3fb950', medium: '#e3b341', high: '#f85149', critical: '#f85149', none: '#8b949e' }[entry.plan?.operational_risk] || '#8b949e';
+    html += `<div style="border-bottom:1px solid #21262d;padding:10px 0">`;
+    html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">`;
+    html += `<span style="color:#e3b341;font-weight:600">${okIcon} ${fmtTime(entry.time)} · ${entry.elapsed_seconds?.toFixed(1)}s</span>`;
+    html += `<span style="color:${riskColor};font-size:0.75rem">${entry.plan?.operational_risk || '?'}</span>`;
+    html += `</div>`;
+    html += `<div style="color:#c9d1d9;margin-bottom:6px;font-size:0.85rem"><em>${escapeHtml(entry.intent || '?')}</em></div>`;
+    // Tool calls — each expandable
+    if (entry.plan?.tool_calls?.length) {
+      html += `<details style="margin-bottom:4px"><summary style="color:#58a6ff;cursor:pointer;font-size:0.8rem">Tool Calls (${entry.plan.tool_calls.length})</summary>`;
+      for (const tc of entry.plan.tool_calls) {
+        const args = JSON.stringify(tc.arguments || {}, null, 2);
+        html += `<div style="margin-left:12px;border-left:2px solid #58a6ff;padding:4px 8px;margin-top:4px;font-size:0.8rem">`;
+        html += `<div style="color:#58a6ff;font-weight:600">${tc.name}</div>`;
+        html += `<pre style="background:#0d1117;border:1px solid #30363d;border-radius:3px;padding:4px;margin-top:2px;max-height:120px;overflow:auto;font-size:0.72rem;color:#8b949e">${escapeHtml(args)}</pre>`;
+        html += `</div>`;
+      }
+      html += `</details>`;
+    }
+    // Execution results — each expandable
+    if (entry.execution_results?.length) {
+      html += `<details style="margin-bottom:4px"><summary style="color:#3fb950;cursor:pointer;font-size:0.8rem">Results (${entry.execution_results.length})</summary>`;
+      for (const r of entry.execution_results) {
+        const icon = r.ok ? '✅' : '❌';
+        const data = r.data ? JSON.stringify(r.data).slice(0, 300) : '';
+        html += `<div style="margin-left:12px;border-left:2px solid ${r.ok ? '#3fb950' : '#f85149'};padding:4px 8px;margin-top:4px;font-size:0.78rem">`;
+        html += `${icon} <span style="color:#58a6ff">${r.tool}</span>`;
+        if (r.error_type) html += ` <span style="color:#f85149">${r.error_type}</span>`;
+        if (data) html += `<pre style="background:#0d1117;border:1px solid #30363d;border-radius:3px;padding:4px;margin-top:2px;max-height:100px;overflow:auto;font-size:0.72rem;color:#8b949e">${escapeHtml(data)}</pre>`;
+        html += `</div>`;
+      }
+      html += `</details>`;
+    }
+    // Mitigations if any
+    if (entry.mitigations?.length) {
+      html += `<details><summary style="color:#f0883e;cursor:pointer;font-size:0.8rem">⚠️ Mitigations (${entry.mitigations.length})</summary>`;
+      for (const m of entry.mitigations) {
+        html += `<div style="margin-left:12px;padding:4px 8px;font-size:0.78rem;color:#f0883e">${m.regression}: ${m.pattern_detected}</div>`;
+      }
+      html += `</details>`;
+    }
+    html += `</div>`;
+  }
+  panel.innerHTML = html;
+  panel.scrollTop = 0;
 }
 
 function escapeHtml(text) {

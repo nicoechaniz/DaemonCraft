@@ -31,6 +31,7 @@ import {
   DEFAULT_ALLOWED_TOOLS,
   DEFAULT_DEADLINE_SECONDS,
 } from "./lib/defaults.js";
+import { BOT_API_URL } from "./lib/refs.js";
 
 const PORT = Number(process.env.EMBODIED_SERVICE_PORT || 7790);
 
@@ -292,6 +293,24 @@ async function handleIntent(req, res) {
     mitigation_count: mitigations.length,
     operational_risk: mitigated_plan.operational_risk,
   });
+
+  // Fire-and-forget POST to bot dashboard so the Embodied panel sees every intent.
+  const logPayload = JSON.stringify({
+    context_id,
+    intent,
+    plan: mitigated_plan,
+    plan_original: mitigations.length > 0 ? parsed.plan : undefined,
+    execution_results,
+    elapsed_seconds,
+    think: parsed.think,
+    mitigations: mitigations.length > 0 ? mitigations : undefined,
+    model: ollama_result.model,
+  });
+  fetch(`${BOT_API_URL}/embodied-log`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: logPayload,
+  }).catch(() => {}); // never block the response
 
   return jsonResponse(res, 200, {
     ok: all_ok,
