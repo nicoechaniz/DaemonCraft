@@ -172,11 +172,19 @@ async function handleIntent(req, res) {
   try {
     parsed = parseGemmaAndyResponse(ollama_result.raw);
   } catch (err) {
+    const raw_text = ollama_result.raw ?? "";
+    const last_brace = raw_text.lastIndexOf("}");
+    const last_bracket = raw_text.lastIndexOf("]");
+    const truncated_heuristic = raw_text.length > 0
+      && last_brace < raw_text.length - 50
+      && last_bracket < raw_text.length - 50;
     logEvent({
       event: "parse_failed",
       context_id,
       error: err.message,
-      raw_excerpt: ollama_result.raw.slice(0, 400),
+      raw_excerpt: raw_text.slice(0, 400),
+      raw_length_chars: raw_text.length,
+      truncated: truncated_heuristic,
     });
     // Mitigation: if the model returned an empty string, synthesize a
     // signal so upstream can act. This is a regression observed in
