@@ -124,15 +124,19 @@ def _get_json(path: str) -> dict:
         return {}
 
 
-def send_heartbeat_context(status: dict, nearby: dict, inventory: dict, plan: dict, events: list) -> bool:
+def send_heartbeat_context(status: dict, nearby: dict, inventory: dict, plan: dict, events: list,
+                          body_session: dict | None = None) -> bool:
     """Send a perception snapshot to the gateway via the bot server."""
-    return _post_json("/heartbeat/context", {
+    payload = {
         "status": status,
         "nearby": nearby,
         "inventory": inventory,
         "plan": plan,
         "events": events,
-    })
+    }
+    if body_session:
+        payload["body_session"] = body_session
+    return _post_json("/heartbeat/context", payload)
 
 
 def send_agent_heartbeat(next_turn_in: float | None = None, turn_in_progress: bool = False):
@@ -327,20 +331,58 @@ def wake_steve(reason: str, step_id: int | None = None, detail: str = "") -> boo
         return False
 
 
-def process_plan_tick(plan: Plan, now: float) -> Plan:
+def _build_body_session(plan: Plan, step, embodied_result: dict,
+                        passed: bool, reason: str, action: str) -> dict:
+    """Build structured body session summary for gateway context injection."""
+    execution_results = embodied_result.get("execution_results", [])
+    tool_count = len(execution_results)
+    tools_ok = sum(1 for r in execution_results if r.get("ok"))
+    tools_failed = tool_count - tools_ok
+
+    tools_summary = ", ".join(
+        f"{r.get('tool', '?')}: {'ok' if r.get('ok') else r.get('error_type', 'fail')}"
+        for r in execution_results[:8]
+    )
+
+    return {
+        "type": "body_session",
+        "plan_goal": plan.goal,
+        "plan_state": plan.state.value,
+        "plan_progress": f"{plan.current_step}/{len(plan.steps)}",
+        "step_id": step.id if step else None,
+        "step_intent": (step.intent[:200] + "…") if step and len(step.intent) > 200 else (step.intent if step else None),
+        "step_retries": f"{step.retries}/{step.max_retries}" if step else None,
+        "gemma_ok": embodied_result.get("ok"),
+        "gemma_tool_calls": tool_count,
+        "gemma_tools_succeeded": tools_ok,
+        "gemma_tools_failed": tools_failed,
+        "execution_summary": tools_summary or "(no tool calls)",
+        "gemma_elapsed_s": embodied_result.get("elapsed_seconds"),
+        "verify_passed": passed,
+        "verify_reason": reason,
+        "action": action,
+    }
+
+
+def process_plan_tick(plan: Plan, now: float) -> tuple[Plan, dict]:
     """
     Execute one tick of the autonomous plan execution loop.
-    Pure function: reads plan state, acts, returns updated plan.
+    Returns (updated_plan, body_session_dict).
     """
+    empty_session = {"type": "body_session", "plan_state": plan.state.value, "action": "noop"}
+
     if plan.state == PlanState.IDLE:
         _log_event("plan_start", goal=plan.goal, steps=len(plan.steps))
         plan.state = PlanState.EXECUTING
         plan.started_at_ts = now
         plan.last_advance_ts = now
         save_plan(plan)
+        return plan, {"type": "body_session", "plan_goal": plan.goal,
+                      "plan_state": "executing", "plan_progress": f"0/{len(plan.steps)}",
+                      "action": "plan_started"}
 
     if plan.state in (PlanState.COMPLETED, PlanState.ESCALATED):
-        return plan
+        return plan, empty_session
 
     if plan.state == PlanState.BLOCKED:
         if plan.timed_out(now):
@@ -348,30 +390,34 @@ def process_plan_tick(plan: Plan, now: float) -> Plan:
             wake_steve("plan_timeout", detail=f"No advance in {plan.hard_timeout_s}s")
             plan.state = PlanState.ESCALATED
             save_plan(plan)
-        return plan
+            return plan, {"type": "body_session", "plan_state": "escalated",
+                          "action": "plan_timeout_escalated"}
+        return plan, empty_session
 
     if plan.state != PlanState.EXECUTING:
-        return plan
+        return plan, empty_session
 
     if plan.done:
         _log_event("plan_complete", goal=plan.goal, steps=len(plan.steps))
         plan.state = PlanState.COMPLETED
         save_plan(plan)
         wake_steve("plan_complete", detail=f"Goal '{plan.goal}' completed")
-        return plan
+        return plan, {"type": "body_session", "plan_state": "completed",
+                      "plan_goal": plan.goal, "action": "plan_complete"}
 
     if plan.timed_out(now):
         _log_event("plan_timeout", goal=plan.goal, state="executing")
         wake_steve("plan_timeout", detail=f"No advance in {plan.hard_timeout_s}s")
         plan.state = PlanState.ESCALATED
         save_plan(plan)
-        return plan
+        return plan, {"type": "body_session", "plan_state": "escalated",
+                      "action": "plan_timeout_escalated"}
 
     step = plan.current
     if step is None:
         plan.state = PlanState.BLOCKED
         save_plan(plan)
-        return plan
+        return plan, empty_session
 
     _log_event("step_start", step_id=step.id, intent=step.intent[:120],
                retry=step.retries, max_retries=step.max_retries)
@@ -385,7 +431,8 @@ def process_plan_tick(plan: Plan, now: float) -> Plan:
             plan.state = PlanState.ESCALATED
             save_plan(plan)
             wake_steve("danger_critical", step_id=step.id, detail=f"Danger: {danger.value}")
-            return plan
+            return plan, _build_body_session(plan, step, embodied_result, False,
+                                             f"danger: {danger.value}", "escalated_critical")
         wake_steve("danger_detected", step_id=step.id, detail=f"Danger: {danger.value} (non-critical)")
 
     passed, reason = verify_step(step, embodied_result)
@@ -400,9 +447,11 @@ def process_plan_tick(plan: Plan, now: float) -> Plan:
             plan.state = PlanState.COMPLETED
             save_plan(plan)
             wake_steve("plan_complete", detail=f"Goal '{plan.goal}' completed")
-            return plan
+            return plan, _build_body_session(plan, step, embodied_result, True,
+                                             reason, "plan_complete")
         save_plan(plan)
-        return plan
+        return plan, _build_body_session(plan, step, embodied_result, True,
+                                         reason, "step_advanced")
 
     step.retries += 1
     if step.exhausted:
@@ -410,13 +459,15 @@ def process_plan_tick(plan: Plan, now: float) -> Plan:
         plan.state = PlanState.BLOCKED
         save_plan(plan)
         wake_steve("step_failed", step_id=step.id, detail=f"Step {step.id} exhausted: {reason}")
-        return plan
+        return plan, _build_body_session(plan, step, embodied_result, False,
+                                         reason, "step_exhausted")
 
     _log_event("step_retry", step_id=step.id, retries=step.retries,
                backoff=step.next_backoff_seconds, reason=reason)
     plan.last_advance_ts = now
     save_plan(plan)
-    return plan
+    return plan, _build_body_session(plan, step, embodied_result, False,
+                                     reason, "retry")
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -888,12 +939,19 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 7):
                 send_agent_heartbeat(next_turn_in=None, turn_in_progress=True)
 
                 try:
-                    plan = process_plan_tick(plan, now)
+                    plan, body_session = process_plan_tick(plan, now)
                 except Exception as e:
                     print(f"[loop] Plan tick error: {e}", flush=True)
+                    body_session = {"type": "body_session", "action": "tick_error", "error": str(e)}
                 finally:
                     turn_in_progress.clear()
                     send_agent_heartbeat(next_turn_in=interval, turn_in_progress=False)
+
+                # Inject body session context into gateway so Steve
+                # has full awareness of what the body did when woken.
+                # Never mentioned in chat — internal context only.
+                if body_session:
+                    send_heartbeat_context({}, {}, {}, {}, [], body_session=body_session)
 
                 # Apply backoff if current step is retrying
                 if (plan.state == PlanState.EXECUTING and plan.current
