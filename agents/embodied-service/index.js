@@ -172,11 +172,23 @@ async function handleIntent(req, res) {
   try {
     parsed = parseGemmaAndyResponse(ollama_result.raw);
   } catch (err) {
+    const raw_text = ollama_result.raw ?? "";
+    // Truncation heuristic: Gemma-Andy's response shape ends with `}`
+    // (outer object close). If the last `}` is missing entirely, or
+    // appears more than 50 chars before the end, treat as truncated.
+    // Using only `}` (not `]`) avoids false negatives when the inner
+    // tool_calls array closes but the outer object never does — an
+    // observed failure mode when num_predict cuts mid-emit.
+    const last_brace = raw_text.lastIndexOf("}");
+    const truncated_heuristic = raw_text.length > 0
+      && (last_brace === -1 || last_brace < raw_text.length - 50);
     logEvent({
       event: "parse_failed",
       context_id,
       error: err.message,
-      raw_excerpt: ollama_result.raw.slice(0, 400),
+      raw_excerpt: raw_text.slice(0, 400),
+      raw_length_chars: raw_text.length,
+      truncated: truncated_heuristic,
     });
     // Mitigation: if the model returned an empty string, synthesize a
     // signal so upstream can act. This is a regression observed in
@@ -250,6 +262,7 @@ async function handleIntent(req, res) {
     operational_risk: parsed.plan.operational_risk,
     tool_call_count: parsed.plan.tool_calls.length,
     had_think: parsed.think != null,
+    think_excerpt: typeof parsed.think === "string" ? parsed.think.slice(0, 500) : null,
     plan: parsed.plan,
     think: parsed.think,
   });
@@ -275,6 +288,7 @@ async function handleIntent(req, res) {
       tool: r.tool,
       ok: r.ok,
       error_type: r.error_type,
+      details: r.details ?? null,
     });
     if (!r.ok) break;
   }

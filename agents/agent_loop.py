@@ -46,6 +46,7 @@ if str(_AGENTS_DIR) not in sys.path:
 from plan_schema import (
     Plan, PlanState, DangerLevel, VerifyType, load_plan, save_plan,
 )
+from recovery_candidates import maybe_synthesize_substitute
 
 MC_API_URL = os.getenv("MC_API_URL", "http://localhost:3001")
 EMBODIED_SERVICE_URL = os.getenv("EMBODIED_SERVICE_URL", "http://localhost:7790")
@@ -437,6 +438,39 @@ def process_plan_tick(plan: Plan, now: float) -> tuple[Plan, dict]:
 
     passed, reason = verify_step(step, embodied_result)
     _log_event("step_verify", step_id=step.id, passed=passed, reason=reason)
+
+    # Path D candidate-generator: when verify fails with bot-side details,
+    # synthesise a deterministic substitute from world state. The body
+    # model emits the substitute via selection (lesson 7 + experiment 009:
+    # 100% with explicit alternatives). If synthesis returns None, fall
+    # through to existing retry-with-backoff. Only fires when retries
+    # remaining ≥ 2 to preserve the last retry budget for the
+    # un-substituted fallback case.
+    if not passed and step.retries < step.max_retries - 1:
+        try:
+            status = fetch_bot_status()
+            nearby = fetch_bot_nearby()
+            inv = fetch_bot_inventory()
+            pos = status.get("position", {})
+            bot_xyz = (int(pos.get("x", 0)), int(pos.get("y", 0)), int(pos.get("z", 0)))
+            substitute_intent = maybe_synthesize_substitute(
+                step, embodied_result,
+                bot_position=bot_xyz,
+                nearby_blocks=nearby.get("blocks", nearby.get("nearby_blocks", [])),
+                inventory=inv,
+            )
+            if substitute_intent:
+                _log_event("substitute_synthesised", step_id=step.id,
+                           original_intent=step.intent[:120],
+                           new_intent=substitute_intent[:120])
+                # Re-run with the substitute intent immediately (this tick),
+                # without persisting the rewrite — Plan stays under Steve's
+                # authority.
+                embodied_result = call_embodied(substitute_intent)
+                passed, reason = verify_step(step, embodied_result)
+                _log_event("substitute_verify", step_id=step.id, passed=passed, reason=reason)
+        except Exception as e:
+            _log_event("substitute_synthesis_failed", step_id=step.id, error=str(e))
 
     if passed:
         plan.current_step += 1

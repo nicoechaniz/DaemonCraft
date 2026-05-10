@@ -1,0 +1,94 @@
+# 009 — Explicit substitute recovery (Codex audit experiment 1)
+#
+# Codex audit of the lessons-007/008 contrast found that the body model
+# is good at SELECTION (when given a substitute, lesson 7 → 9-10/10) but
+# bad at SEARCH (when asked to invent a substitute from a negation,
+# lesson 8 → 0-2/5). The proposed dispatcher-classification plan was
+# challenged: it's still asking the model to do search-like reasoning
+# over a directive template.
+#
+# This experiment tests Codex's pick (D): if the recovery intent NAMES
+# a specific alternative coord/block (i.e., the dispatcher synthesised
+# the candidate), does the body model recover at lesson-7 levels across
+# all four 008 failure modes — or does the failure-mode shape itself
+# matter beyond candidate availability?
+#
+# Hypothesis (D): explicit substitutes recover at 9-10/10 across all
+# four modes. Confirms D, weakens C.
+# Anti-hypothesis: even with explicit substitutes, some modes (e.g.,
+# bot_self) still fail because the prose still mentions the failing
+# coord. Would weaken D.
+#
+# E2E validation: each variant's substitute coord is east of the
+# existing wall at x=5 (built earlier in session). The first sample
+# of each variant can successfully place; samples 2-5 will hit
+# "target space is occupied" because the substitute coord is now
+# filled. Plan match (Andy emitted the substitute coord, not the
+# failing target) is the primary metric; e2e success of sample 1
+# confirms the full Hermes→Andy→bot chain works given good intents.
+
+id: 009-explicit-substitute-recovery
+hypothesis: "Explicit substitute coords/blocks in the recovery intent achieve lesson-7-level recovery (90-100%) across all four 008 failure modes"
+fixture: forest_with_player
+samples_per_variant: 5
+
+variants:
+  - id: occupied_with_substitute
+    primitives:
+      intent: |
+        We tried to place 1 oak_planks at coordinates (7, 65, 35), but
+        place_block failed with error_type=bot_action_failed. The target
+        space was occupied by leaf_litter. Place 1 oak_planks at
+        coordinates (6, 65, 38) instead — that coordinate is air and
+        has the existing wall block at (5, 65, 38) as a placement
+        neighbor.
+
+  - id: no_neighbor_with_substitute
+    primitives:
+      intent: |
+        We tried to place 1 oak_planks at coordinates (7, 67, 37), but
+        place_block failed with error_type=bot_action_failed. There was
+        no solid block adjacent to that coordinate to anchor against.
+        Place 1 oak_planks at coordinates (6, 66, 38) instead — that
+        coordinate is air and has the existing wall block at (5, 66, 38)
+        as a placement neighbor.
+
+  - id: bot_self_with_substitute
+    primitives:
+      intent: |
+        We tried to place 1 oak_planks at coordinates (4, 65, 38), but
+        place_block failed with error_type=bot_action_failed. The bot
+        was standing at that coordinate and cannot place a block in the
+        space it occupies. Place 1 oak_planks at coordinates
+        (6, 67, 38) instead — that coordinate is air, far from the bot,
+        and has the existing wall block at (5, 67, 38) as a placement
+        neighbor.
+
+  - id: missing_inventory_with_substitute
+    primitives:
+      intent: |
+        We tried to place 1 cobblestone at coordinates (5, 65, 38), but
+        place_block failed with error_type=bot_action_failed. There is
+        no cobblestone in inventory. Inventory has oak_planks(many).
+        Place 1 oak_planks at coordinates (6, 68, 38) instead — that
+        coordinate is air and has the existing wall block at
+        (5, 68, 38) as a placement neighbor.
+
+expectations:
+  must_invoke_embodied_plan: true
+  tool_calls_must_include_any_of: [place_block]
+  max_elapsed_seconds: 30
+  operational_risk_in: [none, low, medium]
+
+metrics_to_capture:
+  - success_rate
+  - latency_p50
+  - tool_call_count
+  - mitigation_rate
+  - tool_calls_emitted
+
+# Reading: the load-bearing analytical question is whether place_block
+# in tool_calls.arguments.position matches the SUBSTITUTE coord
+# (variant-specific) and not the FAILING-TARGET coord. Manual analysis
+# post-run via the per-sample tool_calls capture (post-round-2 runner
+# fix). E2E validation: was sample 1 of each variant ok=true?

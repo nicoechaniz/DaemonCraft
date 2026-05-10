@@ -1,0 +1,83 @@
+# 008 — Recovery generalization (Pipeline 2 validation)
+#
+# Lesson 7 (experiments/007_in_intent_replan.yaml) validated that an
+# in-intent narrative recovery shifts the model's plan 90-100% for the
+# block-substitution failure mode (oak_log → oak_planks). Pipeline 2 of
+# the 2026-05-10 plan generalises that recovery into the embodied_plan
+# Python handler, which now triggers automatically on ANY bot_action_failed
+# that carries a `details` string.
+#
+# This experiment validates that the in-intent narrative shape works
+# across the four distinct failure modes the place_block dispatcher emits:
+#   1. target space occupied (e.g., leaf_litter at the target coord)
+#   2. no solid adjacent block to place against (target is open air)
+#   3. target equals bot's own position (bot occupies the space)
+#   4. inventory missing the requested block name
+#
+# Note: this experiment does NOT exercise the Python handler's auto-retry
+# logic. It tests whether the BODY MODEL responds correctly to an intent
+# that EMBEDS the failure detail. If this generalises, the handler's
+# auto-retry (which composes such intents synchronously) is sound.
+
+id: 008-recovery-generalization
+hypothesis: "In-intent narrative recovery generalises beyond block-substitution to all bot_action_failed modes that carry actionable info"
+fixture: forest_with_player
+samples_per_variant: 5
+
+variants:
+  - id: occupied_recovery
+    primitives:
+      intent: |
+        We tried to Place 1 oak_planks at coordinates (7, 65, 35), but
+        place_block failed with error_type=bot_action_failed. Can't place
+        oak_planks at 7, 65, 35: target space is occupied by leaf_litter.
+        Compose a new plan that achieves the same outcome using the
+        actually-available state. Do not re-emit the failing action.
+
+  - id: no_neighbor_recovery
+    primitives:
+      intent: |
+        We tried to Place 1 oak_planks at coordinates (7, 67, 37), but
+        place_block failed with error_type=bot_action_failed. Can't place
+        oak_planks at 7, 67, 37: no solid adjacent block to place against.
+        Choose an empty space next to/above an existing block.
+        Compose a new plan that achieves the same outcome using the
+        actually-available state. Do not re-emit the failing action.
+
+  - id: bot_self_recovery
+    primitives:
+      intent: |
+        We tried to Place 1 oak_planks at coordinates (4, 65, 38), but
+        place_block failed with error_type=bot_action_failed. The bot is
+        currently standing at (4, 65, 38) and cannot place a block in the
+        space it occupies. Choose adjacent coordinates instead.
+        Compose a new plan that achieves the same outcome using the
+        actually-available state. Do not re-emit the failing action.
+
+  - id: missing_inventory_recovery
+    primitives:
+      intent: |
+        We tried to Place 1 cobblestone at coordinates (5, 65, 38), but
+        place_block failed with error_type=bot_action_failed. No
+        cobblestone in inventory. Inventory has: oak_planks(40),
+        leaf_litter(5), stick(2). Use an available block instead.
+        Compose a new plan that achieves the same outcome using the
+        actually-available state. Do not re-emit the failing action.
+
+expectations:
+  must_invoke_embodied_plan: true
+  tool_calls_must_include_any_of: [place_block, scan_nearby, get_inventory, ask_clarification]
+  max_elapsed_seconds: 30
+  operational_risk_in: [none, low, medium]
+
+metrics_to_capture:
+  - success_rate
+  - latency_p50
+  - tool_call_count
+  - mitigation_rate
+  - tool_calls_emitted
+
+# Reading: passes = model emitted SOMETHING in the allowed-tools set.
+# But the load-bearing analytical question is: did the model RE-EMIT
+# the same failing position? Tooled by manual analysis after run
+# (runner.py captures tool_calls.arguments per-sample post round-2 fix).
