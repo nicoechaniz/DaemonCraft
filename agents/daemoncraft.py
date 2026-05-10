@@ -176,8 +176,8 @@ def ensure_base_profile() -> Path:
         "providers": {},
         "fallback_providers": [],
         "credential_pool_strategies": {},
-        "toolsets": ["minecraft", "messaging"],
-        "platform_toolsets": {"cli": ["minecraft", "clarify", "messaging"]},
+        "toolsets": ["embodiment", "messaging"],
+        "platform_toolsets": {"cli": ["embodiment", "clarify", "messaging"]},
         "agent": {
             "max_turns": 6,
             "turn_timeout_seconds": 45,
@@ -192,6 +192,7 @@ def ensure_base_profile() -> Path:
             "verbose": False,
         },
         "compression": {"enabled": False},
+        "display": {"busy_input_mode": "steer"},
     }
     (profile_dir / "config.yaml").write_text(yaml.dump(base_config, default_flow_style=False, sort_keys=False))
 
