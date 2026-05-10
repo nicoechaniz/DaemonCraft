@@ -6,75 +6,21 @@
  * intent and get reasonable behavior.
  */
 export const DEFAULT_GUARDIAN_CONSTRAINTS = {
-  autonomy_level: 2,            // constructor supervisado — sane default for kids+adults
-  no_tnt: true,
-  no_protected_zone_edit: true,
-  protected_zone_owner: null,
+  autonomy_level: 2,            // constructor supervisado
+  // EXPLORATION MODE — guardian constraints disabled for capability testing.
+  // Re-enable for production: no_tnt: true, no_protected_zone_edit: true
 };
 
 /**
- * Default `allowed_tools` when the caller passes null. Kept narrow — covers
- * recolección + crafting + chat signals + safe combat + memory. Callers
- * who want broader access should pass an explicit subset.
+ * Default `allowed_tools` when the caller passes null.
  *
- * The schema filter in lib/schema.js will further intersect this with
- * the executor_supported set, so even if a caller passes a wider list,
- * only currently-implemented tools reach the model.
+ * EXPLORATION MODE: null → filterSupported(null) returns ALL 42
+ * executor_supported tools from the canonical schema. Gemma-Andy has
+ * unrestricted access for capability testing.
+ *
+ * Production: replace null with an explicit safe-subset array.
  */
-export const DEFAULT_ALLOWED_TOOLS = [
-  // perception
-  "scan_nearby",
-  "take_screenshot",
-  // movement
-  "goto",
-  "follow",
-  "stop_movement",
-  "move_away",
-  "sneak",
-  // mining
-  "mine_block",
-  "mine_blocks",
-  "collect_drops",
-  // building (ignite is here per canonical, not combat)
-  "place_block",
-  "fill_volume",
-  "build_blueprint",
-  // crafting
-  "craft_item",
-  "view_craftable",
-  "smelt_item",
-  "check_furnace",
-  "take_from_furnace",
-  // inventory
-  "get_inventory",
-  "equip_item",
-  "view_chest",
-  "take_from_chest",
-  "put_in_chest",
-  "toss_item",
-  "pickup_item",
-  // combat (defensive only by default — caller opts into ignite/crit_attack/strafe)
-  "attack_entity",
-  "flee_from",
-  "raise_shield",
-  // consumables
-  "consume_food",
-  "apply_bonemeal",
-  // farming
-  "till_soil",
-  // physical_memory
-  "remember_here",
-  "forget_place",
-  "goto_remembered_place",
-  // sleep
-  "sleep",
-  // fishing
-  "fish",
-  // signals — ALWAYS include the floats per the integration guide
-  "ask_clarification",
-  "raise_guardian_event",
-  "report_execution_error",
-];
+export const DEFAULT_ALLOWED_TOOLS = null;
 
 /** Default deadline for the whole intent (compose + Ollama + dispatch). */
 export const DEFAULT_DEADLINE_SECONDS = 30;
