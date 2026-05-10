@@ -750,6 +750,8 @@ function renderHeartbeat(data) {
     const s = Math.ceil(data.nextTurnIn);
     header.innerHTML = `Bot Mind — <span style="color:#8b949e">⏱️ Next turn in ${s}s</span>`;
   } else {
+    header.innerHTML = 'Bot Mind — <span style=\"color:#3fb950\">🔄 Turn starting...</span>';
+  }
 }
 
 // ── Embodied Activity (Gemma-Andy) ──────────────────────────
@@ -791,10 +793,6 @@ function renderEmbodied(data) {
     '</div>';
   }
   panel.innerHTML = html || '<div class="empty">No activity yet</div>';
-}
-
-    header.innerHTML = 'Bot Mind — <span style="color:#3fb950">🔄 Turn starting...</span>';
-  }
 }
 
 function escapeHtml(text) {
