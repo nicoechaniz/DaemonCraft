@@ -267,33 +267,117 @@ async function handleIntent(req, res) {
     }
   }
 
-  // Dispatch each tool_call in order. Stop on first failure (Hermes
-  // can resend with previous_error).
-  const execution_results = [];
-  for (const call of mitigated_plan.tool_calls) {
-    const r = await dispatch(call);
-    execution_results.push(r);
+  // ── Dispatch with auto-retry via previous_error ──────────────────
+  // Gemma-Andy was trained to produce recovery plans when previous_error
+  // is populated. If a tool_call fails, we call the model again with the
+  // failure details so it can replan — rather than failing immediately.
+  const MAX_RETRIES = 1; // one recovery attempt per intent
+  const all_results = [];
+  let current_plan = mitigated_plan;
+  let retry_used = false;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const batch_results = [];
+    for (const call of current_plan.tool_calls) {
+      const r = await dispatch(call);
+      batch_results.push(r);
+      logEvent({
+        event: "tool_dispatch",
+        context_id,
+        tool: r.tool,
+        ok: r.ok,
+        error_type: r.error_type,
+        attempt: attempt > 0 ? `retry_${attempt}` : "first",
+      });
+      if (!r.ok) {
+        // Stop this batch. If we have retries left, prepare recovery.
+        break;
+      }
+    }
+
+    all_results.push(...batch_results);
+    const batch_ok = batch_results.every((r) => r.ok);
+
+    if (batch_ok || attempt >= MAX_RETRIES) {
+      // Success or out of retries — done.
+      break;
+    }
+
+    // Compose previous_error from the first failure in this batch
+    const failed = batch_results.find((r) => !r.ok);
+    const previous_error = {
+      tool: failed.tool,
+      error_type: failed.error_type || "other",
+      details: failed.details || failed.error || "tool_call failed",
+    };
+
     logEvent({
-      event: "tool_dispatch",
+      event: "retry_with_previous_error",
       context_id,
-      tool: r.tool,
-      ok: r.ok,
-      error_type: r.error_type,
+      previous_error,
     });
-    if (!r.ok) break;
+
+    // Build recovery payload — same intent/world_state/constraints,
+    // but with previous_error so Gemma-Andy composes a recovery plan.
+    const recovery_payload = {
+      high_level_command: intent,
+      world_state,
+      allowed_tools: filtered_allowed_tools,
+      guardian_constraints: constraints,
+      previous_error,
+    };
+
+    logEvent({
+      event: "ollama_recovery_call_start",
+      context_id,
+      previous_error,
+    });
+
+    const recovery_controller = new AbortController();
+    const recovery_deadline_ms = Math.max(1000, (deadline_seconds * 1000) - (Date.now() - t0));
+    const recovery_timer = setTimeout(() => recovery_controller.abort(), recovery_deadline_ms);
+
+    let recovery_result;
+    try {
+      recovery_result = await callGemmaAndy(recovery_payload, { signal: recovery_controller.signal });
+    } catch (err) {
+      clearTimeout(recovery_timer);
+      logEvent({ event: "ollama_recovery_call_failed", context_id, error: err.message });
+      break; // can't recover — return partial results
+    } finally {
+      clearTimeout(recovery_timer);
+    }
+
+    let recovery_parsed;
+    try {
+      recovery_parsed = parseGemmaAndyResponse(recovery_result.raw);
+    } catch (err) {
+      logEvent({ event: "recovery_parse_failed", context_id, error: err.message });
+      break; // can't parse recovery — return partial results
+    }
+
+    logEvent({
+      event: "ollama_recovery_call_done",
+      context_id,
+      elapsed_ms: recovery_result.elapsed_ms,
+      tool_call_count: recovery_parsed.plan.tool_calls.length,
+    });
+
+    retry_used = true;
+    current_plan = recovery_parsed.plan;
   }
 
   const elapsed_seconds = (Date.now() - t0) / 1000;
-  const all_ok = execution_results.every((r) => r.ok);
+  const all_ok = all_results.length > 0 && all_results.every((r) => r.ok);
 
-  // E002 Phase 6 acceptance — total elapsed_seconds.
   logEvent({
     event: "intent_done",
     context_id,
     ok: all_ok,
     elapsed_seconds,
-    tool_call_count: mitigated_plan.tool_calls.length,
+    tool_call_count: all_results.length,
     mitigation_count: mitigations.length,
+    retry_used,
     operational_risk: mitigated_plan.operational_risk,
   });
 
@@ -301,10 +385,12 @@ async function handleIntent(req, res) {
     ok: all_ok,
     context_id,
     plan: mitigated_plan,
+    plan_recovery: retry_used ? current_plan : undefined,
     plan_original: mitigations.length > 0 ? parsed.plan : undefined,
     think: parsed.think,
     mitigations: mitigations.length > 0 ? mitigations : undefined,
-    execution_results,
+    execution_results: all_results,
+    retry_used,
     elapsed_seconds,
     model: ollama_result.model,
   });
