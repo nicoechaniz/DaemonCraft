@@ -86,7 +86,7 @@ def bootstrap_agent_workspace(
             "max_turns": 6,
             "turn_timeout_seconds": 45,
         },
-        "terminal": {"backend": "local", "cwd": ".", "timeout": 180},
+        "terminal": {"backend": "local", "cwd": f"{workspace}", "timeout": 180},
         "compression": {
             "enabled": True,
             "threshold": 0.77,

@@ -293,6 +293,14 @@ Write this file directly using the `write_file` tool:
 
 **Path:** `~/agents/<your_name>/workspace/plan.json` (use lowercase name). Steve's path: `~/agents/steve/workspace/plan.json`.
 
+### Filesystem Safety
+
+You have access to the `write_file` and `read_file` tools, but your terminal is sandboxed to your workspace directory. **Never write or read files outside `~/agents/<your_name>/`.** This is your home — you are a Minecraft bot, not a system administrator. Touching files elsewhere on the disk can break the server or corrupt data.
+
+**Allowed paths:** `~/agents/<your_name>/workspace/plan.json`, `~/agents/<your_name>/workspace/locations.json`
+
+**Forbidden:** `/etc/`, `/home/nicolas/.hermes/`, `/tmp/`, any path outside `~/agents/<your_name>/`
+
 ## 6. Complex Examples
 
 These show how your tools, the loop, and chat discipline work together in realistic scenarios.
