@@ -1,0 +1,43 @@
+# 002 — Inventory awareness via intent prefix
+#
+# Hypothesis: Pre-pending current inventory to the intent reduces
+# Gemma-Andy's "inventory_ignorance" regression where it picks oak_log
+# when only oak_planks is in inventory.
+#
+# Field-test 2026-05-09 documented this regression. Inventory IS in
+# world_state but model doesn't always read it. Compare intents that
+# explicitly mention available items vs those that don't.
+
+id: 002-inventory-awareness
+hypothesis: "Explicitly mentioning inventory in the intent prevents fabricated item references"
+fixture: forest_with_player
+samples_per_variant: 3
+
+variants:
+  - id: implicit_inventory
+    primitives:
+      intent: "construyamos una pared de 4 bloques acá"
+
+  - id: explicit_inventory
+    primitives:
+      intent: "Construyamos una pared de 4 bloques acá. Tenés oak_planks(40) en el inventario, usá esos."
+
+  - id: hermes_style
+    primitives:
+      intent: "Place 4 oak_planks blocks in a horizontal line at the player's position. Use the oak_planks already in your inventory."
+
+expectations:
+  must_invoke_embodied_plan: true
+  tool_calls_must_include_any_of: [place_block, fill_volume]
+  # Critical: model must NOT request oak_log when only oak_planks available
+  # (we check via post-mitigation analysis since the dispatcher's
+  # block-substitution logic was reverted — model should pick correctly)
+  max_elapsed_seconds: 60
+  operational_risk_in: [none, low, medium]
+
+metrics_to_capture:
+  - success_rate
+  - latency_p50
+  - tool_call_count
+  - mitigation_rate
+  - tool_calls_emitted

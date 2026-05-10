@@ -1,0 +1,26 @@
+{
+  "comment": "Captured 2026-05-09 from live AlterCraft session. Bot in forest biome at night with player Fede3043 nearby. Use this fixture for nav/perception experiments. The lab does NOT mutate the world to match — these are descriptive snapshots. Recapture if drift exceeds tolerance.",
+  "world_state": {
+    "biome": "unknown",
+    "bot_health": 20,
+    "bot_position": [-2, 81, 66],
+    "dimension": "overworld",
+    "hazards": [],
+    "hunger": 20,
+    "inventory": {
+      "oak_planks": 40,
+      "leaf_litter": 5,
+      "stick": 2
+    },
+    "light_level": 4,
+    "nearby_blocks": ["oak_leaves", "leaf_litter", "birch_leaves", "oak_log", "coal_ore", "copper_ore", "gravel", "short_grass"],
+    "nearby_entities": ["player", "wolf", "bat", "chicken", "pig"],
+    "player_health": 20,
+    "player_position": [-6, 81, 64],
+    "remembered_places": {},
+    "target_positions": {},
+    "time_of_day": "night",
+    "weather": "clear",
+    "zone_owner": "shared"
+  }
+}

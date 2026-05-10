@@ -76,3 +76,6 @@ dist/
 
 # Generated bot config JSON (from YAML at runtime)
 agents/bot/config-*.json
+
+# primitives_lab — timestamped experiment outputs
+agents/embodied-service/primitives_lab/results/

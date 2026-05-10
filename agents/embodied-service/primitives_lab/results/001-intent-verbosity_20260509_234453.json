@@ -1,0 +1,252 @@
+{
+  "spec": {
+    "id": "001-intent-verbosity",
+    "hypothesis": "Verbose intents reduce fabrication and produce richer multi-step plans for navigation",
+    "fixture": "forest_with_player",
+    "samples_per_variant": 3,
+    "variants": [
+      {
+        "id": "terse",
+        "primitives": {
+          "intent": "ven aca"
+        }
+      },
+      {
+        "id": "medium",
+        "primitives": {
+          "intent": "ven\u00ed a la posici\u00f3n del jugador"
+        }
+      },
+      {
+        "id": "verbose",
+        "primitives": {
+          "intent": "Find and approach the player named Fede3043. Stop within 3 blocks of them. Avoid hazards along the way."
+        }
+      },
+      {
+        "id": "verbose_with_constraints",
+        "primitives": {
+          "intent": "Find and approach the player named Fede3043. Stop within 3 blocks of them. Avoid hazards along the way.",
+          "allowed_tools": [
+            "scan_nearby",
+            "goto",
+            "follow",
+            "stop_movement",
+            "ask_clarification",
+            "raise_guardian_event",
+            "report_execution_error"
+          ]
+        }
+      }
+    ],
+    "expectations": {
+      "must_invoke_embodied_plan": true,
+      "tool_calls_must_include_any_of": [
+        "goto",
+        "follow"
+      ],
+      "tool_calls_must_not_include": [
+        "mine_block",
+        "mine_blocks",
+        "place_block",
+        "fill_volume",
+        "toss_item",
+        "attack_entity"
+      ],
+      "max_elapsed_seconds": 30,
+      "no_mitigations": true,
+      "operational_risk_in": [
+        "none",
+        "low"
+      ]
+    },
+    "metrics_to_capture": [
+      "success_rate",
+      "latency_p50",
+      "tool_call_count",
+      "mitigation_rate",
+      "tool_calls_emitted"
+    ]
+  },
+  "snapshot": {
+    "bot_position": [
+      0,
+      81,
+      65
+    ],
+    "biome": "unknown",
+    "time_of_day_ticks": 557,
+    "health": 20,
+    "food": 20,
+    "nearby_block_types": [
+      "birch_leaves",
+      "coal_ore",
+      "copper_ore",
+      "gravel",
+      "leaf_litter",
+      "oak_leaves",
+      "oak_log",
+      "short_grass",
+      "vine"
+    ],
+    "nearby_entity_types": [
+      "bat",
+      "chest_minecart",
+      "cod",
+      "pig",
+      "player",
+      "squid",
+      "tropical_fish",
+      "wolf"
+    ],
+    "inventory_flat": {}
+  },
+  "results": [
+    {
+      "id": "terse",
+      "primitives": {
+        "intent": "ven aca"
+      },
+      "samples": [
+        {
+          "iter": 1,
+          "wall_elapsed_s": 5.12,
+          "service_elapsed_s": 5.115,
+          "ok": true,
+          "passed": true,
+          "failures": [],
+          "tool_names": [
+            "goto"
+          ],
+          "tool_count": 1,
+          "operational_risk": "low",
+          "mitigations": [],
+          "had_think": false
+        }
+      ],
+      "metrics": {
+        "n": 1,
+        "success_rate": 1.0,
+        "latency_p50": 5.12,
+        "latency_p95": 5.115,
+        "mean_tool_count": 1,
+        "mitigation_rate": 0.0,
+        "tool_freq": {
+          "goto": 1
+        }
+      }
+    },
+    {
+      "id": "medium",
+      "primitives": {
+        "intent": "ven\u00ed a la posici\u00f3n del jugador"
+      },
+      "samples": [
+        {
+          "iter": 1,
+          "wall_elapsed_s": 2.5,
+          "service_elapsed_s": 2.501,
+          "ok": true,
+          "passed": true,
+          "failures": [],
+          "tool_names": [
+            "follow"
+          ],
+          "tool_count": 1,
+          "operational_risk": "low",
+          "mitigations": [],
+          "had_think": false
+        }
+      ],
+      "metrics": {
+        "n": 1,
+        "success_rate": 1.0,
+        "latency_p50": 2.5,
+        "latency_p95": 2.501,
+        "mean_tool_count": 1,
+        "mitigation_rate": 0.0,
+        "tool_freq": {
+          "follow": 1
+        }
+      }
+    },
+    {
+      "id": "verbose",
+      "primitives": {
+        "intent": "Find and approach the player named Fede3043. Stop within 3 blocks of them. Avoid hazards along the way."
+      },
+      "samples": [
+        {
+          "iter": 1,
+          "wall_elapsed_s": 2.55,
+          "service_elapsed_s": 2.552,
+          "ok": true,
+          "passed": true,
+          "failures": [],
+          "tool_names": [
+            "follow"
+          ],
+          "tool_count": 1,
+          "operational_risk": "low",
+          "mitigations": [],
+          "had_think": false
+        }
+      ],
+      "metrics": {
+        "n": 1,
+        "success_rate": 1.0,
+        "latency_p50": 2.55,
+        "latency_p95": 2.552,
+        "mean_tool_count": 1,
+        "mitigation_rate": 0.0,
+        "tool_freq": {
+          "follow": 1
+        }
+      }
+    },
+    {
+      "id": "verbose_with_constraints",
+      "primitives": {
+        "intent": "Find and approach the player named Fede3043. Stop within 3 blocks of them. Avoid hazards along the way.",
+        "allowed_tools": [
+          "scan_nearby",
+          "goto",
+          "follow",
+          "stop_movement",
+          "ask_clarification",
+          "raise_guardian_event",
+          "report_execution_error"
+        ]
+      },
+      "samples": [
+        {
+          "iter": 1,
+          "wall_elapsed_s": 2.45,
+          "service_elapsed_s": 2.446,
+          "ok": true,
+          "passed": true,
+          "failures": [],
+          "tool_names": [
+            "follow"
+          ],
+          "tool_count": 1,
+          "operational_risk": "low",
+          "mitigations": [],
+          "had_think": false
+        }
+      ],
+      "metrics": {
+        "n": 1,
+        "success_rate": 1.0,
+        "latency_p50": 2.45,
+        "latency_p95": 2.446,
+        "mean_tool_count": 1,
+        "mitigation_rate": 0.0,
+        "tool_freq": {
+          "follow": 1
+        }
+      }
+    }
+  ],
+  "ts": "20260509_234453"
+}

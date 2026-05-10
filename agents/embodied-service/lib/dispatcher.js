@@ -103,7 +103,7 @@ const HANDLERS = {
   // ── Building ───────────────────────────────────────────────────
   place_block: async (args) => {
     const pos = await resolvePositionRef(args.position);
-    return botAction("place", { block: args.block, x: pos.x, y: pos.y, z: pos.z });
+    return botAction("place", { block: normalizeItemName(args.block), x: pos.x, y: pos.y, z: pos.z });
   },
 
   fill_volume: async (args) => {

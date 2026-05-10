@@ -5,11 +5,18 @@
  * service has its own "safe set" defaults so callers can pass only an
  * intent and get reasonable behavior.
  */
+// Guardian constraints — must match the canonical training distribution
+// exactly (see Mar-IA-no/deamoncraft-gemma4-andy:examples/eval_with_adapter.py
+// EXAMPLE_USER.guardian_constraints). Field-test 2026-05-09 surfaced that
+// missing `executor_filtering` / `no_player_harm` and an extra
+// `protected_zone_owner` field shifted us off-distribution and the model
+// emitted fabricated goto coords.
 export const DEFAULT_GUARDIAN_CONSTRAINTS = {
-  autonomy_level: 2,            // constructor supervisado — sane default for kids+adults
-  no_tnt: true,
+  autonomy_level: 2,
+  executor_filtering: true,
+  no_player_harm: true,
   no_protected_zone_edit: true,
-  protected_zone_owner: null,
+  no_tnt: true,
 };
 
 /**
