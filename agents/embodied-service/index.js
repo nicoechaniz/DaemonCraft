@@ -173,11 +173,15 @@ async function handleIntent(req, res) {
     parsed = parseGemmaAndyResponse(ollama_result.raw);
   } catch (err) {
     const raw_text = ollama_result.raw ?? "";
+    // Truncation heuristic: Gemma-Andy's response shape ends with `}`
+    // (outer object close). If the last `}` is missing entirely, or
+    // appears more than 50 chars before the end, treat as truncated.
+    // Using only `}` (not `]`) avoids false negatives when the inner
+    // tool_calls array closes but the outer object never does — an
+    // observed failure mode when num_predict cuts mid-emit.
     const last_brace = raw_text.lastIndexOf("}");
-    const last_bracket = raw_text.lastIndexOf("]");
     const truncated_heuristic = raw_text.length > 0
-      && last_brace < raw_text.length - 50
-      && last_bracket < raw_text.length - 50;
+      && (last_brace === -1 || last_brace < raw_text.length - 50);
     logEvent({
       event: "parse_failed",
       context_id,
