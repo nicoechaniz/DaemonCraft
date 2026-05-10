@@ -945,3 +945,16 @@ Mineflayer-pathfinder v2.4.5 has a bug where `allowSprinting = true` causes the 
 - After login, `--print` works reliably in non-interactive `terminal()` calls.
 - The `claude` binary in `~/.npm-global/bin/` may differ from the one in `~/.local/bin/` (check `which claude`). Ensure PATH priority if there are conflicts.
 - Do NOT pipe large diffs via stdin to `claude -p` without `--dangerously-skip-permissions` or the tool approval prompts will hang the subprocess.
+
+## CRITICAL: Template Backport Rule (2026-05-10)
+
+**NEVER make runtime-only changes to bots.** Every change — whether to config, SOUL, behavior, tools, env vars — MUST be backported to the source templates:
+
+| Change location | Backport to |
+|---|---|
+| `~/agents/<name>/hermes-home/config.yaml` | `workspace.py` (config dict) |
+| `~/agents/<name>/hermes-home/SOUL.md` | `SOUL-base.md` + `prompts/<template>.md` |
+| `~/agents/<name>/hermes-home/.env` | `workspace.py` (env_content f-string) |
+| `Hermes config (~/.hermes/config.yaml)` | If DaemonCraft-specific, `workspace.py` |
+
+Without backporting, `daemoncraft.py update companion` wipes and regenerates workspaces from templates, losing ALL runtime changes. This caused repeated regressions on 2026-05-10.
