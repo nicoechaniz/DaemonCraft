@@ -576,6 +576,7 @@ def cmd_start(cast_name: str, cast: dict, mc_host: str, mc_port: int):
             base_url=base_url,
             extra_toolsets=extra_toolsets,
             cast_name=cast_name,
+            known_bots=_get_all_known_bots(),
         )
         workspace_dir = str(workspace)
 

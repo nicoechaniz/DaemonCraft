@@ -34,6 +34,7 @@ def bootstrap_agent_workspace(
     base_url: str,
     extra_toolsets: list[str] | None = None,
     cast_name: str | None = None,
+    known_bots: str = "",
 ) -> Path:
     """Create or update a per-agent workspace with its own gateway.
 
@@ -156,6 +157,7 @@ def bootstrap_agent_workspace(
     env_content = f"""# {agent_name} — DaemonCraft Minecraft Agent
 MC_API_URL=http://localhost:{port}
 MC_USERNAME={agent_name}
+MC_KNOWN_BOTS={known_bots_csv}
 HERMES_PLATFORM=daemoncraft
 HERMES_MAX_ITERATIONS=6
 HERMES_TURN_TIMEOUT_SECONDS=45
