@@ -23,7 +23,7 @@
  * via previous_error.
  */
 import { isSupported, getToolDef } from "./schema.js";
-import { resolveTarget, resolveFrom, asPosition, resolvePositionKeyword, botPost, botGet, RefResolveError, BOT_API_URL } from "./refs.js";
+import { resolveTarget, resolveFrom, asPosition, resolvePositionKeyword, botPost, botGet, RefResolveError, DEFAULT_BOT_URL } from "./refs.js";
 
 /**
  * Mapping: canonical Gemma-Andy tool name → handler.
@@ -324,8 +324,8 @@ function normalizeItemName(name) {
 }
 
 /** POST /action/<name> with the given body, fold the bot's response shape. */
-async function botAction(name, body) {
-  const r = await botPost(`/action/${name}`, body);
+async function botAction(name, body, botUrl = null) {
+  const r = await botPost(`/action/${name}`, body, botUrl);
   return foldBotResponse(r);
 }
 
@@ -415,7 +415,7 @@ function toResult(r) { return foldBotResponse(r); }
  * executor_supported, return `tool_not_implemented` so Hermes can
  * replanify with previous_error.
  */
-export async function dispatch(toolCall) {
+export async function dispatch(toolCall, botUrl = null) {
   const { name, arguments: args = {} } = toolCall ?? {};
   const result = { tool: name };
 
@@ -461,4 +461,4 @@ export async function dispatch(toolCall) {
   }
 }
 
-export { SIGNAL_TOOLS, HANDLERS, BOT_API_URL, foldBotResponse, detectSoftFailure };
+export { SIGNAL_TOOLS, HANDLERS, DEFAULT_BOT_URL, foldBotResponse, detectSoftFailure };

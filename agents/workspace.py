@@ -156,6 +156,7 @@ def bootstrap_agent_workspace(
 
     env_content = f"""# {agent_name} — DaemonCraft Minecraft Agent
 MC_API_URL=http://localhost:{port}
+BOT_API_URL=http://localhost:{port}
 MC_USERNAME={agent_name}
 MC_KNOWN_BOTS={known_bots_csv}
 HERMES_PLATFORM=daemoncraft

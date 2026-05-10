@@ -25,6 +25,7 @@ import { composeWorldState } from "./lib/world_state.js";
 import { callGemmaAndy, GEMMA_ANDY_MODEL, OLLAMA_URL } from "./lib/ollama.js";
 import { parseGemmaAndyResponse } from "./lib/parser.js";
 import { dispatch } from "./lib/dispatcher.js";
+import { setBotUrl } from "./lib/refs.js";
 import { applyMitigations } from "./lib/mitigations.js";
 import {
   DEFAULT_GUARDIAN_CONSTRAINTS,
@@ -89,6 +90,7 @@ async function handleIntent(req, res) {
     guardian_constraints = null,
     previous_error = null,
     deadline_seconds = DEFAULT_DEADLINE_SECONDS,
+    bot_api_url = null,
   } = body;
 
   if (!intent || typeof intent !== "string") {
@@ -99,7 +101,9 @@ async function handleIntent(req, res) {
     });
   }
 
-  logEvent({ event: "intent_received", context_id, intent: intent.slice(0, 200) });
+  // Set per-request bot URL for multi-bot dispatch
+  setBotUrl(bot_api_url);
+  logEvent({ event: "intent_received", context_id, intent: intent.slice(0, 200), bot_api_url });
 
   // Compose constraints (caller overrides defaults).
   const constraints = {
@@ -118,7 +122,7 @@ async function handleIntent(req, res) {
   // a hard error: without world_state the model can't plan.
   let world_state;
   try {
-    world_state = await composeWorldState();
+    world_state = await composeWorldState({ botUrl: bot_api_url });
   } catch (err) {
     logEvent({ event: "world_state_failed", context_id, error: err.message });
     return jsonResponse(res, 502, {

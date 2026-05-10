@@ -15,7 +15,18 @@
  * All resolvers return a Promise<{x,y,z}> on success or throw with a
  * structured Error so the dispatcher can surface error_type cleanly.
  */
-const BOT_API_URL = process.env.BOT_API_URL || "http://localhost:3001";
+const DEFAULT_BOT_URL = process.env.BOT_API_URL || "http://localhost:3001";
+let currentBotUrl = DEFAULT_BOT_URL;
+
+/** Set the per-request bot URL for multi-bot dispatch. */
+export function setBotUrl(url) {
+  currentBotUrl = url || DEFAULT_BOT_URL;
+}
+
+/** Read current per-request bot URL (for diagnostics). */
+export function getBotUrl() {
+  return currentBotUrl;
+}
 
 class RefResolveError extends Error {
   constructor(error_type, details) {
@@ -26,8 +37,9 @@ class RefResolveError extends Error {
 }
 
 /** Lightweight HTTP wrappers. */
-async function botPost(path, body) {
-  const res = await fetch(`${BOT_API_URL}${path}`, {
+async function botPost(path, body, botUrl = null) {
+  const base = botUrl || currentBotUrl;
+  const res = await fetch(`${base}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body ?? {}),
@@ -38,8 +50,9 @@ async function botPost(path, body) {
   return { ok: res.ok, status: res.status, body: data };
 }
 
-async function botGet(path) {
-  const res = await fetch(`${BOT_API_URL}${path}`);
+async function botGet(path, botUrl = null) {
+  const base = botUrl || currentBotUrl;
+  const res = await fetch(`${base}${path}`);
   const text = await res.text();
   let data;
   try { data = JSON.parse(text); } catch { data = { raw: text }; }
@@ -225,5 +238,5 @@ export {
   botPost,
   botGet,
   RefResolveError,
-  BOT_API_URL,
+  DEFAULT_BOT_URL,
 };

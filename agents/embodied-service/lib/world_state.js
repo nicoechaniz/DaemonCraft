@@ -10,10 +10,11 @@
  * The bot server's response shape is `{ok: true, data: {...}}` per the
  * existing handler convention; we unwrap `.data`.
  */
-const BOT_API_URL = process.env.BOT_API_URL || "http://localhost:3001";
+const DEFAULT_BOT_URL = process.env.BOT_API_URL || "http://localhost:3001";
 
-async function botGet(path) {
-  const res = await fetch(`${BOT_API_URL}${path}`);
+async function botGet(path, botUrl = null) {
+  const base = botUrl || DEFAULT_BOT_URL;
+  const res = await fetch(`${base}${path}`);
   if (!res.ok) {
     throw new Error(`bot/server.js GET ${path} → ${res.status}`);
   }
@@ -39,15 +40,15 @@ function mapTimeOfDay(timeTicks) {
  * the model tolerates absence of optional fields, and an empty
  * nearby_blocks (etc.) is valid input.
  */
-export async function composeWorldState({ extra = {} } = {}) {
+export async function composeWorldState({ extra = {}, botUrl = null } = {}) {
   // Issue reads in parallel. /status gives biome, health, hunger, time;
   // /nearby gives blocks + entities (radius 64 to catch players further
   // out); /inventory gives items; /marks gives remembered_places.
   const [status, nearby, inventory, marks] = await Promise.all([
-    botGet("/status"),
-    botGet("/nearby?radius=64"),
-    botGet("/inventory"),
-    botGet("/marks").catch(() => null),
+    botGet("/status", botUrl),
+    botGet("/nearby?radius=64", botUrl),
+    botGet("/inventory", botUrl),
+    botGet("/marks", botUrl).catch(() => null),
   ]);
 
   // status: { position: {x,y,z}, time, health, food, ... }
