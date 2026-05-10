@@ -54,6 +54,21 @@ function logEvent(obj) {
   console.log(JSON.stringify({ ts: new Date().toISOString(), ...obj }));
 }
 
+/** POST embodied activity to the bot's dashboard WebSocket relay. */
+async function sendDashboardUpdate(botUrl, data) {
+  if (!botUrl) return;
+  try {
+    await fetch(`${botUrl}/dashboard/embodied`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...data, timestamp: Date.now() }),
+      signal: AbortSignal.timeout(2000),
+    });
+  } catch {
+    // Dashboard might be down or unreachable — never fail the intent for this
+  }
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -378,6 +393,19 @@ async function handleIntent(req, res) {
     tool_call_count: all_results.length,
     mitigation_count: mitigations.length,
     retry_used,
+    operational_risk: mitigated_plan.operational_risk,
+  });
+
+  // Send embodied activity to bot dashboard in real time
+  sendDashboardUpdate(bot_api_url, {
+    event: "intent_done",
+    context_id,
+    ok: all_ok,
+    intent: intent.slice(0, 200),
+    plan: mitigated_plan?.body_plan || [],
+    tool_calls: (all_results || []).map(r => ({ tool: r.tool, ok: r.ok, error_type: r.error_type })),
+    retry_used,
+    elapsed_seconds,
     operational_risk: mitigated_plan.operational_risk,
   });
 

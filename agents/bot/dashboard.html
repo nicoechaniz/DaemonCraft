@@ -363,6 +363,13 @@
   </div>
 
   <div class="panel">
+    <div class="panel-header" data-panel="embodied">Embodied (Gemma-Andy)<button class="panel-toggle">▼</button></div>
+    <div class="panel-body" id="embodied-panel">
+      <div class="empty">No activity yet</div>
+    </div>
+  </div>
+
+  <div class="panel">
     <div class="panel-header" data-panel="inventory">Inventory<button class="panel-toggle">▼</button></div>
     <div class="panel-body" id="inventory-panel">
       <div class="empty">Empty</div>
@@ -584,6 +591,7 @@ function handleMessage(msg) {
     case 'task': renderTask(msg.data); break;
     case 'agent': renderAgent(msg.data); break;
     case 'heartbeat': renderHeartbeat(msg.data); break;
+    case 'embodied': renderEmbodied(msg.data); break;
     case 'tts_play': handleTtsPlay(msg.data); break;
   }
 }
@@ -742,6 +750,49 @@ function renderHeartbeat(data) {
     const s = Math.ceil(data.nextTurnIn);
     header.innerHTML = `Bot Mind — <span style="color:#8b949e">⏱️ Next turn in ${s}s</span>`;
   } else {
+}
+
+// ── Embodied Activity (Gemma-Andy) ──────────────────────────
+const embodiedLog = [];
+
+function renderEmbodied(data) {
+  if (!data || !data.event) return;
+  embodiedLog.unshift(data);
+  if (embodiedLog.length > 50) embodiedLog.length = 50;
+
+  const panel = document.getElementById('embodied-panel');
+  if (!panel) return;
+
+  let html = '';
+  for (const entry of embodiedLog) {
+    const ts = new Date(entry.timestamp || Date.now()).toLocaleTimeString();
+    const okClass = entry.ok ? 'ok' : 'fail';
+    const intent = entry.intent ? entry.intent.replace(/</g,'&lt;').replace(/>/g,'&gt;') : '';
+    const tools = (entry.tool_calls || []).map(t =>
+      '<span class="tool-' + (t.ok ? 'ok' : 'fail') + '">' + t.tool + ' ' + (t.ok ? '✓' : '✗') + '</span>'
+    ).join(' ');
+
+    let planLines = '';
+    if (entry.plan && entry.plan.length) {
+      planLines = entry.plan.map(p => '<div class="plan-step">' + p.replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</div>').join('');
+    }
+
+    html += '<div class="embodied-entry ' + okClass + '">' +
+      '<div class="embodied-header">' +
+        '<span class="embodied-ts">' + ts + '</span>' +
+        '<span class="embodied-ok">' + (entry.ok ? 'OK' : 'FAIL') + '</span>' +
+        (entry.retry_used ? '<span class="embodied-retry">RETRY</span>' : '') +
+        '<span class="embodied-risk">risk: ' + (entry.operational_risk || '?') + '</span>' +
+        '<span class="embodied-elapsed">' + ((entry.elapsed_seconds||0).toFixed(1)) + 's</span>' +
+      '</div>' +
+      '<div class="embodied-intent">' + intent + '</div>' +
+      (planLines ? '<div class="embodied-plan">' + planLines + '</div>' : '') +
+      '<div class="embodied-tools">' + tools + '</div>' +
+    '</div>';
+  }
+  panel.innerHTML = html || '<div class="empty">No activity yet</div>';
+}
+
     header.innerHTML = 'Bot Mind — <span style="color:#3fb950">🔄 Turn starting...</span>';
   }
 }

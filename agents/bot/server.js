@@ -3733,6 +3733,16 @@ const httpServer = http.createServer(async (req, res) => {
         return respond(res, 200, { ok: true });
       }
 
+      // Embodied activity — POST /dashboard/embodied
+      // Receives tool dispatch + plan events from the embodied service and
+      // broadcasts them to dashboard clients in real time.
+      if (path === '/dashboard/embodied') {
+        const evt = body || {};
+        evt.timestamp = evt.timestamp || Date.now();
+        broadcastDashboard('embodied', evt);
+        return respond(res, 200, { ok: true });
+      }
+
       // QuestEngine notification — POST /quest/notify
       // Broadcasts a quest_event to all WebSocket clients (agent loop + dashboard).
       if (path === '/quest/notify') {

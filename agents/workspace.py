@@ -78,9 +78,9 @@ def bootstrap_agent_workspace(
             },
         },
         "fallback_providers": [],
-        "toolsets": ["embodiment", "memory", "vision"],
+        "toolsets": ["embodiment", "memory", "vision", "terminal"],
         "platform_toolsets": {
-            "daemoncraft": ["embodiment", "memory", "vision"],
+            "daemoncraft": ["embodiment", "memory", "vision", "terminal"],
         },
         "agent": {
             "max_turns": 6,
