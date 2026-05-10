@@ -203,6 +203,7 @@ HERMES_HOME={hermes_home}
         (Path.home() / ".hermes" / "skills" / "mariano-memory-kit", "mariano-memory-kit"),
     ]
     skills_dir = hermes_home / "skills"
+    skills_dir.mkdir(parents=True, exist_ok=True)
     for src, name in shared_skills:
         dst = skills_dir / name
         if src.exists() and not dst.exists():
