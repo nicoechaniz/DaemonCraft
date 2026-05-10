@@ -131,12 +131,10 @@ const PLAN_FILE = path.join(DATA_DIR, `plan-${(process.env.MC_USERNAME || 'Herme
 
 function loadPlan() {
   // Try agent_loop.py's workspace/plan.json first (Autonomía Corporal format)
+  const username = (config.mc && config.mc.username || process.env.MC_USERNAME || 'HermesBot').toLowerCase();
+  const home = process.env.HOME || '/home/nicolas';
   try {
-    const agentPlanPath = path.join(
-      process.env.HOME || '/home/nicolas', 'agents',
-      (process.env.MC_USERNAME || 'HermesBot').toLowerCase(),
-      'workspace', 'plan.json'
-    );
+    const agentPlanPath = path.join(home, 'agents', username, 'workspace', 'plan.json');
     if (fs.existsSync(agentPlanPath)) {
       const raw = JSON.parse(fs.readFileSync(agentPlanPath, 'utf8'));
       // Convert plan_schema format → dashboard format
