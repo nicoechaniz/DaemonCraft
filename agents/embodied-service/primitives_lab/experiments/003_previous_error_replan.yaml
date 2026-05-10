@@ -1,0 +1,50 @@
+# 003 — previous_error feedback loop
+#
+# Hypothesis: When previous_error carries actionable bot feedback (e.g.
+# "No oak_log in inventory. You have oak_planks(40)..."), the model
+# should pivot to use the available items rather than retrying naively.
+#
+# Field-test 2026-05-09 documented "recovery_naive_retry" regression
+# (3/3 stochastic samples reissued the same failed tool). Mitigated
+# consumer-side. Test if explicit, useful previous_error breaks the
+# pattern.
+
+id: 003-previous-error-replan
+hypothesis: "Actionable previous_error context redirects the model to a working plan"
+fixture: forest_with_player
+samples_per_variant: 3
+
+variants:
+  - id: no_previous_error
+    primitives:
+      intent: "construyamos una pared con 4 oak_log acá"
+
+  - id: explicit_inventory_in_error
+    primitives:
+      intent: "construyamos una pared con 4 oak_log acá"
+      previous_error:
+        tool: place_block
+        error_type: bot_action_failed
+        details: "No oak_log in inventory. You have: oak_planks(40), leaf_litter(5), stick(2). Use oak_planks instead, or scan + mine oak_log first."
+
+  - id: ambiguous_error_recovery
+    primitives:
+      intent: "andá al jugador"
+      previous_error:
+        tool: goto
+        error_type: stuck
+        details: "bot position unchanged for 6 seconds; obstacle: leaves blocking path at (12, 81, 60)"
+
+expectations:
+  must_invoke_embodied_plan: true
+  max_elapsed_seconds: 45
+  operational_risk_in: [none, low, medium]
+
+metrics_to_capture:
+  - success_rate
+  - latency_p50
+  - tool_call_count
+  - mitigation_rate
+  - tool_calls_emitted
+  # Custom: how often does the model emit `mine_block(leaves)` or similar
+  # obstacle-clearing for the ambiguous case? (manual review of results)

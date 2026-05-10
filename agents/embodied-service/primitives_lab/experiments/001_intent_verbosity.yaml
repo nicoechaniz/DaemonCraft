@@ -1,0 +1,60 @@
+# 001 — Intent verbosity sweep
+#
+# Hypothesis: Verbose, context-rich intents reduce Gemma-Andy fabrication
+# (no more [1, 64, 518] coords) and produce more multi-step plans for
+# "come here"-style navigation.
+#
+# Field-test 2026-05-09 surfaced that terse intents like "ven aca" sometimes
+# emit single-tool plans and bot stays still. Hermes's natural style is
+# verbose ("Find and approach the player named X"). We measure the gap.
+#
+# Variants on the same fixture (forest_with_player, player at [-6,81,64]):
+#   - terse:   2-word command, Spanish
+#   - medium:  natural Spanish phrase
+#   - verbose: explicit Hermes-style English with constraints
+
+id: 001-intent-verbosity
+hypothesis: "Verbose intents reduce fabrication and produce richer multi-step plans for navigation"
+fixture: forest_with_player
+samples_per_variant: 3
+
+variants:
+  - id: terse
+    primitives:
+      intent: "ven aca"
+
+  - id: medium
+    primitives:
+      intent: "vení a la posición del jugador"
+
+  - id: verbose
+    primitives:
+      intent: "Find and approach the player named Fede3043. Stop within 3 blocks of them. Avoid hazards along the way."
+
+  - id: verbose_with_constraints
+    primitives:
+      intent: "Find and approach the player named Fede3043. Stop within 3 blocks of them. Avoid hazards along the way."
+      allowed_tools: [scan_nearby, goto, follow, stop_movement, ask_clarification, raise_guardian_event, report_execution_error]
+
+expectations:
+  must_invoke_embodied_plan: true
+  tool_calls_must_include_any_of: [goto, follow]
+  tool_calls_must_not_include: [mine_block, mine_blocks, place_block, fill_volume, toss_item, attack_entity]
+  max_elapsed_seconds: 30
+  no_mitigations: true
+  operational_risk_in: [none, low]
+
+metrics_to_capture:
+  - success_rate
+  - latency_p50
+  - tool_call_count
+  - mitigation_rate
+  - tool_calls_emitted
+
+# Reading the result:
+# - terse: expected to sometimes single-tool or fabricate. Baseline failure rate.
+# - medium: expected to navigate cleanly most of the time.
+# - verbose: expected highest success_rate.
+# - verbose_with_constraints: expected highest success + zero forbidden tool emission.
+#
+# Lessons file: lessons-001-intent-verbosity.md (in vault/concepts/, after the run)
