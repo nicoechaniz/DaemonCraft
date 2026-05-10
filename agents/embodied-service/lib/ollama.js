@@ -95,8 +95,16 @@ export async function callGemmaAndy(payload, { signal, options = {} } = {}) {
     // Rule 1: NO system message. Only `role: "user"`.
     messages: [{ role: "user", content: userContent }],
     options: {
-      // Defaults match Modelfile but allow num_predict bump for <think> outputs.
-      num_predict: 1024,
+      // Sampling: leave Modelfile defaults (temperature=0.2, top_p=0.9,
+      // min_p=0.05, repeat_penalty=1.05, num_ctx=131072) UNTOUCHED.
+      // Earlier field-test tried temperature=0.0 (greedy, mirroring
+      // eval_with_adapter.py's do_sample=False) but it made the model
+      // collapse to single-tool plans (e.g. "construyamos casa" emitted
+      // ONLY scan_nearby, dropping the multi-step gather+build that
+      // example #1 of the integration guide shows). Greedy is for
+      // deterministic eval; production needs the small variance for
+      // multi-step planning.
+      num_predict: 512,
       ...options,
     },
   };
