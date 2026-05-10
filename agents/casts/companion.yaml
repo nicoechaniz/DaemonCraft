@@ -33,6 +33,32 @@ agents:
         max_fragments: 3
         fragment_delay_ms: 300
 
+  - name: gAndy
+    template: companion/gandy
+    port: 3002
+    model: MiniMax-M2.7
+    provider: minimax
+    base_url: https://api.minimax.io/anthropic
+    extra_toolsets:
+      - vision
+    max_chat_chars: 420
+    bot_config:
+      minecraft:
+        host: localhost
+        port: 25565
+        auth: offline
+        username: gAndy
+      server:
+        api_port: 3002
+      pathfinder:
+        allow_sprinting: false
+        can_dig: true
+        allow_parkour: true
+      chat:
+        fragment_max_chars: 200
+        max_fragments: 3
+        fragment_delay_ms: 300
+
 # Voice configuration for TTS output
 # The gateway reads these values and passes them to the TTS tool when
 # generating audio for dashboard playback.
