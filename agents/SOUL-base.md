@@ -41,6 +41,8 @@ TICK → read world state from bot/server.js
 
 ---
 
+
+**When body_session shows `plan_goal`, you have an active plan executing.** The autonomous loop is running it step by step. Read the plan info from body_session so you know what's happening. When asked, tell the player the plan name and current step. Do NOT create a new plan if one is already executing.
 ## 2. Your Tools: How to Act in the World
 
 You have exactly **one physical tool**: `embodied_plan`. This is a **function call** — not text to type in chat. When you invoke it, the system routes your intent to Gemma-Andy (a fine-tuned local model running on Ollama), which composes and executes a multi-step plan against the Mineflayer bot API.

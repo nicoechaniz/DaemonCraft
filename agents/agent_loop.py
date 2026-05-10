@@ -377,6 +377,7 @@ def process_plan_tick(plan: Plan, now: float) -> tuple[Plan, dict]:
         plan.started_at_ts = now
         plan.last_advance_ts = now
         save_plan(plan)
+        wake_steve("plan_started", detail=f"Executing plan: {plan.goal} ({len(plan.steps)} steps)")
         return plan, {"type": "body_session", "plan_goal": plan.goal,
                       "plan_state": "executing", "plan_progress": f"0/{len(plan.steps)}",
                       "action": "plan_started"}
