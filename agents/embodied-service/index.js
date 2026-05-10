@@ -275,6 +275,7 @@ async function handleIntent(req, res) {
       tool: r.tool,
       ok: r.ok,
       error_type: r.error_type,
+      details: r.details ?? null,
     });
     if (!r.ok) break;
   }
