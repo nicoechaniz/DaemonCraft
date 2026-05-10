@@ -250,6 +250,7 @@ async function handleIntent(req, res) {
     operational_risk: parsed.plan.operational_risk,
     tool_call_count: parsed.plan.tool_calls.length,
     had_think: parsed.think != null,
+    think_excerpt: typeof parsed.think === "string" ? parsed.think.slice(0, 500) : null,
     plan: parsed.plan,
     think: parsed.think,
   });
