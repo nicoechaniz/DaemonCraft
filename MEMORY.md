@@ -958,3 +958,46 @@ Mineflayer-pathfinder v2.4.5 has a bug where `allowSprinting = true` causes the 
 | `Hermes config (~/.hermes/config.yaml)` | If DaemonCraft-specific, `workspace.py` |
 
 Without backporting, `daemoncraft.py update companion` wipes and regenerates workspaces from templates, losing ALL runtime changes. This caused repeated regressions on 2026-05-10.
+
+## Multi-Agent Debugging & Ghost Process Hygiene (2026-05-11)
+
+**Problem we keep having:** "No sabemos qué está inicializado, entra basura, nos volvemos locos." Below are the concrete failure patterns found today and their signatures.
+
+### Ghost Agents — Pamplinas
+- **Status:** DISABLED (`systemctl --user disable hermes-gateway@pamplinas`). If active again, someone re-enabled it or a deploy recreated the service.
+- **Symptom:** Constant storm of MiniMax HTTP 401 errors appearing in Minecraft chat.
+- **Root cause:** Pamplinas had an invalid MiniMax API key and retried endlessly.
+- **Detection:** `systemctl --user list-units --type=service --state=running | grep hermes-gateway` — verify ONLY expected agents are running.
+
+### Chat Attribution Is Not Identity
+- **Symptom:** `<Steve> API failed after 3 retries — Connection error.`
+- **Reality:** The error came from **Pamplinas**, not Steve. In DaemonCraft, any bot can inject messages into the shared chat bridge.
+- **Rule:** Before blaming the apparent speaker, verify the actual PID via `journalctl --user -u hermes-gateway@<name>`.
+
+### Gateway Session Corruption — "Interrupt recursion depth 3"
+- **Symptom:** Agent responds only with `🕊️` and `⚡ Interrupting current task...` repeatedly, never producing real text.
+- **Root cause (gAndy):** Session accumulated **8 unhandled API call interrupts**. The gateway cannot recover from stacked interrupts.
+- **Fix:** `systemctl --user restart hermes-gateway@<name>` (clean restart, not stop/start — `--replace` flag handles session wipe).
+- **Prevention:** If an agent is stuck for >2 minutes, restart before the interrupt queue deepens.
+
+### MiniMax Intermittent Failures
+- **Symptom:** `APIConnectionError` or HTTP 401 from MiniMax in Hermes, but `curl` direct to `https://api.minimax.io/anthropic/v1/messages` works.
+- **Observation:** Errors are transient. Steve and gAndy keys both have 125 chars and are valid. The 401s may be rate-limit edge cases or auth propagation delays.
+- **Debug:** Always test direct curl with the agent's own `.env` before assuming key corruption.
+
+### Gemma-Andy Parse Errors (Embodied Service)
+- **Symptom:** `Tool embodied_plan returned error: parse_failed — unparseable Gemma-Andy output (no JSON braces found)`
+- **Impact:** Non-blocking — the bot retries or falls back. But it means Ollama/Gemma occasionally returns plain text instead of structured JSON.
+- **Note:** The model `gemma-andy:e4b-v2-2-3-q8_0` is the correct one. Oráculo uses `gemma4:e4b-it-q8_0` (inexistent) — that's Sai's domain.
+
+### Quick Health Check Script
+```bash
+# Verify only expected agents are running
+systemctl --user list-units --type=service --state=running | grep hermes-gateway
+
+# Verify bots are connected
+curl -s http://localhost:3001/health && curl -s http://localhost:3002/health
+
+# Check for recent errors across all agents (last 5 min)
+journalctl --user --since '5 minutes ago' | grep -iE 'error|fail' | grep -vE 'providers.minimax|ollama_call_done|intent_done'
+```
