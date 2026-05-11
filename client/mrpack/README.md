@@ -16,28 +16,54 @@ import the `.mrpack`, hit Play. The pack carries Fresh Animations + ETF/EMF
 
 **Performance** — Sodium, Lithium, FerriteCore, ImmediatelyFast.
 
+**Shader pipeline** — Iris + Sodium. Complementary Reimagined shader ships with the
+pack but is **off by default** (toggle in Video Settings → Shader Packs). This avoids
+choking low-end laptops while giving high-end PCs the full experience.
+
 **Visuals** — Entity Texture Features (ETF), Entity Model Features (EMF),
 Continuity. Combined these unlock Fresh Animations + connected textures.
 
+**SOTA ambience (v0.3.0)** —
+- **Distant Horizons** — massive LOD render distance (512+ chunks visible)
+- **Particular ✨** — fireflies, waterfall cascades, falling leaves, biome ambience
+- **Wakes** — realistic water splashes and wakes when swimming/boating
+- **Particle Rain** — dense directional rain particles (transforms storms)
+
 **Resource packs (auto-enabled)** — Fresh Animations, Better Leaves,
-Clear Glass.
+Clear Glass, DaemonCraft UI.
 
 **Vanity (low overhead, on by default)** — LambDynamicLights (held items
 emit light), Falling Leaves.
 
-**Required infrastructure** — Fabric API, Mod Menu.
+**Required infrastructure** — Fabric API, Mod Menu, Cloth Config, YACL,
+Forge Config API Port.
 
-## Shaders are NOT included
+## Shaders (included, off by default)
 
-Shipping shaders auto-enabled chokes school laptops at 12 fps. If you want
-shaders:
+Complementary Reimagined r5.7.1 ships with the pack but is **NOT auto-enabled**.
+This avoids choking low-end laptops while giving high-end PCs the full experience.
 
-1. Open Modrinth App → DaemonCraft instance → Mods.
-2. "+ Add Mod" → search **Iris Shaders** → install.
-3. Hit Play, then in-game Options → Video Settings → Shader Packs →
-   "Open Shader Pack Folder" and drop e.g. *Complementary Reimagined*.
+**To enable shaders:**
 
-## Bumping versions
+1. Hit Play, then in-game: Options → Video Settings → Shader Packs.
+2. Select "Complementary Reimagined r5.7.1" from the list.
+3. Click "Apply".
+
+**Performance tip:** Complementary defaults to "Extreme". Press `K` in-game
+to open Iris config and drop to "Medium" or "Low" if FPS drops below 30.
+
+If you prefer a different shader, download any Iris-compatible shader pack
+and drop it in the instance's `shaderpacks/` folder.
+
+## Compatibility notes (2026-05-06)
+
+- **Fabric Loader:** Requires 0.18.1+ (manifest pins 0.19.2).
+  If Prism/Modrinth auto-selects an older loader, manually bump it.
+- **Cloth Config:** Required by FallingLeaves; included since build 2026-05-06.
+- **Resource pack format:** All packs updated to `pack_format: 64` for 1.21.11.
+  Previously showed "Incompatible — made for an old version" warning.
+- **Server resource pack:** Server-pushed RP disabled; `.mrpack` is canonical.
+  No more `Failed to parse resource pack prompt` errors.
 
 `manifest.toml` carries pinned `(slug, version_id)` pairs. To bump:
 

@@ -1,0 +1,223 @@
+{
+  "formatVersion": 1,
+  "game": "minecraft",
+  "versionId": "1.0.0-prime",
+  "name": "DaemonCraft Prime",
+  "summary": "The convergence pack: Better Leaves + Clear Glass + Fresh Animations + Branded UI + Entity Model Features + Entity Texture Features. Install via Prism Launcher or Modrinth App.",
+  "files": [
+    {
+      "path": "mods/sodium-fabric-0.8.7+mc1.21.11.jar",
+      "hashes": {
+        "sha512": "d7f035d6112eaac92cf0f11e4426db631fca5a7115dd355c2126efee4255b648a0102552bbf7b22a7eae9203d08f8740435842bfddcd94e2434f51b57ee9c641",
+        "sha1": "e8865210ba9a926fc206ab9e73f9d4988a81ff69"
+      },
+      "env": {
+        "client": "required",
+        "server": "unsupported"
+      },
+      "downloads": [
+        "https://cdn.modrinth.com/data/AANobbMI/versions/UddlN6L4/sodium-fabric-0.8.7%2Bmc1.21.11.jar"
+      ],
+      "fileSize": 1870358
+    },
+    {
+      "path": "mods/lithium-fabric-0.21.4+mc1.21.11.jar",
+      "hashes": {
+        "sha512": "f14a5c3d2fad786347ca25083f902139694f618b7c103947f2fd067a7c5ee88a63e1ef8926f7d693ea79ed7d00f57317bae77ef9c2d630bf5ed01ac97a752b94",
+        "sha1": "203bdcb26e97b3217b045e1182651a7d7b6462ec"
+      },
+      "env": {
+        "client": "required",
+        "server": "unsupported"
+      },
+      "downloads": [
+        "https://cdn.modrinth.com/data/gvQqBUqZ/versions/Ow7wA0kG/lithium-fabric-0.21.4%2Bmc1.21.11.jar"
+      ],
+      "fileSize": 900462
+    },
+    {
+      "path": "mods/ferritecore-8.2.0-fabric.jar",
+      "hashes": {
+        "sha512": "3210926a82eb32efd9bcebabe2f6c053daf5c4337eebc6d5bacba96d283510afbde646e7e195751de795ec70a2ea44fef77cb54bf22c8e57bb832d6217418869",
+        "sha1": "c2e2f5e008f5bc9f401dfad8ca94909917006b65"
+      },
+      "env": {
+        "client": "required",
+        "server": "unsupported"
+      },
+      "downloads": [
+        "https://cdn.modrinth.com/data/uXXizFIs/versions/Ii0gP3D8/ferritecore-8.2.0-fabric.jar"
+      ],
+      "fileSize": 80138
+    },
+    {
+      "path": "mods/ImmediatelyFast-Fabric-1.14.2+1.21.11.jar",
+      "hashes": {
+        "sha512": "dedff930a4e317994579020eaeef9f56d81d5215d871372d206fc974842d87e80e4be15d8571a4eaa4320c2412701ea093ba4494a47e8988e3d448ec8adcba37",
+        "sha1": "4f17c6b7388f0afc5d24075dc2a294963f78c712"
+      },
+      "env": {
+        "client": "required",
+        "server": "unsupported"
+      },
+      "downloads": [
+        "https://cdn.modrinth.com/data/5ZwdcRci/versions/QwkfUKSj/ImmediatelyFast-Fabric-1.14.2%2B1.21.11.jar"
+      ],
+      "fileSize": 310445
+    },
+    {
+      "path": "mods/fabric-api-0.141.3+1.21.11.jar",
+      "hashes": {
+        "sha512": "c20c017e23d6d2774690d0dd774cec84c16bfac5461da2d9345a1cd95eee495b1954333c421e3d1c66186284d24a433f6b0cced8021f62e0bfa617d2384d0471",
+        "sha1": "50de67eb221f0b38216da8668b09ca311327040e"
+      },
+      "env": {
+        "client": "required",
+        "server": "unsupported"
+      },
+      "downloads": [
+        "https://cdn.modrinth.com/data/P7dR8mSH/versions/i5tSkVBH/fabric-api-0.141.3%2B1.21.11.jar"
+      ],
+      "fileSize": 2412693
+    },
+    {
+      "path": "mods/modmenu-17.0.0.jar",
+      "hashes": {
+        "sha512": "146f8c356f86c32e5aab76598e021ac123779c89fc7a51a486fccd2871d2751b02046b4eea3194e52f2e7f38abbb5f78301c8f49bde6e60e1839677db9c84e33",
+        "sha1": "544a8b340ac3918d85bcc7d02eaff5372814354b"
+      },
+      "env": {
+        "client": "required",
+        "server": "unsupported"
+      },
+      "downloads": [
+        "https://cdn.modrinth.com/data/mOgUt4GM/versions/Tyk71iSw/modmenu-17.0.0.jar"
+      ],
+      "fileSize": 1115809
+    },
+    {
+      "path": "mods/entity_texture_features_1.21.11-fabric-7.1.jar",
+      "hashes": {
+        "sha512": "7eeebcdc12e3c3fd282f891736452547a10c543848218697baaeff6ee079a6e8bc7b34332b5c26f303dd2f6561e17afe98f284c66fcc3b84b48bc38d6798d9b2",
+        "sha1": "1d26dbb21dd4f17adbdb54f077334634f708a3d4"
+      },
+      "env": {
+        "client": "required",
+        "server": "unsupported"
+      },
+      "downloads": [
+        "https://cdn.modrinth.com/data/BVzZfTc1/versions/rAQimlSn/entity_texture_features_1.21.11-fabric-7.1.jar"
+      ],
+      "fileSize": 744971
+    },
+    {
+      "path": "mods/entity_model_features_1.21.11-fabric-3.2.2.jar",
+      "hashes": {
+        "sha512": "2e9646d4731d5c2145a3087972a321e323d6fbf55a94883dc3aaffa893c74cb1cb06b9e79be8da9fb3743070480f672a99d5a1fd0e489ba98223ae705285b9e5",
+        "sha1": "7ff1ece98ef40ad0221aed9ea38c4ed215b4e4f5"
+      },
+      "env": {
+        "client": "required",
+        "server": "unsupported"
+      },
+      "downloads": [
+        "https://cdn.modrinth.com/data/4I1XuqiY/versions/wbSSx6vc/entity_model_features_1.21.11-fabric-3.2.2.jar"
+      ],
+      "fileSize": 579075
+    },
+    {
+      "path": "mods/continuity-3.0.1-beta.1+1.21.11.jar",
+      "hashes": {
+        "sha512": "b092e95668bf5e32d531842d920e99f865213eaf3e7c26759b51e5a95ef2702c2c0485bba6d8adf4543e8d71680d5a05fad68e94159e8e507033b516b736eb60",
+        "sha1": "51d34c3f2035db0c7fca321b2d94f01b5167707c"
+      },
+      "env": {
+        "client": "required",
+        "server": "unsupported"
+      },
+      "downloads": [
+        "https://cdn.modrinth.com/data/1IjD5062/versions/mX1iknM1/continuity-3.0.1-beta.1%2B1.21.11.jar"
+      ],
+      "fileSize": 997125
+    },
+    {
+      "path": "mods/lambdynamiclights-4.9.1+1.21.11.jar",
+      "hashes": {
+        "sha512": "df006fad702f713fa93feaa21ead00f446aa79e1771b5e049844842c7701d3a8a1b360a996c28f79c79a941e95ef63d27bfc563b5bec2ab8bf96eba0b2232fb8",
+        "sha1": "f22487846158f62b3485a5a0723ba048326ac00f"
+      },
+      "env": {
+        "client": "required",
+        "server": "unsupported"
+      },
+      "downloads": [
+        "https://cdn.modrinth.com/data/yBW8D80W/versions/5Tp7kdU0/lambdynamiclights-4.9.1%2B1.21.11.jar"
+      ],
+      "fileSize": 2144865
+    },
+    {
+      "path": "mods/fallingleaves-2.0.3+1.21.11.jar",
+      "hashes": {
+        "sha512": "6b1ab0536d19ed421d03a678f58c86489e78f349639319cba20035b1950726caf42c53e27b6062aa984b73e9ffebe14f0241d82c070b537de46dd8c867521816",
+        "sha1": "7cc068a9930b5bd446379a4ff33068808c5e5aa3"
+      },
+      "env": {
+        "client": "required",
+        "server": "unsupported"
+      },
+      "downloads": [
+        "https://cdn.modrinth.com/data/WhbRG4iK/versions/U7hPBr6x/fallingleaves-2.0.3%2B1.21.11.jar"
+      ],
+      "fileSize": 181268
+    },
+    {
+      "path": "resourcepacks/FreshAnimations_v1.10.4.zip",
+      "hashes": {
+        "sha512": "41258f9bea1a773d823f9a014d0c08206e9e7b339bc538e1538211fff28fadd06878a836d292cbb636ed6829cd2801a509368ae3eb3ad4bedf42190a0d5f7a90",
+        "sha1": "73db740a6868e043c5e615c036fca2c912615b6e"
+      },
+      "env": {
+        "client": "required",
+        "server": "unsupported"
+      },
+      "downloads": [
+        "https://cdn.modrinth.com/data/50dA9Sha/versions/xN57JJts/FreshAnimations_v1.10.4.zip"
+      ],
+      "fileSize": 850941
+    },
+    {
+      "path": "resourcepacks/Better-Leaves-9.5.zip",
+      "hashes": {
+        "sha512": "3f50d72bdc7274aa01a7c68d1e8a8f592eddc5e28ad9c60d796815a9892751bc862c0ee0dbed290dd7c4ad994c68d38b8cde02b21c96ecbaab6fe18808fb8750",
+        "sha1": "78b7e6cbb1661716423429d2c46ab08266cdf1f8"
+      },
+      "env": {
+        "client": "required",
+        "server": "unsupported"
+      },
+      "downloads": [
+        "https://cdn.modrinth.com/data/uvpymuxq/versions/XWtayRKd/Better-Leaves-9.5.zip"
+      ],
+      "fileSize": 1923769
+    },
+    {
+      "path": "resourcepacks/Clear Glass 1.2.1.zip",
+      "hashes": {
+        "sha512": "ac048e895f6f01eb23d6b248fb93689d953b82e7beef83517cd20d2b2cadf8b8fa5014d87438c5edc6b75965cb1b5d5f297e9929ae39bb766f1cfbabb96f31ef",
+        "sha1": "0686db06e920901e187df8cf569a7a59335c0fd2"
+      },
+      "env": {
+        "client": "required",
+        "server": "unsupported"
+      },
+      "downloads": [
+        "https://cdn.modrinth.com/data/Mqy1I80f/versions/WF83I2Cp/Clear%20Glass%201.2.1.zip"
+      ],
+      "fileSize": 115097
+    }
+  ],
+  "dependencies": {
+    "minecraft": "1.21.11",
+    "fabric-loader": "0.16.12"
+  }
+}

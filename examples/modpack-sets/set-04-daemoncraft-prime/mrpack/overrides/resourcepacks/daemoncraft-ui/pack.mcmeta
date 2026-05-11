@@ -1,0 +1,12 @@
+{
+  "pack": {
+    "pack_format": 64,
+    "supported_formats": {
+      "min_inclusive": 15,
+      "max_inclusive": 999
+    },
+    "min_format": 15,
+    "max_format": 999,
+    "description": "DaemonCraft Prime \u2014 Better Leaves + Clear Glass + Branded UI"
+  }
+}
