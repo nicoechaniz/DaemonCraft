@@ -981,7 +981,7 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 7):
 
             # ── Try autonomous plan execution first ──
             plan = load_plan()
-            if plan is not None and plan.state in (PlanState.IDLE, PlanState.EXECUTING, PlanState.BLOCKED):
+            if plan is not None and plan.state in (PlanState.IDLE, PlanState.EXECUTING, PlanState.BLOCKED, PlanState.ESCALATED):
                 global _IDLE_HEARTBEAT_COUNT
                 _IDLE_HEARTBEAT_COUNT = 0
 
