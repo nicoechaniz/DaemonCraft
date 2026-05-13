@@ -283,53 +283,19 @@ def _plan_from_dict(d: dict) -> Plan:
 def load_plan(path: Path | str | None = None) -> Plan | None:
     """
     Load the active plan from workspace/plan.json.
-    Default path: ~/agents/<MC_USERNAME>/workspace/plan.json
-    Falls back to PLAN_FILE env var.
+    
+    TEMPORARILY DISABLED: Plan execution is disabled while we stabilize
+    single-shot intent execution. Plans caused infinite restart loops and
+    blocked agents. Re-enable after body control is robust.
     """
-    if path:
-        plan_path = Path(path)
-    else:
-        plan_file_env = os.environ.get("PLAN_FILE", "")
-        if plan_file_env:
-            plan_path = Path(plan_file_env)
-        else:
-            agent = os.environ.get("MC_USERNAME", "steve").lower()
-            plan_path = Path.home() / "agents" / agent / "workspace" / "plan.json"
-
-    if not plan_path.exists():
-        return None
-
-    try:
-        raw = plan_path.read_text()
-        if not raw.strip():
-            return None
-        return _plan_from_dict(json.loads(raw))
-    except (json.JSONDecodeError, KeyError, TypeError):
-        return None
+    return None
 
 
 def save_plan(plan: Plan, path: Path | str | None = None) -> bool:
     """
     Save the plan to workspace/plan.json atomically.
-    Uses temp file + rename to prevent corruption on crash.
+    
+    TEMPORARILY DISABLED: Plan persistence is disabled while we stabilize
+    single-shot intent execution. See load_plan() for context.
     """
-    if path:
-        plan_path = Path(path)
-    else:
-        plan_file_env = os.environ.get("PLAN_FILE", "")
-        if plan_file_env:
-            plan_path = Path(plan_file_env)
-        else:
-            agent = os.environ.get("MC_USERNAME", "steve").lower()
-            plan_path = Path.home() / "agents" / agent / "workspace" / "plan.json"
-
-    plan_path.parent.mkdir(parents=True, exist_ok=True)
-
-    try:
-        data = json.dumps(_plan_to_dict(plan), indent=2)
-        tmp = plan_path.with_suffix(".tmp")
-        tmp.write_text(data)
-        tmp.rename(plan_path)
-        return True
-    except OSError:
-        return False
+    return False
