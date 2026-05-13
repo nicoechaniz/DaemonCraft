@@ -295,118 +295,38 @@ async function handleIntent(req, res) {
     }
   }
 
-  // ── Dispatch with auto-retry via previous_error ──────────────────
-  // Gemma-Andy was trained to produce recovery plans when previous_error
-  // is populated. If a tool_call fails, we call the model again with the
-  // failure details so it can replan — rather than failing immediately.
-  const MAX_RETRIES = 1; // one recovery attempt per intent
-  const all_results = [];
-  let current_plan = mitigated_plan;
-  let retry_used = false;
-
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    const batch_results = [];
-    for (const call of current_plan.tool_calls) {
-      const r = await dispatch(call);
-      batch_results.push(r);
-      logEvent({
-        event: "tool_dispatch",
-        context_id,
-        tool: r.tool,
-        ok: r.ok,
-        error_type: r.error_type,
-        details: r.details ?? null,
-        attempt: attempt > 0 ? `retry_${attempt}` : "first",
-      });
-      if (!r.ok) {
-        // Stop this batch. If we have retries left, prepare recovery.
-        break;
-      }
-    }
-
-    all_results.push(...batch_results);
-    const batch_ok = batch_results.every((r) => r.ok);
-
-    if (batch_ok || attempt >= MAX_RETRIES) {
-      // Success or out of retries — done.
+  // ── Dispatch tool_calls in order, fail-fast on first failure ─────
+  // Per Mariano's canonical design: the embodied service is stateless
+  // and fail-fast. Recovery (previous_error, deterministic synthesis)
+  // is the consumer's (Hermes agent_loop) responsibility.
+  const execution_results = [];
+  for (const call of mitigated_plan.tool_calls) {
+    const r = await dispatch(call);
+    execution_results.push(r);
+    logEvent({
+      event: "tool_dispatch",
+      context_id,
+      tool: r.tool,
+      ok: r.ok,
+      error_type: r.error_type,
+      details: r.details ?? null,
+      attempt: "first",
+    });
+    if (!r.ok) {
       break;
     }
-
-    // Compose previous_error from the first failure in this batch
-    const failed = batch_results.find((r) => !r.ok);
-    const previous_error = {
-      tool: failed.tool,
-      error_type: failed.error_type || "other",
-      details: failed.details || failed.error || "tool_call failed",
-    };
-
-    logEvent({
-      event: "retry_with_previous_error",
-      context_id,
-      previous_error,
-    });
-
-    // Build recovery payload — same intent/world_state/constraints,
-    // but with previous_error so Gemma-Andy composes a recovery plan.
-    const recovery_payload = {
-      high_level_command: intent,
-      world_state,
-      allowed_tools: filtered_allowed_tools,
-      guardian_constraints: constraints,
-      previous_error,
-    };
-
-    logEvent({
-      event: "ollama_recovery_call_start",
-      context_id,
-      previous_error,
-    });
-
-    const RECOVERY_TIMEOUT_SEC = 30; // recovery gets its own budget, not the original deadline
-    const recovery_controller = new AbortController();
-    const recovery_timer = setTimeout(() => recovery_controller.abort(), RECOVERY_TIMEOUT_SEC * 1000);
-
-    let recovery_result;
-    try {
-      recovery_result = await callGemmaAndy(recovery_payload, { signal: recovery_controller.signal });
-    } catch (err) {
-      clearTimeout(recovery_timer);
-      logEvent({ event: "ollama_recovery_call_failed", context_id, error: err.message });
-      break; // can't recover — return partial results
-    } finally {
-      clearTimeout(recovery_timer);
-    }
-
-    let recovery_parsed;
-    try {
-      recovery_parsed = parseGemmaAndyResponse(recovery_result.raw);
-    } catch (err) {
-      logEvent({ event: "recovery_parse_failed", context_id, error: err.message });
-      break; // can't parse recovery — return partial results
-    }
-
-    logEvent({
-      event: "ollama_recovery_call_done",
-      context_id,
-      elapsed_ms: recovery_result.elapsed_ms,
-      tool_call_count: recovery_parsed.plan.tool_calls.length,
-    });
-
-    retry_used = true;
-    current_plan = recovery_parsed.plan;
   }
 
   const elapsed_seconds = (Date.now() - t0) / 1000;
-  const all_ok = all_results.length > 0 && all_results.every((r) => r.ok);
+  const all_ok = execution_results.length > 0 && execution_results.every((r) => r.ok);
 
   logEvent({
     event: "intent_done",
     context_id,
     ok: all_ok,
     elapsed_seconds,
-    tool_call_count: all_results.length,
+    tool_call_count: execution_results.length,
     mitigation_count: mitigations.length,
-    retry_used,
     operational_risk: mitigated_plan.operational_risk,
   });
 
@@ -417,8 +337,7 @@ async function handleIntent(req, res) {
     ok: all_ok,
     intent: intent.slice(0, 200),
     plan: mitigated_plan?.body_plan || [],
-    tool_calls: (all_results || []).map(r => ({ tool: r.tool, ok: r.ok, error_type: r.error_type })),
-    retry_used,
+    tool_calls: (execution_results || []).map(r => ({ tool: r.tool, ok: r.ok, error_type: r.error_type })),
     elapsed_seconds,
     operational_risk: mitigated_plan.operational_risk,
   });
@@ -427,12 +346,10 @@ async function handleIntent(req, res) {
     ok: all_ok,
     context_id,
     plan: mitigated_plan,
-    plan_recovery: retry_used ? current_plan : undefined,
     plan_original: mitigations.length > 0 ? parsed.plan : undefined,
     think: parsed.think,
     mitigations: mitigations.length > 0 ? mitigations : undefined,
-    execution_results: all_results,
-    retry_used,
+    execution_results,
     elapsed_seconds,
     model: ollama_result.model,
   });
