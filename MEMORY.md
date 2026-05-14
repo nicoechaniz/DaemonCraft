@@ -1030,3 +1030,55 @@ OpenGL renderer: NVIDIA GeForce RTX 2060/PCIe/SSE2
 - Laptop is always plugged in (no battery), so disabling Intel/Optimus power-saving is fine.
 - Do NOT add `[EnvironmentVariables]` to `instance.cfg` — Prism Launcher does not use that format. Flatpak override is the correct layer.
 - Shader pack (Complementary Reimagined) should be toggled via `K` in-game once NVIDIA is confirmed working.
+
+---
+
+## Current Session State — 2026-05-14 (feat/canonical-loop)
+
+### What we built today
+
+**DaemonCraft repo (branch `feat/canonical-loop`):**
+- `agents/agent_loop.py` — reescrito: heartbeat cada ~28s, guardian loop, hazard detection, wake_steve con cooldown, body_session compuesto, sin planes persistentes, sin daemon_guardian
+- `agents/bot/server.js` — agregado `isInWater`, phantom goal timeout (>60s), detector de micro-oscilaciones, body_session en payload
+- `agents/embodied-service/lib/world_state.js` — trim campos no canónicos (remembered_places, target_positions, player_health, /marks)
+- `agents/embodied-service/profile-templates/daemoncraft-base.SOUL.md` — sincronizado con SOUL deployado
+
+**Hermes-agent repo (branch `feat/daemoncraft`, mergeado a `main`):**
+- `gateway/platforms/daemoncraft.py` — idle heartbeats wake up agent cada 90s (throttle 30s → 90s) para dar tiempo de completar acciones
+
+### Problem found & fixed: Steve scan loop
+
+Steve estaba en loop infinito de `scan_nearby` en cada heartbeat. Causa raíz: tenía una **memoria envenenada** en `~/agents/steve/agent-memory/state/DIALOGUE-HANDOFF.daemoncraft.md` y sesiones JSON que decían “esperar mensaje de jugador” — memoria de pruebas anteriores que prevalecía sobre el SOUL.
+
+**Fix aplicado:**
+1. Borrado DIALOGUE-HANDOFF.daemoncraft.md y todas las sesiones JSON de Steve
+2. Borradas sesiones de SQLite (DELETE FROM sessions/messages WHERE id LIKE '20260514_%')
+3. Verificado que HMK library.db no tenía memorias envenenadas
+4. SOUL.md actualizado con:
+   - “Heartbeat is NOT a loop to stop — it is your sensory system”
+   - Prohibición de scan_nearby repetido (máximo 1 cada 3 min)
+   - Objetivos idle concretos: oak logs → crafting table → stone pickaxe → shelter → explore
+5. Sincronizado a gAndy y al template
+6. Gateway reiniciado con sesión limpia (PID 3226200)
+
+### Estado actual de servicios (verificar mañana)
+
+| Servicio | Estado | Notas |
+|----------|--------|-------|
+| daemoncraft-cast.service | active | Steve + gAndy corriendo |
+| hermes-gateway@steve | active (PID 3226200) | Sesión limpia recién reiniciada |
+| hermes-gateway@gandy | active | Throttle 90s también aplica |
+| embodied-service.service | active | Puerto 7790 |
+
+### Próximo paso a verificar mañana
+
+Steve acaba de empezar sesión limpia con el SOUL nuevo. Necesitamos confirmar que:
+1. Recibe heartbeat idle como “context” (no wake_up) hasta que pasen 90s
+2. Al recibir wake_up, NO escanea repetidamente
+3. Usa el objetivo idle concreto (ej: “Find and mine oak logs”)
+4. Completa la acción en lugar de quedarse quieto o escanear
+
+Si sigue con problemas, considerar:
+- Agregar `inventory_summary` al body_session (oak_log count, etc.)
+- Hacer que agent_loop guarde un `current_goal` persistente entre heartbeats
+- Reducir aún más la frecuencia de wake_up si 90s sigue siendo muy agresivo
