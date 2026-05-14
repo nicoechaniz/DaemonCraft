@@ -638,7 +638,18 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 7):
                     if triggered:
                         events.append("Chat or quest activity detected")
 
-                    ok = send_heartbeat_context(status, nearby, inventory, bot_plan, events)
+                    # Compose minimal body_session so Steve knows what the body is doing
+                    task = status.get("task")
+                    body_session = {
+                        "mode": task.get("status") if task else "idle",
+                        "last_action": task.get("action") if task else None,
+                        "position": status.get("position"),
+                        "health": status.get("health"),
+                        "holding": status.get("holding"),
+                        "on_ground": status.get("onGround"),
+                    }
+
+                    ok = send_heartbeat_context(status, nearby, inventory, bot_plan, events, body_session=body_session)
                     if ok:
                         print(f"[loop] Idle heartbeat sent", flush=True)
                         _emit_metric("heartbeat", triggered=bool(triggered))

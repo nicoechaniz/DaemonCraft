@@ -4011,6 +4011,16 @@ setInterval(() => {
         log('STUCK detected (10s no movement) — task cancelled');
       }
     }
+    // General task timeout — any running task > 60s is suspicious
+    const elapsed = currentTask.started ? Date.now() - currentTask.started : 0;
+    if (elapsed > 60000) {
+      try { bot.pathfinder.setGoal(null); } catch {}
+      try { bot.stopDigging(); } catch {}
+      try { bot.clearControlStates(); } catch {}
+      currentTask.status = 'stuck';
+      currentTask.error = `Task timed out after ${Math.round(elapsed/1000)}s — try a different approach`;
+      log(`TASK TIMEOUT (${Math.round(elapsed/1000)}s) — task cancelled`);
+    }
   }
   // Also detect stuck on non-bg tasks: if bot is jumping repeatedly in place
   if (!currentTask || currentTask.status !== 'running') {
@@ -4037,6 +4047,19 @@ setInterval(() => {
         try { bot.stopDigging(); } catch {}
         try { bot.clearControlStates(); } catch {}
         log('Phantom pathfinder goal detected (no running task, 10s no movement) — cleared');
+      }
+    }
+    // Micro-oscillation: pathfinder goal but positions vary within small radius (circling)
+    const recent = positionHistory.filter(p => Date.now() - p.time < 15000);
+    if (recent.length >= 5) {
+      const avgX = recent.reduce((s, p) => s + p.x, 0) / recent.length;
+      const avgZ = recent.reduce((s, p) => s + p.z, 0) / recent.length;
+      const maxDev = Math.max(...recent.map(p => Math.sqrt((p.x - avgX)**2 + (p.z - avgZ)**2)));
+      if (maxDev < 2.5) {
+        try { bot.pathfinder.setGoal(null); } catch {}
+        try { bot.stopDigging(); } catch {}
+        try { bot.clearControlStates(); } catch {}
+        log('Phantom pathfinder goal detected (micro-oscillation within 2.5 blocks) — cleared');
       }
     }
   }
