@@ -3736,6 +3736,7 @@ const httpServer = http.createServer(async (req, res) => {
           inventory: ctx.inventory || null,
           plan: ctx.plan || null,
           events: ctx.events || [],
+          body_session: ctx.body_session || null,
         };
         broadcastDashboard('heartbeat_context', payload);
         // Also send fresh plan snapshot on every heartbeat
