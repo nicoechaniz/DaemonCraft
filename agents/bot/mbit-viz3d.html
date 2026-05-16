@@ -58,13 +58,14 @@
     <button id="btn-char" class="active" onclick="setMode('char')">🔤</button>
     <button id="btn-block" onclick="setMode('block')">🧊</button>
     <button id="btn-both" onclick="setMode('both')">🔤+🧊</button>
+    <button id="btn-wire" onclick="setMode('wire')">📐</button>
   </div>
   <button onclick="refresh()">🔄 Refresh</button>
   <label style="font-size:9px">
     <input type="checkbox" id="auto" checked onchange="toggleAuto()"> Auto (2s)
   </label>
   <label style="font-size:9px">
-    <input type="checkbox" id="follow" onchange="toggleFollow()"> Follow bot
+    <input type="checkbox" id="follow" checked onchange="toggleFollow()"> Follow bot
   </label>
 </div>
 <div id="info">Loading...</div>
@@ -101,6 +102,7 @@ scene.add(grid);
 let currentMode = 'char';
 let objects = [];
 let autoTimer = null, followTimer = null;
+let lastText = ''; // cache to skip re-render on no delta
 
 function clearObjects() {
   for (const o of objects) { scene.remove(o); if (o.geometry) o.geometry.dispose(); if (o.material) { if (Array.isArray(o.material)) o.material.forEach(m => m.dispose()); else o.material.dispose(); } }
@@ -173,6 +175,8 @@ async function refresh() {
     if (!resp.ok) { document.getElementById('info').textContent = resp.error; return; }
     
     const text = resp.data.text;
+    if (text === lastText) return; // no delta — skip re-render
+    lastText = text;
     const count = resp.data.count;
     const apiMs = resp.data.elapsed_ms;
     const layers = {};
@@ -220,15 +224,25 @@ async function refresh() {
             rendered++;
           }
 
-          if (currentMode === 'block' || currentMode === 'both') {
+          if (currentMode === 'block' || currentMode === 'both' || currentMode === 'wire') {
             const name = Object.entries(CHAR_MAP).find(([n, c]) => c === ch)?.[0] || 'default';
             const color = colorFor(name);
             if (color !== '#00000000') {
               const geo = new THREE.BoxGeometry(0.75, 0.75, 0.75);
-              const mat = new THREE.MeshStandardMaterial({ color, transparent: true, opacity: currentMode === 'both' ? 0.5 : 0.85 });
+              const opacity = currentMode === 'both' ? 0.5 : currentMode === 'wire' ? 0.3 : 0.85;
+              const mat = new THREE.MeshStandardMaterial({ color, transparent: true, opacity });
               const mesh = new THREE.Mesh(geo, mat);
               mesh.position.set(wx, wy, wz);
               scene.add(mesh); objects.push(mesh);
+              
+              // Wireframe edges for wire mode
+              if (currentMode === 'wire') {
+                const edgeGeo = new THREE.EdgesGeometry(geo);
+                const edgeMat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.7 });
+                const wireframe = new THREE.LineSegments(edgeGeo, edgeMat);
+                wireframe.position.copy(mesh.position);
+                scene.add(wireframe); objects.push(wireframe);
+              }
               rendered++;
             }
           }
@@ -252,6 +266,7 @@ window.setMode = function(m) {
   document.getElementById('btn-char').classList.toggle('active', m === 'char');
   document.getElementById('btn-block').classList.toggle('active', m === 'block');
   document.getElementById('btn-both').classList.toggle('active', m === 'both');
+  document.getElementById('btn-wire').classList.toggle('active', m === 'wire');
   refresh();
 };
 
@@ -279,6 +294,7 @@ window.toggleFollow = function() {
 
 refresh();
 if (document.getElementById('auto').checked) autoTimer = setInterval(refresh, 2000);
+if (document.getElementById('follow').checked) toggleFollow();
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;

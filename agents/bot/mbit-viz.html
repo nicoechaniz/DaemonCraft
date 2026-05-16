@@ -83,7 +83,7 @@
     Auto-refresh (2s)
   </label>
   <label style="font-size:10px">
-    <input type="checkbox" id="follow" onchange="toggleFollow()">
+    <input type="checkbox" id="follow" checked onchange="toggleFollow()">
     Follow bot (3s)
   </label>
   <div style="margin-top:8px">
@@ -118,6 +118,10 @@ let currentLayer = 115;
 let blockData = null;
 let autoTimer = null;
 let followTimer = null;
+let lastText = '';
+
+// Also start follow if checked
+if (document.getElementById('follow')?.checked) toggleFollow();
 
 const BLOCK_COLORS = {
   air:'#00000000', grass_block:'#7c9c4c', dirt:'#8b6914',
@@ -188,6 +192,8 @@ async function refresh() {
     if (!resp.ok) { document.getElementById('info').textContent = 'Error: ' + resp.error; return; }
 
     const text = resp.data.text;
+    if (text === lastText) return;
+    lastText = text;
     const count = resp.data.count;
     const elapsed = resp.data.elapsed_ms;
     const renderMs = Math.round(performance.now() - t0);
