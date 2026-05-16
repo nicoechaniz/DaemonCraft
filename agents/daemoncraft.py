@@ -475,12 +475,7 @@ def start_agent(
     max_chat_chars: int | None = None,
     immortal: bool = False,
 ) -> int:
-    """Start the agent loop. Returns PID.
-
-    Launches agent_loop.py (Autonomía Corporal): plan-driven execution
-    via Gemma-Andy when a plan exists, idle heartbeat injection otherwise.
-    Finite-state controller, machine-checkable verification.
-    """
+    """Start the agent loop for a cast-isolated agent. Returns PID."""
     from agents.workspace import get_agent_venv_python
 
     lf = log_file(cast_name, agent_name, "agent")
@@ -522,6 +517,61 @@ def start_agent(
     )
     write_pid(cast_name, agent_name, "agent", proc.pid)
     log(f"Agent {agent_name} started (PID {proc.pid})", cast_name)
+    return proc.pid
+
+
+def start_local_agent_loop(
+    cast_name: str,
+    agent_name: str,
+    port: int,
+    hermes_home: str = "~/.hermes",
+    interval: int = 7,
+    max_chat_chars: int | None = None,
+    immortal: bool = False,
+) -> int:
+    """Start the agent loop for a local (existing-profile) agent. Returns PID.
+
+    Unlike start_agent(), this uses the deploy-target venv and the
+    agent's existing HERMES_HOME instead of an isolated workspace.
+    """
+    lf = log_file(cast_name, agent_name, "agent")
+    out = open(lf, "a")
+
+    # Use the deploy target venv (shared code)
+    deploy_venv_python = str(Path.home() / ".hermes" / "hermes-agent" / "venv" / "bin" / "python")
+    loop_script = str(SCRIPT_DIR / "agent_loop.py")
+
+    standby_file = str(get_pid_dir(cast_name) / f"{agent_name}_standby")
+    hermes_home_path = str(Path(hermes_home).expanduser())
+
+    env = {
+        **os.environ,
+        "HERMES_HOME": hermes_home_path,
+        "MC_API_URL": f"http://localhost:{port}",
+        "MC_USERNAME": agent_name,
+        "STANDBY_FILE": standby_file,
+        "MC_KNOWN_BOTS": _get_all_known_bots(),
+        "HERMES_SESSION_PLATFORM": "cli",
+        "MC_METRICS_CAST": cast_name,
+        "HERMES_MAX_ITERATIONS": "6",
+        "HERMES_TURN_TIMEOUT_SECONDS": "45",
+    }
+    if max_chat_chars:
+        env["MC_MAX_CHAT_CHARS"] = str(max_chat_chars)
+
+    if immortal:
+        env["DAEMON_GUARDIAN"] = "1"
+
+    log(f"Starting local agent loop for {agent_name} (interval={interval}s, HERMES_HOME={hermes_home_path})...", cast_name)
+    proc = subprocess.Popen(
+        [deploy_venv_python, loop_script, "--interval", str(interval)],
+        env=env,
+        stdout=out,
+        stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL,
+    )
+    write_pid(cast_name, agent_name, "agent", proc.pid)
+    log(f"Local agent {agent_name} loop started (PID {proc.pid})", cast_name)
     return proc.pid
 
 
@@ -581,11 +631,12 @@ def cmd_start(cast_name: str, cast: dict, mc_host: str, mc_port: int):
 
         if agent_type == "local":
             # Local agent: already exists as a Hermes profile.
-            # Don't create workspace, don't start gateway, don't start agent_loop.
+            # Don't create workspace, don't start gateway.
             # Just configure env and start the bot.
             from agents.workspace import configure_local_agent_env
 
             hermes_home = agent.get("hermes_home", "~/.hermes")
+            hermes_home_path = Path(hermes_home).expanduser()
             configure_local_agent_env(
                 agent_name=name,
                 port=port,
@@ -594,10 +645,19 @@ def cmd_start(cast_name: str, cast: dict, mc_host: str, mc_port: int):
             )
 
             # Start bot
-            workspace_dir = str(Path(hermes_home).expanduser())
+            workspace_dir = str(hermes_home_path)
             start_bot(cast_name, name, port, mc_host, mc_port, workspace_dir, agent.get("bot_config"))
 
-            log(f"Local agent '{name}' configured (bot only)", cast_name)
+            # Optional agent_loop for local agents (e.g. for debugging)
+            if agent.get("agent_loop", False):
+                max_chat_chars = agent.get("max_chat_chars")
+                start_local_agent_loop(
+                    cast_name, name, port, hermes_home=hermes_home,
+                    max_chat_chars=max_chat_chars,
+                    immortal=agent.get("immortal", False),
+                )
+
+            log(f"Local agent '{name}' configured (bot{' + agent_loop' if agent.get('agent_loop') else ''})", cast_name)
             time.sleep(1)
             continue
 
@@ -908,13 +968,56 @@ def cmd_daemon(cast_name: str, cast: dict, mc_host: str, mc_port: int):
                 break
             name = agent["name"]
             port = agent["port"]
+            agent_type = agent.get("type", "cast")
             safe_name = name.lower().replace(" ", "-")
-            agent_workspace = Path.home() / "agents" / safe_name
 
             bot_pid = read_pid(cast_name, name, "bot")
             agent_pid = read_pid(cast_name, name, "agent")
             bot_alive = bot_pid and is_alive(bot_pid)
             agent_alive = agent_pid and is_alive(agent_pid)
+
+            if agent_type == "local":
+                # Local agent: use existing profile, no isolated workspace
+                hermes_home = agent.get("hermes_home", "~/.hermes")
+                hermes_home_path = Path(hermes_home).expanduser()
+
+                if not bot_alive:
+                    if bot_pid:
+                        remove_pid(cast_name, name, "bot")
+                    log(f"Bot {name} down, restarting...", cast_name)
+                    try:
+                        workspace_dir = str(hermes_home_path)
+                        start_bot(cast_name, name, port, mc_host, mc_port, workspace_dir, agent.get("bot_config"))
+                    except SystemExit:
+                        pass
+
+                if agent.get("agent_loop", False) and not agent_alive:
+                    if agent_pid:
+                        remove_pid(cast_name, name, "agent")
+                    now = time.time()
+                    tracker = restart_tracker.setdefault(name, {"count": 0, "first": now, "alerted": False})
+                    if now - tracker["first"] > 300:
+                        tracker["count"] = 0
+                        tracker["first"] = now
+                        tracker["alerted"] = False
+                    tracker["count"] += 1
+                    if tracker["count"] > 3 and not tracker["alerted"]:
+                        tracker["alerted"] = True
+                        log(f"ALERT: Agent {name} has crashed {tracker['count']} times in 5min. Stopping auto-restart.", cast_name)
+                        continue
+                    if tracker["count"] <= 3:
+                        log(f"Agent {name} down (crash #{tracker['count']}), restarting...", cast_name)
+                        try:
+                            start_local_agent_loop(
+                                cast_name, name, port, hermes_home=hermes_home,
+                                immortal=agent.get("immortal", False),
+                            )
+                        except SystemExit:
+                            pass
+                        time.sleep(5)
+                continue
+
+            agent_workspace = Path.home() / "agents" / safe_name
 
             if not bot_alive:
                 if bot_pid:

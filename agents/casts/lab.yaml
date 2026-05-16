@@ -1,0 +1,29 @@
+# DaemonCraft Laboratory Mode Cast
+# Single local agent (CompAII) for debugging and development.
+# The agent already exists as the default Hermes profile.
+
+name: lab
+description: Laboratory mode — CompAII with bot + optional agent_loop for debugging
+mode: laboratory
+
+agents:
+  - name: CompAII
+    type: local
+    hermes_home: ~/.hermes
+    port: 3003
+    agent_loop: true
+    bot_config:
+      minecraft:
+        host: localhost
+        port: 25565
+        auth: offline
+      server:
+        api_port: 3003
+      pathfinder:
+        allow_sprinting: false
+        can_dig: true
+        allow_parkour: true
+      chat:
+        fragment_max_chars: 240
+        max_fragments: 3
+        fragment_delay_ms: 300

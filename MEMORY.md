@@ -48,18 +48,18 @@ CompAII operates in **laboratory mode**: the bot runs as a persistent systemd se
 
 | Service | Purpose | Port | Status |
 |---|---|---|---|
-| `daemoncraft-bot-compaii.service` | Bot server (Mineflayer API) | 3003 | Active |
+| `daemoncraft-bot-compaii.service` | Bot server (Mineflayer API) | 3003 | **Replaced by cast `lab`** |
 | `daemoncraft.service` | Minecraft server (Docker) | 25565 | Active |
-| `daemoncraft-cast.service` | Agent cast launcher | — | Inactive |
+| `daemoncraft-cast.service` | Agent cast launcher | — | **Active (CAST=lab)** |
 
 **Commands:**
 ```bash
-systemctl --user status daemoncraft-bot-compaii.service
-systemctl --user restart daemoncraft-bot-compaii.service
-journalctl --user -u daemoncraft-bot-compaii.service -f
+systemctl --user status daemoncraft-cast.service
+systemctl --user restart daemoncraft-cast.service
+journalctl --user -u daemoncraft-cast.service -f
 ```
 
-**Config:** `~/Projects/DaemonCraft/agents/bot/config-compaii.json`
+**Config:** `~/Projects/DaemonCraft/agents/casts/lab.yaml`
 **API:** `http://localhost:3003`
 **Username:** `CompAII`
 
@@ -70,7 +70,28 @@ EMBODIED_SERVICE_URL=http://localhost:7790
 MC_USERNAME=CompAII
 ```
 
-Service file: `/home/nicolas/.config/systemd/user/daemoncraft-bot-compaii.service`
+### Cast `lab` (Laboratory Mode)
+
+The active cast is `lab` (configured in `~/.config/daemoncraft/cast.conf`). It runs a single local agent:
+
+```yaml
+agents:
+  - name: CompAII
+    type: local
+    hermes_home: ~/.hermes
+    port: 3003
+    agent_loop: true   # Enabled for debugging
+```
+
+**Processes managed by the cast:**
+| Process | Description |
+|---|---|
+| `node server.js` | Bot (Mineflayer API on :3003) |
+| `python agent_loop.py` | Autonomous heartbeat loop (interval=7s) |
+
+The `agent_loop` is **optional** for local agents (`agent_loop: false` by default). Set to `true` only when debugging autonomous behavior.
+
+**Previous standalone bot service** (`daemoncraft-bot-compaii.service`) has been disabled — the cast now manages both bot and agent_loop.
 
 ## Agent Types in Casts: `cast` vs `local`
 
