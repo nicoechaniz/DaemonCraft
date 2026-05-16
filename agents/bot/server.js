@@ -3677,6 +3677,17 @@ const httpServer = http.createServer(async (req, res) => {
         }
       }
 
+      if (path === '/mbit') {
+        const vizPath = new URL('mbit-viz.html', import.meta.url).pathname;
+        try {
+          const html = fs.readFileSync(vizPath, 'utf8');
+          res.writeHead(200, { 'Content-Type': 'text/html', 'Access-Control-Allow-Origin': '*' });
+          return res.end(html);
+        } catch {
+          return respond(res, 500, { ok: false, error: 'mbit-viz.html not found' });
+        }
+      }
+
       if (path === '/blueprints') {
         try {
           const files = fs.readdirSync(BLUEPRINTS_DIR).filter(f => f.endsWith('.json'));

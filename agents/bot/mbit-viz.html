@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>mBit 3D Visualizer — DaemonCraft</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background: #020617; color: #e2e8f0;
+    font-family: 'JetBrains Mono', monospace;
+    overflow: hidden; height: 100vh;
+  }
+  #canvas3d { width: 100%; height: 100%; display: block; }
+  #panel {
+    position: absolute; top: 16px; left: 16px;
+    background: rgba(15,23,42,0.92); border: 1px solid #1e293b;
+    border-radius: 10px; padding: 14px;
+    font-size: 12px; min-width: 280px;
+    z-index: 10;
+  }
+  #panel h2 { color: #22d3ee; font-size: 14px; margin-bottom: 10px; }
+  label { color: #94a3b8; display: block; margin-top: 6px; }
+  input, select { 
+    background: #0f172a; color: #e2e8f0; border: 1px solid #334155;
+    border-radius: 4px; padding: 4px 8px; font-family: inherit; margin-top: 3px;
+    width: 100%;
+  }
+  .row { display: flex; gap: 6px; }
+  .row input { width: 50%; }
+  button {
+    background: #1e293b; color: #22d3ee; border: 1px solid #334155;
+    border-radius: 4px; padding: 6px 12px; margin-top: 8px;
+    font-family: inherit; cursor: pointer; width: 100%;
+  }
+  button:hover { background: #334155; }
+  button.active { background: #0e3a4a; border-color: #22d3ee; }
+  #mode-btns { display: flex; gap: 4px; margin-top: 4px; }
+  #mode-btns button { flex: 1; font-size: 10px; }
+  #info {
+    position: absolute; bottom: 16px; left: 16px;
+    color: #64748b; font-size: 10px;
+  }
+  #legend {
+    position: absolute; top: 16px; right: 16px;
+    background: rgba(15,23,42,0.85); border: 1px solid #1e293b;
+    border-radius: 6px; padding: 8px 12px; font-size: 10px;
+  }
+</style>
+</head>
+<body>
+<div id="panel">
+  <h2>mBit 3D Visualizer</h2>
+  <label>Format</label>
+  <select id="fmt">
+    <option value="full" selected>Full (chars)</option>
+    <option value="binary">Binary (0/1)</option>
+    <option value="surface">Surface</option>
+  </select>
+  <label>Chunk center</label>
+  <div class="row">
+    <input id="cx" type="number" value="0" placeholder="X">
+    <input id="cz" type="number" value="0" placeholder="Z">
+  </div>
+  <label>Y base</label>
+  <input id="ybase" type="number" value="114" placeholder="Y base">
+  <label>Size (radius)</label>
+  <input id="radius" type="number" value="8" min="1" max="16">
+  <div id="mode-btns">
+    <button id="btn-char" class="active" onclick="setMode('char')">🔤 Chars</button>
+    <button id="btn-block" onclick="setMode('block')">🧊 Blocks</button>
+  </div>
+  <button onclick="refresh()">🔄 Refresh</button>
+  <label style="margin-top:6px;font-size:10px">
+    <input type="checkbox" id="auto" checked onchange="toggleAuto()">
+    Auto-refresh (2s)
+  </label>
+  <label style="margin-top:2px;font-size:10px">
+    <input type="checkbox" id="follow" onchange="toggleFollow()">
+    Follow bot
+  </label>
+</div>
+<div id="info">Drag to rotate • Scroll to zoom • Right-drag to pan</div>
+<div id="legend">
+  <div style="color:#22d3ee;margin-bottom:4px">Legend</div>
+  <div>G = grass  |  d = dirt  |  T = terracotta</div>
+  <div># = stone  |  l = log   |  L = leaves</div>
+  <div>, = grass  |  . = bush  |  ~ = water</div>
+</div>
+<div id="canvas3d"></div>
+
+<script type="importmap">
+{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+               "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const BOT_URL = 'http://localhost:3003';
+const scene = new THREE.Scene();
+scene.background = new THREE.Color('#020617');
+scene.fog = new THREE.Fog('#020617', 20, 60);
+
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 1, 200);
+camera.position.set(12, 16, 20);
+camera.lookAt(0, 8, 0);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+document.getElementById('canvas3d').appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 8, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.update();
+
+// Lighting
+scene.add(new THREE.AmbientLight('#334155', 1.5));
+const dir = new THREE.DirectionalLight('#e2e8f0', 1.2);
+dir.position.set(20, 30, 20);
+scene.add(dir);
+
+// Grid
+scene.add(new THREE.GridHelper(32, 32, '#1e293b', '#0f172a'));
+
+let currentMode = 'char';
+let objects = [];
+let autoTimer = null;
+let followTimer = null;
+
+function clearObjects() {
+  for (const obj of objects) scene.remove(obj);
+  objects = [];
+}
+
+const BLOCK_COLORS = {
+  air: '#00000000', grass_block: '#7c9c4c', dirt: '#8b6914',
+  coarse_dirt: '#6b5020', stone: '#808080', cobblestone: '#5a5a5a',
+  terracotta: '#b86838', orange_terracotta: '#b86838',
+  brown_terracotta: '#705030', yellow_terracotta: '#b8a030',
+  oak_log: '#8b6b3e', oak_leaves: '#3a6b1e', oak_planks: '#b8944c',
+  water: '#3344cc', lava: '#cc3300', sand: '#dcc080',
+  gravel: '#888888', clay: '#8888cc', coal_ore: '#444444',
+  iron_ore: '#cc8844', gold_ore: '#ccaa00', diamond_ore: '#44cccc',
+  bedrock: '#222222', obsidian: '#1a0a2e',
+  default: '#555555',
+};
+
+function blockColor(name) {
+  return BLOCK_COLORS[name] || BLOCK_COLORS.default;
+}
+
+// Single-character mapping (matches lib/mbit.js)
+const CHAR_MAP = {
+  air:' ', cave_air:' ', void_air:' ',
+  water:'~', lava:'!',
+  short_grass:',', tall_grass:';', dead_bush:'.',
+  dirt:'d', coarse_dirt:'D', grass_block:'G',
+  stone:'#', cobblestone:'#',
+  sand:'n', gravel:'g', clay:'c',
+  terracotta:'T', orange_terracotta:'T', brown_terracotta:'T',
+  yellow_terracotta:'T',
+  oak_log:'l', oak_leaves:'L', oak_planks:'w',
+  coal_ore:'o', iron_ore:'O', gold_ore:'O',
+  bedrock:'B', obsidian:'B',
+  leaf_litter:'.',
+};
+
+function charFor(name) { return CHAR_MAP[name] || name?.[0] || '?'; }
+
+async function refresh() {
+  clearObjects();
+  const r = parseInt(document.getElementById('radius').value) || 8;
+  const fmt = document.getElementById('fmt').value;
+  const yBase = parseInt(document.getElementById('ybase').value) || 114;
+  const yEnd = yBase + (fmt === 'surface' ? 0 : (fmt === 'binary' ? 1 : r * 2));
+
+  let cx = parseInt(document.getElementById('cx').value) || 0;
+  let cz = parseInt(document.getElementById('cz').value) || 0;
+
+  // Auto-center from bot position
+  try {
+    const st = await fetch(BOT_URL + '/status').then(r => r.json());
+    if (st.ok && st.data) {
+      const p = st.data.position;
+      document.getElementById('ybase').value = Math.floor(p.y);
+      if (!document.getElementById('cx').value) document.getElementById('cx').value = Math.floor(p.x);
+      if (!document.getElementById('cz').value) document.getElementById('cz').value = Math.floor(p.z);
+      cx = Math.floor(p.x);
+      cz = Math.floor(p.z);
+    }
+  } catch(e) {}
+
+  const x1 = cx - r; const x2 = cx + r;
+  const z1 = cz - r; const z2 = cz + r;
+
+  try {
+    const params = new URLSearchParams({ x1,x2, z1,z2, y1:yBase, y2:yEnd, format:fmt });
+    const resp = await fetch(BOT_URL + '/blocks?' + params).then(r => r.json());
+    if (!resp.ok) { console.error(resp.error); return; }
+    
+    const text = resp.data.text;
+    const count = resp.data.count;
+    document.getElementById('info').textContent = 
+      `${fmt} | ${count} blocks | ${resp.data.elapsed_ms}ms | center (${cx}, ${cz}) | Y ${yBase}-${yEnd}`;
+
+    if (fmt === 'full') {
+      renderFull(text, x1, z1, yBase, yEnd);
+    } else if (fmt === 'binary') {
+      renderBinary(text, x1, z1, yBase);
+    } else if (fmt === 'surface') {
+      renderSurface(text, x1, z1, yBase);
+    }
+  } catch(e) { console.error(e); }
+}
+
+function renderFull(text, minX, minZ, yBase, yEnd) {
+  const layers = text.split('--- Y=');
+  const sizeX = (2 * parseInt(document.getElementById('radius').value)) + 1;
+
+  for (let li = 1; li < layers.length; li++) {
+    const lines = layers[li].split('\n');
+    const yStr = lines[0].trim();
+    const y = parseInt(yStr);
+    if (isNaN(y)) continue;
+
+    for (let zi = 0; zi < lines.length - 1; zi++) {
+      const line = lines[zi + 1] || '';
+      for (let xi = 0; xi < line.length; xi++) {
+        const ch = line[xi];
+        if (ch === ' ') continue;
+        const wx = minX + xi + 0.5;
+        const wz = minZ + zi + 0.5;
+        const wy = y + 0.5;
+
+        if (currentMode === 'char') {
+          addCharLabel(ch, wx, wy, wz);
+        } else {
+          addBlockCube(ch, wx, wy, wz);
+        }
+      }
+    }
+  }
+  controls.target.set((minX + sizeX/2), (yBase + yEnd)/2, (minZ + sizeX/2));
+}
+
+function renderBinary(text, minX, minZ, yBase) {
+  const lines = text.trim().split('\n');
+  for (let zi = 0; zi < lines.length; zi++) {
+    const line = lines[zi].trim();
+    for (let xi = 0; xi < line.length; xi++) {
+      const ch = line[xi];
+      const wx = minX + xi + 0.5;
+      const wz = minZ + zi + 0.5;
+      if (ch === '0') {
+        // Walkable: green semi-transparent
+        const geo = new THREE.BoxGeometry(0.8, 0.2, 0.8);
+        const mat = new THREE.MeshStandardMaterial({ color:'#224422', transparent:true, opacity:0.5 });
+        const m = new THREE.Mesh(geo, mat); m.position.set(wx, yBase+0.1, wz);
+        scene.add(m); objects.push(m);
+      } else {
+        // Solid: red
+        const geo = new THREE.BoxGeometry(0.6, 0.6, 0.6);
+        const mat = new THREE.MeshStandardMaterial({ color:'#882222', transparent:true, opacity:0.6 });
+        const m = new THREE.Mesh(geo, mat); m.position.set(wx, yBase+0.3, wz);
+        scene.add(m); objects.push(m);
+      }
+    }
+  }
+}
+
+function renderSurface(text, minX, minZ, yBase) {
+  const lines = text.trim().split('\n');
+  for (let zi = 0; zi < lines.length; zi++) {
+    const line = lines[zi].trim();
+    for (let xi = 0; xi < line.length; xi++) {
+      const ch = line[xi];
+      if (ch === ' ') continue;
+      const wx = minX + xi + 0.5;
+      const wz = minZ + zi + 0.5;
+      const wy = yBase + 0.5;
+      if (currentMode === 'char') {
+        addCharLabel(ch, wx, wy, wz);
+      } else {
+        addBlockCube(ch, wx, wy, wz);
+      }
+    }
+  }
+}
+
+function addCharLabel(ch, x, y, z) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 64; canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#22d3ee';
+  ctx.font = 'bold 40px JetBrains Mono';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(ch, 32, 32);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.minFilter = THREE.LinearFilter;
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: true });
+  const sprite = new THREE.Sprite(mat);
+  sprite.position.set(x, y, z);
+  sprite.scale.set(0.6, 0.6, 0.6);
+  scene.add(sprite);
+  objects.push(sprite);
+}
+
+function addBlockCube(ch, x, y, z) {
+  // Map symbol back to approximate block name for coloring
+  const symbolToName = Object.entries(CHAR_MAP).find(([n, c]) => c === ch)?.[0] || 'default';
+  const color = blockColor(symbolToName);
+  if (color === '#00000000') return;
+  const geo = new THREE.BoxGeometry(0.85, 0.85, 0.85);
+  const mat = new THREE.MeshStandardMaterial({ color, transparent: true, opacity: 0.85 });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.set(x, y, z);
+  scene.add(mesh);
+  objects.push(mesh);
+}
+
+window.setMode = function(mode) {
+  currentMode = mode;
+  document.getElementById('btn-char').classList.toggle('active', mode === 'char');
+  document.getElementById('btn-block').classList.toggle('active', mode === 'block');
+  refresh();
+};
+
+window.refresh = refresh;
+
+window.toggleAuto = function() {
+  if (document.getElementById('auto').checked) {
+    autoTimer = setInterval(refresh, 2000);
+  } else {
+    clearInterval(autoTimer);
+  }
+};
+
+window.toggleFollow = function() {
+  if (document.getElementById('follow').checked) {
+    followTimer = setInterval(async () => {
+      try {
+        const st = await fetch(BOT_URL + '/status').then(r => r.json());
+        if (st.ok && st.data) {
+          document.getElementById('cx').value = Math.floor(st.data.position.x);
+          document.getElementById('cz').value = Math.floor(st.data.position.z);
+          document.getElementById('ybase').value = Math.floor(st.data.position.y);
+        }
+      } catch(e) {}
+    }, 3000);
+  } else {
+    clearInterval(followTimer);
+  }
+};
+
+// WebSocket for real-time chunk updates
+try {
+  const wsUrl = BOT_URL.replace('http', 'ws') + '/ws';
+  const ws = new WebSocket(wsUrl);
+  ws.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'chunk_update' || msg.type === 'actions') {
+        if (document.getElementById('auto').checked) refresh();
+      }
+    } catch {}
+  };
+  ws.onopen = () => console.log('[mBit viz] WebSocket connected');
+  ws.onerror = () => console.log('[mBit viz] WebSocket error (dashboard may not be connected)');
+} catch(e) {}
+
+// Init
+refresh();
+if (document.getElementById('auto').checked) autoTimer = setInterval(refresh, 2000);
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>
