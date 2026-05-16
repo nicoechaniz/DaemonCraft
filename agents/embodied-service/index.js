@@ -164,7 +164,7 @@ async function handleIntent(req, res) {
   // a hard error: without world_state the model can't plan.
   let world_state;
   try {
-    world_state = await composeWorldState({ botUrl: bot_api_url });
+    world_state = await composeWorldState({ botUrl: bot_api_url, intent });
   } catch (err) {
     logEvent({ event: "world_state_failed", context_id, error: err.message });
     return jsonResponse(res, 502, {
@@ -351,7 +351,7 @@ async function handleIntent(req, res) {
   const firstFailure = execution_results.find((r) => !r.ok) ?? null;
   const expectedWorldStateKeys = [
     "biome", "bot_health", "bot_position", "dimension", "hazards",
-    "hunger", "inventory", "light_level", "nearby_blocks", "nearby_entities",
+    "hunger", "inventory", "light_level", "mbit_context", "nearby_blocks", "nearby_entities",
     "player_position", "time_of_day", "weather", "zone_owner",
   ];
   const worldStateKeysPresent = world_state

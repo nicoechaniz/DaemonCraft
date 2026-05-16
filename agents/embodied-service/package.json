@@ -7,7 +7,8 @@
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "test": "node --test test/"
+    "test": "node --test test/",
+    "smoke:mbit": "node scripts/smoke_mbit_world_state.js"
   },
   "engines": {
     "node": ">=20.0.0"

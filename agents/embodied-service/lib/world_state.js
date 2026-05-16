@@ -22,6 +22,107 @@ async function botGet(path, botUrl = null) {
   return json.data ?? json;
 }
 
+const MBIT_LEGEND = [
+  "mBit grids are plain-text Minecraft voxels centered on the bot.",
+  "Read each grid row north->south; characters in a row are west->east; the bot is near the center cell.",
+  "binary: 0 = walkable/passable column, 1 = blocked/solid column.",
+  "surface/full chars: space = air, G = grass_block, d/D = dirt, # = stone/cobble, w = planks, l = log, ~=water, !=lava, O=ore, ?=unknown.",
+].join(" ");
+
+function classifyMbitPurpose(intent = "") {
+  const low = String(intent || "").toLowerCase();
+  if (/\b(verify|check|confirm|diff|before|after|revis|comprob|verific)\b/.test(low)) return "verification";
+  if (/\b(mine|minar|dig|excavat|gather|collect|consegu|ore|stone|coal|iron)\b/.test(low)) return "mining";
+  if (/\b(build|place|constru|poner|pon[eé]|farm|till|plant|wall|shelter|bridge)\b/.test(low)) return "building";
+  if (/\b(go|goto|move|walk|follow|come|approach|ven|and[aá]|camina|acerc|alejat|avoid|path|navigate)\b/.test(low)) return "navigation";
+  return "local_context";
+}
+
+function chooseMbitSpec(botPos, intent = "") {
+  const [x, y, z] = botPos;
+  const purpose = classifyMbitPurpose(intent);
+  const mkBounds = (radius, yBelow, yAbove) => ({
+    x1: x - radius,
+    y1: y - yBelow,
+    z1: z - radius,
+    x2: x + radius,
+    y2: y + yAbove,
+    z2: z + radius,
+  });
+  const grid = (format, bounds) => ({ format, bounds });
+
+  if (purpose === "verification") {
+    return {
+      purpose,
+      grids: [grid("full", { x1: x - 1, y1: y - 1, z1: z - 1, x2: x + 2, y2: y + 2, z2: z + 2 })],
+      interpretation_hint: "Use this 4x4x4 full voxel sample for exact before/after local verification. Full format is Y-major: top layer first, then north->south rows and west->east characters.",
+    };
+  }
+  if (purpose === "mining") {
+    return {
+      purpose,
+      grids: [
+        grid("surface", mkBounds(4, 3, 5)),
+        grid("columns", mkBounds(4, 3, 5)),
+        grid("rows", mkBounds(4, 0, 5)),
+      ],
+      interpretation_hint: "For mining/digging, columns shows vertical clearance/solids around the bot; rows shows free distance in N/S/E/W/Up/Down from the center. Prefer scan/find tools for exact target coordinates after reading this terrain cue.",
+    };
+  }
+  if (purpose === "building") {
+    return {
+      purpose,
+      grids: [
+        grid("surface", mkBounds(5, 1, 4)),
+        grid("binary", mkBounds(5, 0, 1)),
+        grid("rows", mkBounds(5, 0, 4)),
+      ],
+      interpretation_hint: "For building/placing, surface shows the floor/material under each cell; binary shows blocked vs walkable footprint. Keep the bot near the center and avoid placing into blocked or unsafe cells unless intentionally building there.",
+    };
+  }
+  return {
+    purpose,
+    grids: [
+      grid("binary", mkBounds(4, 0, 1)),
+      grid("surface", mkBounds(4, 1, 3)),
+      grid("rows", mkBounds(4, 0, 3)),
+    ],
+    interpretation_hint: "For navigation, binary is the primary map: 0 means the bot can likely stand/pass, 1 means blocked. Surface tells what the ground is. rows gives immediate free-distance horizons from the bot-centered cell.",
+  };
+}
+
+async function fetchMbitContext(botPos, intent = "", botUrl = null) {
+  const spec = chooseMbitSpec(botPos, intent);
+  const grids = await Promise.all(spec.grids.map(async ({ format, bounds }) => {
+    const q = new URLSearchParams({
+      x1: String(bounds.x1),
+      y1: String(bounds.y1),
+      z1: String(bounds.z1),
+      x2: String(bounds.x2),
+      y2: String(bounds.y2),
+      z2: String(bounds.z2),
+      cx: String(botPos[0]),
+      cz: String(botPos[2]),
+      format,
+    });
+    const data = await botGet(`/blocks?${q.toString()}`, botUrl);
+    return {
+      format,
+      bounds,
+      count: data.count ?? null,
+      elapsed_ms: data.elapsed_ms ?? null,
+      text: data.text ?? "",
+    };
+  }));
+  return {
+    purpose: spec.purpose,
+    center: { x: botPos[0], y: botPos[1], z: botPos[2] },
+    legend: MBIT_LEGEND,
+    interpretation_hint: spec.interpretation_hint,
+    grids,
+  };
+}
+
 function mapTimeOfDay(timeTicks) {
   // Minecraft day is 0..23999. Sunset around 12000-13000, night 13000-23000,
   // dawn 23000-24000. Map to the three labels the model was trained on.
@@ -40,7 +141,7 @@ function mapTimeOfDay(timeTicks) {
  * the model tolerates absence of optional fields, and an empty
  * nearby_blocks (etc.) is valid input.
  */
-export async function composeWorldState({ extra = {}, botUrl = null } = {}) {
+export async function composeWorldState({ extra = {}, botUrl = null, intent = "" } = {}) {
   // Issue reads in parallel. /status gives biome, health, hunger, time;
   // /nearby gives blocks + entities (radius 64 to catch players further
   // out); /inventory gives items.
@@ -173,6 +274,20 @@ export async function composeWorldState({ extra = {}, botUrl = null } = {}) {
     // /marks endpoint not available — use empty (on-distribution default).
   }
 
+  // mBit is optional contextual perception. If the bot/server.js /blocks
+  // endpoint is unavailable or temporarily fails, keep canonical world_state
+  // intact and expose the failure as metadata instead of aborting the intent.
+  let mbitContext = null;
+  try {
+    mbitContext = await fetchMbitContext(botPos, intent, botUrl);
+  } catch (err) {
+    mbitContext = {
+      ok: false,
+      error: err?.message || String(err),
+      interpretation_hint: "mBit contextual voxel perception was requested but unavailable; fall back to nearby_blocks/entities and scan tools.",
+    };
+  }
+
   const ws = {
     biome: status?.biome ?? "unknown",
     bot_health: status?.health ?? 20,
@@ -182,6 +297,7 @@ export async function composeWorldState({ extra = {}, botUrl = null } = {}) {
     hunger: status?.food ?? 20,
     inventory: invDict,
     light_level: typeof status?.light_level === "number" ? status.light_level : (status?.isDay ? 15 : 4),
+    mbit_context: mbitContext,
     nearby_blocks: blockNames,
     nearby_entities: entityNames,
     player_health: playerHealth,
