@@ -2290,6 +2290,12 @@ async collect({ block, count = 1 }) {
       if (ref && ref.name !== 'air' && ref.name !== 'cave_air') {
         // Use _genericPlace instead of placeBlock to avoid blockUpdate timeout
         await b._genericPlace(ref, new Vec3(-dx, -dy, -dz), { swingArm: 'right', forceLook: true });
+        // Verify placement actually materialized — _genericPlace can silently fail
+        await new Promise(r => setTimeout(r, 200));
+        const placed = b.blockAt(targetPos);
+        if (!placed || placed.name === 'air' || placed.name === 'cave_air') {
+          throw new Error(`Placed ${blockName} at ${x}, ${y}, ${z} but block did not materialize. Retry or choose different coordinates.`);
+        }
         return { result: `Placed ${blockName} at ${x}, ${y}, ${z}` };
       }
     }
