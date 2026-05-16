@@ -224,7 +224,7 @@ function parseFull(text, minX, minZ, yBase, yEnd) {
     const nl = sec.indexOf('\n');
     const y = parseInt(sec.slice(0, nl).trim());
     if (isNaN(y)) continue;
-    const rows = sec.slice(nl + 1).trim().split('\n');
+    const rows = sec.slice(nl + 1).split('\n').filter(r => r.length > 0);
     const grid = [];
     for (const row of rows) {
       grid.push(row.split(''));
