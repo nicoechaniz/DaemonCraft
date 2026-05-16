@@ -64,9 +64,14 @@
   <label style="font-size:9px">
     <span style="color:#64748b">WS live</span>
   </label>
-  <label style="font-size:9px">
-    <input type="checkbox" id="follow" checked onchange="toggleFollow()"> Follow bot
-  </label>
+  <div class="row" style="margin-top:4px; align-items:center;">
+    <label style="font-size:9px; width:50%; margin-top:0;">
+      <input type="checkbox" id="follow" checked onchange="toggleFollow()"> Follow bot
+    </label>
+    <label style="font-size:9px; width:50%; margin-top:0;">
+      <input type="checkbox" id="alignCam" onchange="toggleAlignCamera()"> Align camera
+    </label>
+  </div>
 </div>
 <div id="info">Loading...</div>
 
@@ -79,6 +84,8 @@ scene.background = new THREE.Color('#020617');
 scene.fog = new THREE.Fog('#020617', 15, 50);
 
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.5, 100);
+const ORBIT_FOV = 45;
+const BOT_EYE_FOV = 70; // close to Minecraft's default first-person FOV / perspective fuga
 camera.position.set(12, 18, 20);
 camera.lookAt(0, 8, 0);
 
@@ -102,6 +109,7 @@ scene.add(grid);
 let currentMode = 'char';
 let objects = [];
 let followTimer = null;
+let alignTimer = null;
 let lastText = ''; // last full mBit text received
 let lastRenderKey = ''; // includes mode+bounds+text; prevents clearing on no-op refreshes
 let refreshSeq = 0; // prevents older overlapping refreshes from replacing newer renders
@@ -144,6 +152,42 @@ const CHAR_MAP = {
 function colorFor(n) { return BLOCK_COLORS[n] || BLOCK_COLORS.default; }
 function charFor(n) { return CHAR_MAP[n] || n?.[0] || '?'; }
 
+function localBotEye(st, centerX, centerZ, y1, y2) {
+  const p = st?.data?.position;
+  if (!p) return null;
+  return new THREE.Vector3(
+    p.x - centerX,
+    (p.y + 1.62) - ((y1 + y2) / 2),
+    p.z - centerZ,
+  );
+}
+
+function yawPitchToDir(yaw, pitch = 0) {
+  const cy = Math.cos(yaw);
+  const sy = Math.sin(yaw);
+  const cp = Math.cos(pitch);
+  const sp = Math.sin(pitch);
+  return new THREE.Vector3(-sy * cp, sp, -cy * cp).normalize();
+}
+
+function alignCameraToBot(st, centerX, centerZ, y1, y2) {
+  if (!document.getElementById('alignCam')?.checked) return;
+  const eye = localBotEye(st, centerX, centerZ, y1, y2);
+  const yaw = st?.data?.yaw;
+  const pitch = st?.data?.pitch;
+  if (!eye || typeof yaw !== 'number' || typeof pitch !== 'number') {
+    document.getElementById('info').textContent = 'Align camera needs bot yaw/pitch from /status — restart bot server if missing.';
+    return;
+  }
+  const dir = yawPitchToDir(yaw, pitch);
+  camera.fov = BOT_EYE_FOV;
+  camera.updateProjectionMatrix();
+  camera.position.copy(eye);
+  camera.lookAt(eye.clone().add(dir.clone().multiplyScalar(10)));
+  controls.target.copy(eye.clone().add(dir.clone().multiplyScalar(3)));
+  controls.enabled = false;
+}
+
 async function refresh() {
   const seq = ++refreshSeq;
   const r = parseInt(document.getElementById('radius').value) || 7;
@@ -152,21 +196,23 @@ async function refresh() {
   let y1 = parseInt(document.getElementById('y1').value) || 119;
   let y2 = parseInt(document.getElementById('y2').value) || 131;
 
+  let st = null;
   try {
-    const st = await fetch(BOT_URL + '/status').then(r => r.json());
-    if (st.ok && st.data) {
-      const p = st.data.position;
-      if (document.getElementById('follow').checked || !document.getElementById('cx').value) {
-        document.getElementById('cx').value = Math.floor(p.x); cx = Math.floor(p.x);
+      st = await fetch(BOT_URL + '/status').then(r => r.json());
+      if (st.ok && st.data) {
+        const p = st.data.position;
+        if (document.getElementById('follow').checked || !document.getElementById('cx').value) {
+          document.getElementById('cx').value = Math.floor(p.x); cx = Math.floor(p.x);
+        }
+        if (document.getElementById('follow').checked || !document.getElementById('cz').value) {
+          document.getElementById('cz').value = Math.floor(p.z); cz = Math.floor(p.z);
+        }
+        document.getElementById('y1').value = Math.floor(p.y) - 1;
+        document.getElementById('y2').value = Math.floor(p.y) + 7;
+        y1 = Math.floor(p.y) - 1; y2 = Math.floor(p.y) + 7;
       }
-      if (document.getElementById('follow').checked || !document.getElementById('cz').value) {
-        document.getElementById('cz').value = Math.floor(p.z); cz = Math.floor(p.z);
-      }
-      document.getElementById('y1').value = Math.floor(p.y) - 1;
-      document.getElementById('y2').value = Math.floor(p.y) + 7;
-      y1 = Math.floor(p.y) - 1; y2 = Math.floor(p.y) + 7;
-    }
   } catch(e) {}
+  alignCameraToBot(st, cx, cz, y1, y2);
 
   const x1 = cx - r, x2 = cx + r, z1 = cz - r, z2 = cz + r;
   const t0 = performance.now();
@@ -267,8 +313,9 @@ async function refresh() {
     document.getElementById('info').textContent =
       `${currentMode} | ${count} blocks | ${rendered} rendered | API ${apiMs}ms | total ${renderMs}ms | (${x1},${y1},${z1})→(${x2},${y2},${z2})`;
 
-    controls.target.set(0, ((y2 - y1) / 2) - (y1 + y2)/2 + (y1 + y2)/2 - (y1 + y2)/2, 0); // center on data
-    controls.target.set(0, 0, 0);
+    if (!document.getElementById('alignCam')?.checked) {
+      controls.target.set(0, 0, 0);
+    }
   } catch(e) {
     document.getElementById('info').textContent = 'Error: ' + e.message;
   }
@@ -292,6 +339,7 @@ window.toggleAuto = function() {
 };
 
 window.toggleFollow = function() {
+  if (followTimer) clearInterval(followTimer);
   if (document.getElementById('follow').checked) {
     followTimer = setInterval(async () => {
       try {
@@ -302,7 +350,30 @@ window.toggleFollow = function() {
         }
       } catch(e) {}
     }, 3000);
-  } else { clearInterval(followTimer); }
+  } else { followTimer = null; }
+};
+
+window.toggleAlignCamera = function() {
+  if (alignTimer) clearInterval(alignTimer);
+  if (document.getElementById('alignCam').checked) {
+    controls.enabled = false;
+    refresh();
+    alignTimer = setInterval(async () => {
+      try {
+        const st = await fetch(BOT_URL + '/status').then(r => r.json());
+        const cx = parseInt(document.getElementById('cx').value) || 0;
+        const cz = parseInt(document.getElementById('cz').value) || 0;
+        const y1 = parseInt(document.getElementById('y1').value) || 119;
+        const y2 = parseInt(document.getElementById('y2').value) || 131;
+        alignCameraToBot(st, cx, cz, y1, y2);
+      } catch(e) {}
+    }, 250);
+  } else {
+    alignTimer = null;
+    controls.enabled = true;
+    camera.fov = ORBIT_FOV;
+    camera.updateProjectionMatrix();
+  }
 };
 
 // WebSocket — real-time: refresh on block changes or actions
