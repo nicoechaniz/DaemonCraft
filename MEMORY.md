@@ -2,6 +2,18 @@
 
 ## Current Snapshot — 2026-05-16 (lab/default gateway/Gemma-Andy)
 
+## mBit Perception System
+
+**Status:** Library + endpoint + Hermes tool implemented. Pending: integration into decision loop.
+
+- `agents/bot/lib/mbit.js` — 80+ block→char mappings, 5 format encoders (binary/columns/rows/surface/full)
+- `GET /blocks?format=binary|columns|rows|surface|full` — bot endpoint, tested ~1ms for small volumes
+- `mc_bit` Hermes tool — queries bot and returns text-native spatial representation
+- Wiki: `~/wiki/projects/DaemonCraft/mbit/` (index, architecture diagram, Grok research)
+- Kanban: `t_1a4a30b8` (review), `t_dc1f53fd` (endpoint), `t_c8090e58` (edge cases), `t_d8ff3766` (testing)
+- Known gaps: semantic/region abstraction, format selection policy (Geppetto review)
+- Verify loop: perceive→act→perceive→diff (not yet implemented)
+
 **Runtime ground truth:**
 - Active repo branch: `feat/canonical-loop`.
 - Active cast: `lab` via `~/.config/daemoncraft/cast.conf`.
