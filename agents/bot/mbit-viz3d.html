@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>mBit 3D — DaemonCraft</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background: #020617; color: #e2e8f0;
+    font-family: 'JetBrains Mono', monospace;
+    overflow: hidden; height: 100vh;
+  }
+  #panel {
+    position: absolute; top: 12px; left: 12px;
+    background: rgba(15,23,42,0.92); border: 1px solid #1e293b;
+    border-radius: 8px; padding: 10px; font-size: 11px;
+    z-index: 10; min-width: 200px;
+  }
+  #panel h2 { color: #22d3ee; font-size: 13px; margin-bottom: 6px; }
+  label { color: #94a3b8; display: block; margin-top: 4px; font-size: 10px; }
+  input, select {
+    background: #0f172a; color: #e2e8f0; border: 1px solid #334155;
+    border-radius: 3px; padding: 3px 6px; font-family: inherit; font-size: 11px;
+  }
+  .row { display: flex; gap: 4px; }
+  .row input, .row select { width: 50%; }
+  button {
+    background: #1e293b; color: #22d3ee; border: 1px solid #334155;
+    border-radius: 3px; padding: 5px; margin-top: 4px;
+    font-family: inherit; cursor: pointer; width: 100%; font-size: 10px;
+  }
+  button:hover { background: #334155; }
+  button.active { background: #0e3a4a; border-color: #22d3ee; }
+  #mode-btns { display: flex; gap: 3px; }
+  #mode-btns button { flex:1; font-size:9px; padding:4px; }
+  #info {
+    position: absolute; bottom: 8px; left: 8px;
+    color: #64748b; font-size: 10px;
+  }
+</style>
+</head>
+<body>
+<div id="panel">
+  <h2>mBit 3D</h2>
+  <div class="row">
+    <input id="cx" type="number" value="0" placeholder="X">
+    <input id="cz" type="number" value="0" placeholder="Z">
+  </div>
+  <label>Y</label>
+  <div class="row">
+    <input id="y1" type="number" value="119" placeholder="min Y">
+    <input id="y2" type="number" value="131" placeholder="max Y">
+  </div>
+  <label>Radius <input id="radius" type="number" value="7" min="1" max="12" style="width:50px"></label>
+  <div id="mode-btns">
+    <button id="btn-char" class="active" onclick="setMode('char')">🔤</button>
+    <button id="btn-block" onclick="setMode('block')">🧊</button>
+    <button id="btn-both" onclick="setMode('both')">🔤+🧊</button>
+  </div>
+  <button onclick="refresh()">🔄 Refresh</button>
+  <label style="font-size:9px">
+    <input type="checkbox" id="auto" checked onchange="toggleAuto()"> Auto (2s)
+  </label>
+  <label style="font-size:9px">
+    <input type="checkbox" id="follow" onchange="toggleFollow()"> Follow bot
+  </label>
+</div>
+<div id="info">Loading...</div>
+
+<script src="/three.min.js"></script>
+<script src="/OrbitControls.js"></script>
+<script>
+const BOT_URL = 'http://localhost:3003';
+const scene = new THREE.Scene();
+scene.background = new THREE.Color('#020617');
+scene.fog = new THREE.Fog('#020617', 15, 50);
+
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.5, 100);
+camera.position.set(12, 18, 20);
+camera.lookAt(0, 8, 0);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 8, 0);
+controls.enableDamping = true; controls.dampingFactor = 0.08;
+controls.update();
+
+scene.add(new THREE.AmbientLight('#334455', 1.8));
+const dir = new THREE.DirectionalLight('#e2e8f0', 1.0);
+dir.position.set(20, 30, 20); scene.add(dir);
+
+const grid = new THREE.GridHelper(32, 32, '#1e293b', '#0f172a');
+scene.add(grid);
+
+let currentMode = 'char';
+let objects = [];
+let autoTimer = null, followTimer = null;
+
+function clearObjects() {
+  for (const o of objects) { scene.remove(o); if (o.geometry) o.geometry.dispose(); if (o.material) { if (Array.isArray(o.material)) o.material.forEach(m => m.dispose()); else o.material.dispose(); } }
+  objects = [];
+}
+
+const BLOCK_COLORS = {
+  air:'#00000000', grass_block:'#7c9c4c', dirt:'#8b6914',
+  coarse_dirt:'#6b5020', stone:'#808080', cobblestone:'#5a5a5a',
+  terracotta:'#b86838', orange_terracotta:'#b86838',
+  brown_terracotta:'#705030', yellow_terracotta:'#b8a030',
+  oak_log:'#8b6b3e', oak_leaves:'#3a6b1e', oak_planks:'#b8944c',
+  water:'#3344cc', lava:'#cc3300', sand:'#dcc080',
+  gravel:'#888888', clay:'#8888cc', coal_ore:'#444444',
+  iron_ore:'#cc8844', gold_ore:'#ccaa00', diamond_ore:'#44cccc',
+  bedrock:'#222222', obsidian:'#1a0a2e', default:'#555555',
+  short_grass:'#5a8a3c', tall_grass:'#4a7a2c', dead_bush:'#6b5020',
+  leaf_litter:'#8b6914', crafting_table:'#b8944c', chest:'#ccaa44',
+};
+
+const CHAR_MAP = {
+  air:' ', cave_air:' ', void_air:' ',
+  water:'~', lava:'!',
+  short_grass:',', tall_grass:';', dead_bush:'.',
+  dirt:'d', coarse_dirt:'D', grass_block:'G',
+  stone:'#', cobblestone:'#',
+  sand:'n', gravel:'g', clay:'c',
+  terracotta:'T', orange_terracotta:'T', brown_terracotta:'T',
+  yellow_terracotta:'T',
+  oak_log:'l', oak_leaves:'L', oak_planks:'w',
+  coal_ore:'o', iron_ore:'O', gold_ore:'O',
+  bedrock:'B', obsidian:'B', leaf_litter:'.',
+  short_dry_grass:',', tall_dry_grass:';',
+  crafting_table:'W', chest:'C',
+};
+
+function colorFor(n) { return BLOCK_COLORS[n] || BLOCK_COLORS.default; }
+function charFor(n) { return CHAR_MAP[n] || n?.[0] || '?'; }
+
+async function refresh() {
+  clearObjects();
+  const r = parseInt(document.getElementById('radius').value) || 7;
+  let cx = parseInt(document.getElementById('cx').value) || 0;
+  let cz = parseInt(document.getElementById('cz').value) || 0;
+  let y1 = parseInt(document.getElementById('y1').value) || 119;
+  let y2 = parseInt(document.getElementById('y2').value) || 131;
+
+  try {
+    const st = await fetch(BOT_URL + '/status').then(r => r.json());
+    if (st.ok && st.data) {
+      const p = st.data.position;
+      if (document.getElementById('follow').checked || !document.getElementById('cx').value) {
+        document.getElementById('cx').value = Math.floor(p.x); cx = Math.floor(p.x);
+      }
+      if (document.getElementById('follow').checked || !document.getElementById('cz').value) {
+        document.getElementById('cz').value = Math.floor(p.z); cz = Math.floor(p.z);
+      }
+      document.getElementById('y1').value = Math.floor(p.y) - 1;
+      document.getElementById('y2').value = Math.floor(p.y) + 7;
+      y1 = Math.floor(p.y) - 1; y2 = Math.floor(p.y) + 7;
+    }
+  } catch(e) {}
+
+  const x1 = cx - r, x2 = cx + r, z1 = cz - r, z2 = cz + r;
+  const t0 = performance.now();
+
+  try {
+    const params = new URLSearchParams({ x1,x2, z1,z2, y1, y2, format:'full' });
+    const resp = await fetch(BOT_URL + '/blocks?' + params).then(r => r.json());
+    if (!resp.ok) { document.getElementById('info').textContent = resp.error; return; }
+    
+    const text = resp.data.text;
+    const count = resp.data.count;
+    const apiMs = resp.data.elapsed_ms;
+    const layers = {};
+    const sections = text.split('--- Y=');
+    for (let si = 1; si < sections.length; si++) {
+      const sec = sections[si];
+      const nl = sec.indexOf('\n');
+      const y = parseInt(sec.slice(0, nl).trim());
+      if (isNaN(y)) continue;
+      const rows = sec.slice(nl + 1).split('\n').filter(r => r.length > 0);
+      const grid = rows.map(r => r.split(''));
+      layers[y] = grid;
+    }
+
+    // Render each non-empty cell
+    let rendered = 0;
+    const sizeX = r * 2 + 1;
+    const centerX = cx, centerZ = cz;
+    
+    for (const [yStr, grid] of Object.entries(layers)) {
+      const y = parseInt(yStr);
+      for (let ri = 0; ri < grid.length; ri++) {
+        for (let ci = 0; ci < (grid[ri]?.length || 0); ci++) {
+          const ch = grid[ri][ci];
+          if (!ch || ch === ' ') continue;
+          const wx = x1 + ci + 0.5 - centerX;
+          const wy = y + 0.5 - (y1 + y2) / 2;
+          const wz = z1 + ri + 0.5 - centerZ;
+
+          if (currentMode === 'char' || currentMode === 'both') {
+            const canvas = document.createElement('canvas');
+            canvas.width = 32; canvas.height = 32;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#22d3ee';
+            ctx.font = 'bold 24px JetBrains Mono';
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText(ch, 16, 16);
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.minFilter = THREE.LinearFilter;
+            const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: true, depthWrite: false });
+            const sp = new THREE.Sprite(mat);
+            sp.position.set(wx, wy, wz);
+            sp.scale.set(0.65, 0.65, 0.65);
+            scene.add(sp); objects.push(sp);
+            rendered++;
+          }
+
+          if (currentMode === 'block' || currentMode === 'both') {
+            const name = Object.entries(CHAR_MAP).find(([n, c]) => c === ch)?.[0] || 'default';
+            const color = colorFor(name);
+            if (color !== '#00000000') {
+              const geo = new THREE.BoxGeometry(0.75, 0.75, 0.75);
+              const mat = new THREE.MeshStandardMaterial({ color, transparent: true, opacity: currentMode === 'both' ? 0.5 : 0.85 });
+              const mesh = new THREE.Mesh(geo, mat);
+              mesh.position.set(wx, wy, wz);
+              scene.add(mesh); objects.push(mesh);
+              rendered++;
+            }
+          }
+        }
+      }
+    }
+
+    const renderMs = Math.round(performance.now() - t0);
+    document.getElementById('info').textContent =
+      `${currentMode} | ${count} blocks | ${rendered} rendered | API ${apiMs}ms | total ${renderMs}ms | (${x1},${y1},${z1})→(${x2},${y2},${z2})`;
+
+    controls.target.set(0, ((y2 - y1) / 2) - (y1 + y2)/2 + (y1 + y2)/2 - (y1 + y2)/2, 0); // center on data
+    controls.target.set(0, 0, 0);
+  } catch(e) {
+    document.getElementById('info').textContent = 'Error: ' + e.message;
+  }
+}
+
+window.setMode = function(m) {
+  currentMode = m;
+  document.getElementById('btn-char').classList.toggle('active', m === 'char');
+  document.getElementById('btn-block').classList.toggle('active', m === 'block');
+  document.getElementById('btn-both').classList.toggle('active', m === 'both');
+  refresh();
+};
+
+window.refresh = refresh;
+
+window.toggleAuto = function() {
+  if (document.getElementById('auto').checked) {
+    autoTimer = setInterval(refresh, 2000);
+  } else { clearInterval(autoTimer); }
+};
+
+window.toggleFollow = function() {
+  if (document.getElementById('follow').checked) {
+    followTimer = setInterval(async () => {
+      try {
+        const st = await fetch(BOT_URL + '/status').then(r => r.json());
+        if (st.ok && st.data) {
+          document.getElementById('cx').value = Math.floor(st.data.position.x);
+          document.getElementById('cz').value = Math.floor(st.data.position.z);
+        }
+      } catch(e) {}
+    }, 3000);
+  } else { clearInterval(followTimer); }
+};
+
+refresh();
+if (document.getElementById('auto').checked) autoTimer = setInterval(refresh, 2000);
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>

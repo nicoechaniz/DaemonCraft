@@ -3677,6 +3677,18 @@ const httpServer = http.createServer(async (req, res) => {
         }
       }
 
+      // Serve static .js files from bot directory
+      if (path.endsWith('.js') && path.lastIndexOf('/') === 0) {
+        const jsPath = new URL(path.slice(1), import.meta.url).pathname;
+        try {
+          const content = fs.readFileSync(jsPath, 'utf8');
+          res.writeHead(200, { 'Content-Type': 'application/javascript', 'Access-Control-Allow-Origin': '*' });
+          return res.end(content);
+        } catch {
+          return respond(res, 404, { ok: false, error: 'File not found' });
+        }
+      }
+
       if (path === '/mbit') {
         const vizPath = new URL('mbit-viz.html', import.meta.url).pathname;
         try {
@@ -3685,6 +3697,17 @@ const httpServer = http.createServer(async (req, res) => {
           return res.end(html);
         } catch {
           return respond(res, 500, { ok: false, error: 'mbit-viz.html not found' });
+        }
+      }
+
+      if (path === '/mbit3d') {
+        const vizPath = new URL('mbit-viz3d.html', import.meta.url).pathname;
+        try {
+          const html = fs.readFileSync(vizPath, 'utf8');
+          res.writeHead(200, { 'Content-Type': 'text/html', 'Access-Control-Allow-Origin': '*' });
+          return res.end(html);
+        } catch {
+          return respond(res, 500, { ok: false, error: 'mbit-viz3d.html not found' });
         }
       }
 
