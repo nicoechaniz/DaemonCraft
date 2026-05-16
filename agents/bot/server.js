@@ -1847,20 +1847,21 @@ async collect({ block, count = 1 }) {
       : `No ${block} found within 64 blocks of ${pos.x}, ${pos.y}, ${pos.z}. Move to a better area or search for a different resource.`);
   }
 
-    // Filter: only mine blocks at or above our feet level. Never dig downward —
-    // pathfinder can't climb vertical walls out of a self-created pit.
-    const botPos = b.entity.position;
-    const botFeet = Math.floor(botPos.y) - 1;
+    // Only mine blocks at the bot's eye level or above.
+    // Use bot Y (eye level), not feet — the goto already put us at the block's Y,
+    // so comparing against feet would let through blocks at the bot's new lower level.
+    const botEyeY = Math.floor(botPos.y);
+    const botFeet = botEyeY - 1;
 
     const safe = found.filter(pos => {
       // Skip blocks directly under our feet
       if (Math.abs(pos.x - Math.floor(botPos.x)) < 1 &&
           Math.abs(pos.z - Math.floor(botPos.z)) < 1 &&
           pos.y === botFeet) return false;
-      // Never dig below feet level
-      if (pos.y < botFeet) return false;
+      // Only mine at or above eye level — never dig downward
+      if (pos.y < botEyeY) return false;
       return true;
-    }).sort((a, b) => b.y - a.y); // highest first
+    }).sort((a, b) => b.y - a.y);
 
     if (safe.length === 0) throw new Error(
       `Found ${found.length} ${block}, but all are below your feet. ` +
@@ -1873,9 +1874,10 @@ async collect({ block, count = 1 }) {
         if (!target || target.name !== block) continue;
         await b.tool.equipForBlock(target);
 
-        // Navigate near the block
+        // Navigate to stand one block ABOVE the target, so we mine down onto it
+        // rather than standing beside it at the same level (which creates a pit).
         if (b.entity.position.distanceTo(pos) > 4.5) {
-          await b.pathfinder.goto(new goals.GoalNear(pos.x, pos.y, pos.z, 3));
+          await b.pathfinder.goto(new goals.GoalNear(pos.x, pos.y + 1, pos.z, 3));
         }
 
         // Safety: never mine the block directly under our feet
