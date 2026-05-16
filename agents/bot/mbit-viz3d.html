@@ -102,7 +102,9 @@ scene.add(grid);
 let currentMode = 'char';
 let objects = [];
 let followTimer = null;
-let lastText = ''; // cache to skip re-render on no delta
+let lastText = ''; // last full mBit text received
+let lastRenderKey = ''; // includes mode+bounds+text; prevents clearing on no-op refreshes
+let refreshSeq = 0; // prevents older overlapping refreshes from replacing newer renders
 
 function clearObjects() {
   for (const o of objects) { scene.remove(o); if (o.geometry) o.geometry.dispose(); if (o.material) { if (Array.isArray(o.material)) o.material.forEach(m => m.dispose()); else o.material.dispose(); } }
@@ -143,7 +145,7 @@ function colorFor(n) { return BLOCK_COLORS[n] || BLOCK_COLORS.default; }
 function charFor(n) { return CHAR_MAP[n] || n?.[0] || '?'; }
 
 async function refresh() {
-  clearObjects();
+  const seq = ++refreshSeq;
   const r = parseInt(document.getElementById('radius').value) || 7;
   let cx = parseInt(document.getElementById('cx').value) || 0;
   let cz = parseInt(document.getElementById('cz').value) || 0;
@@ -175,8 +177,17 @@ async function refresh() {
     if (!resp.ok) { document.getElementById('info').textContent = resp.error; return; }
     
     const text = resp.data.text;
-    if (text === lastText) return; // no delta — skip re-render
+    if (seq !== refreshSeq) return; // a newer refresh is in flight or already applied
+    const renderKey = `${currentMode}|${x1},${y1},${z1}|${x2},${y2},${z2}|${text}`;
+    if (renderKey === lastRenderKey) {
+      // No world/mode/bounds delta. Keep the existing scene intact.
+      document.getElementById('info').textContent =
+        `${currentMode} | no delta | ${resp.data.count} blocks | API ${resp.data.elapsed_ms}ms | (${x1},${y1},${z1})→(${x2},${y2},${z2})`;
+      return;
+    }
     lastText = text;
+    lastRenderKey = renderKey;
+    clearObjects();
     const count = resp.data.count;
     const apiMs = resp.data.elapsed_ms;
     const layers = {};
