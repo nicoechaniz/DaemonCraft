@@ -259,7 +259,7 @@ async function handleIntent(req, res) {
         pattern_detected: "Ollama returned empty raw output",
         action_taken: "synthesized raise_guardian_event(model_unavailable) so upstream sees a signal",
       });
-      const r = await dispatch(synthesized);
+      const r = await dispatch(synthesized, null, filtered_allowed_tools);
       const elapsed_seconds = (Date.now() - t0) / 1000;
       logEvent({
         event: "intent_done",
@@ -328,7 +328,7 @@ async function handleIntent(req, res) {
   // is the consumer's (Hermes agent_loop) responsibility.
   const execution_results = [];
   for (const call of mitigated_plan.tool_calls) {
-    const r = await dispatch(call);
+    const r = await dispatch(call, null, filtered_allowed_tools);
     execution_results.push(r);
     logEvent({
       event: "tool_dispatch",

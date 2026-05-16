@@ -455,7 +455,7 @@ function toResult(r) { return foldBotResponse(r); }
  * executor_supported, return `tool_not_implemented` so Hermes can
  * replanify with previous_error.
  */
-export async function dispatch(toolCall, botUrl = null) {
+export async function dispatch(toolCall, botUrl = null, allowedTools = null) {
   const { name, arguments: args = {} } = toolCall ?? {};
   const result = { tool: name };
 
@@ -472,6 +472,17 @@ export async function dispatch(toolCall, botUrl = null) {
       details: def
         ? `'${name}' is canonical but executor_supported=false in schema`
         : `'${name}' is not in tool_schema_v2.json allowed_tools`,
+    };
+  }
+
+  // Enforce per-turn tool narrowing: reject tools outside the caller's allowed set.
+  // Signal tools (ask_clarification, etc.) bypass this — they're always safe.
+  if (allowedTools && !allowedTools.includes(name)) {
+    return {
+      ...result,
+      ok: false,
+      error_type: "tool_not_allowed",
+      details: `'${name}' is not in the allowed_tools set for this turn [${allowedTools.join(", ")}]`,
     };
   }
 

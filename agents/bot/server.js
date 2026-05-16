@@ -247,6 +247,7 @@ let chatLog = [];
 let deathLog = [];
 let commandQueue = []; // complex commands for Hermes to process
 let currentTask = null; // background task state
+let actionInProgress = false; // guard: synchronous action running (watchdog must not interfere)
 let lastDeath = null;
 let hardcoreDead = false; // Once true, no reconnect — permanent death
 let lastHealth = 20;
@@ -1793,12 +1794,14 @@ async collect({ block, count = 1 }) {
   }
 
     // Filter out blocks directly under the bot (never dig straight down!)
+    // Only reject the exact block we're standing on — not adjacent blocks.
     const botPos = b.entity.position;
+    const botFeet = Math.floor(botPos.y) - 1;
     const safe = found.filter(pos => {
-      // Skip blocks directly below us (within 1 block horizontally, any depth below)
+      // Skip the exact block directly below us
       if (Math.abs(pos.x - Math.floor(botPos.x)) < 1 && 
           Math.abs(pos.z - Math.floor(botPos.z)) < 1 && 
-          pos.y < Math.floor(botPos.y)) return false;
+          pos.y === botFeet) return false;
       return true;
     });
 
@@ -1812,6 +1815,26 @@ async collect({ block, count = 1 }) {
         await b.tool.equipForBlock(target);
         if (b.entity.position.distanceTo(pos) > 4.5) {
           await b.pathfinder.goto(new goals.GoalNear(pos.x, pos.y, pos.z, 3));
+        }
+        // Safety re-check after pathfinding — reject if the target IS the block
+        // directly under our feet (mining it would make us fall immediately).
+        const nowFeet = Math.floor(b.entity.position.y) - 1;
+        const dx = Math.abs(pos.x - Math.floor(b.entity.position.x));
+        const dz = Math.abs(pos.z - Math.floor(b.entity.position.z));
+        if (dx === 0 && dz === 0 && pos.y === nowFeet) {
+          log(`[collect] Skipping ${block} at ${pos.x},${pos.y},${pos.z} — directly under bot`);
+          continue;
+        }
+        // Step back if we're too close — mining adjacent blocks at ground level
+        // can collapse the terrain under us.
+        const dist = b.entity.position.distanceTo(new Vec3(pos.x, pos.y, pos.z));
+        if (dist < 2.5) {
+          const away = b.entity.position.clone().subtract(new Vec3(pos.x, pos.y, pos.z)).normalize().scale(3);
+          const safeStand = new Vec3(pos.x, pos.y, pos.z).add(away);
+          try {
+            await b.pathfinder.goto(new goals.GoalNear(safeStand.x, safeStand.y, safeStand.z, 1));
+            await sleep(200);
+          } catch { /* ok if can't step back — proceed anyway */ }
         }
         await b.dig(target, true);
         collected++;
@@ -2601,28 +2624,48 @@ async collect({ block, count = 1 }) {
   async flee({ distance = 16, from }) {
     const b = ensureBot();
     const hostiles = ['zombie','skeleton','spider','creeper','enderman','witch','drowned','husk','stray','phantom','blaze','wither_skeleton','player'];
-    let threat;
-    if (from) {
-      // Flee from specific entity
-      const rawEnts = Object.values(b.entities).filter(e => e !== b.entity);
-      const visible = filterEntitiesFairPlay(rawEnts);
-      threat = visible.find(e => (e.name || '').toLowerCase().includes(from.toLowerCase()) || (e.username || '').toLowerCase().includes(from.toLowerCase()));
-    } else {
-      const rawEnts = Object.values(b.entities).filter(e => e !== b.entity);
-      const visible = filterEntitiesFairPlay(rawEnts);
-      threat = visible.find(e => hostiles.some(h => (e.name || '').includes(h)));
-    }
-    if (!threat) return { result: 'No threats nearby' };
 
-    const dx = b.entity.position.x - threat.position.x;
-    const dz = b.entity.position.z - threat.position.z;
+    // Determine flee direction: from coordinates ("x,y,z"), entity name, or nearest hostile
+    let fleeFromX, fleeFromZ;
+    if (from) {
+      // Try parsing as coordinates first (e.g. "541,118,-371")
+      const coordMatch = String(from).match(/^(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)$/);
+      if (coordMatch) {
+        fleeFromX = parseFloat(coordMatch[1]);
+        fleeFromZ = parseFloat(coordMatch[3]);
+      } else {
+        // Match by entity name/username
+        const rawEnts = Object.values(b.entities).filter(e => e !== b.entity);
+        const visible = filterEntitiesFairPlay(rawEnts);
+        const threat = visible.find(e =>
+          (e.name || '').toLowerCase().includes(from.toLowerCase()) ||
+          (e.username || '').toLowerCase().includes(from.toLowerCase())
+        );
+        if (threat) {
+          fleeFromX = threat.position.x;
+          fleeFromZ = threat.position.z;
+        }
+      }
+    }
+    if (fleeFromX == null) {
+      // No specific target — flee from nearest hostile
+      const rawEnts = Object.values(b.entities).filter(e => e !== b.entity);
+      const visible = filterEntitiesFairPlay(rawEnts);
+      const threat = visible.find(e => hostiles.some(h => (e.name || '').includes(h)));
+      if (!threat) return { result: 'No threats nearby' };
+      fleeFromX = threat.position.x;
+      fleeFromZ = threat.position.z;
+    }
+
+    const dx = b.entity.position.x - fleeFromX;
+    const dz = b.entity.position.z - fleeFromZ;
     const len = Math.sqrt(dx*dx + dz*dz) || 1;
     const fleeX = b.entity.position.x + (dx/len) * distance;
     const fleeZ = b.entity.position.z + (dz/len) * distance;
 
     try {
       await b.pathfinder.goto(new goals.GoalNear(fleeX, b.entity.position.y, fleeZ, 3));
-      return { result: `Fled ${distance} blocks from ${threat.name}` };
+      return { result: `Fled ${distance} blocks from ${from || 'threat'}` };
     } catch {
       return { result: `Tried to flee, moved partially. Health: ${b.health}` };
     }
@@ -4018,11 +4061,16 @@ const httpServer = http.createServer(async (req, res) => {
         return respond(res, 400, { ok: false, error: `Unknown action "${actionName}". Available: ${available}` });
       }
 
-      const result = await actionFn(body);
-      actionHistory.push({ action: actionName, status: 'done', time: Date.now() });
-      if (actionHistory.length > MAX_ACTION_HISTORY) actionHistory.shift();
-      broadcastDashboard('actions', actionHistory.slice(-50));
-      return respond(res, 200, { ok: true, ...result, state: briefState() });
+      actionInProgress = true;
+      try {
+        const result = await actionFn(body);
+        actionHistory.push({ action: actionName, status: 'done', time: Date.now() });
+        if (actionHistory.length > MAX_ACTION_HISTORY) actionHistory.shift();
+        broadcastDashboard('actions', actionHistory.slice(-50));
+        return respond(res, 200, { ok: true, ...result, state: briefState() });
+      } finally {
+        actionInProgress = false;
+      }
     }
 
     respond(res, 404, { ok: false, error: `Not found: ${req.method} ${path}` });
@@ -4040,6 +4088,9 @@ const httpServer = http.createServer(async (req, res) => {
 let positionHistory = [];
 setInterval(() => {
   if (!bot || !botReady) return;
+  // NEVER interfere when a synchronous action is in flight —
+  // the action owns the pathfinder until it completes.
+  if (actionInProgress) return;
   const pos = bot.entity.position;
   positionHistory.push({ time: Date.now(), x: pos.x, y: pos.y, z: pos.z });
   positionHistory = positionHistory.filter(p => Date.now() - p.time < 60000);
