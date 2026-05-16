@@ -266,6 +266,14 @@ The agent loop is **event-driven** via WebSocket:
 
 ### Common Failure Modes
 
+### Bot API Inconsistencies (Known Bugs)
+
+| Endpoint | Field Missing | Workaround |
+|----------|--------------|------------|
+| `/nearby` | `entities[].name` for players | Cross-reference with `/status` (`nearbyPlayers[].name`) or `/scene` (`visible_entities[].type`) |
+
+**Verified:** 2026-05-15 — `/nearby` returns `{"type": "player", "kind": "player", ...}` but omits `name`. `/status` and `/scene` include the username. This forces tools to fall back to secondary endpoints for player identification.
+
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | Dashboard shows "waiting for agent turns..." | Agent crashed, hanging, or duplicate agents | Check `ps aux | grep agent_loop`, kill duplicates, `update` |
