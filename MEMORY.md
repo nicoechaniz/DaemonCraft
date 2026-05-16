@@ -1270,3 +1270,43 @@ MC_USERNAME=CompAII
 3. Local agent_loop uses deploy-target venv (`~/.hermes/hermes-agent/venv`) and existing HERMES_HOME
 4. Standalone `daemoncraft-bot-*.service` pattern is deprecated in favor of cast-managed bots
 5. Two toolset approach: CompAII uses both `minecraft` (direct mc_* tools) and `embodiment` (delegated via gAndy)
+
+
+## Completed This Session — 2026-05-16
+
+### Policy Import (6 Kanban tasks completed)
+- **t_74f2f669** — Created `agents/gemma_policy.py` (349 lines, 5-layer policy: scope, ambiguity, decompose, normalize, narrow tools). 23/23 tests pass. Commit `eb0138c`.
+- **t_fd41ddfb** — Wired policy into `tools/embodied_plan_tool.py` in hermes-agent fork (`feat/daemoncraft`). Platform-aware `policy_mode` auto/raw. 16/16 tests. Commit `7aaced594`.
+- **t_498cd069** — Fixed gateway heartbeat: narrowed `allowed_tools` to perception-only (5 tools). Reverted risky `_handler` import. Commit `05dee30fe`.
+- **t_cf186b4e** — Restructured reference tests into policy-aware layers. 35/37 pass (2 flaky against live model). Commit `10cde45`.
+- **t_fe0eaf33** — Schema sync with Mariano repo — identical blob_sha, metadata refreshed. Commit `99d16ff`.
+- **t_b2cfbc93** — Verification hooks in `/intent` endpoint: JSONL logging with intent_original, language detection, allowed_tools chain, execution outcome. Commit `62c5c05`.
+
+### World State Completion (17 fields)
+- **player_health** — Now read from `bot.players[name].health` via `/nearby`. Bot server line 1343 patched.
+- **remembered_places** — New `GET /marks` endpoint on bot server + world_state composer reads it.
+- **target_positions** — Added as `{}` to world_state.
+- Commit `17fd6de`.
+
+### Chat Fixes
+- **Whisper broadcast** — `/msg` whispers now trigger `broadcastDashboard('chat', ...)` via WebSocket (line 566). Gateway was missing whispers. Commit `83dc401`.
+- **Authorization** — Added `DAEMONCRAFT_ALLOWED_USERS=<UUID>` to gateway `.env` (NicoElViejoGamer was unauthorized).
+
+### Recovery Reconnection
+- **Tier 2a spatial recovery** — Reconnected `recovery_candidates.py` pattern into `embodied_plan_tool.py` raw handler. Spatial errors (target_occupied, no_solid_neighbor, bot_in_target) retry with previous_error payload. Commit `56c61bad4` on hermes-agent `feat/daemoncraft`.
+
+### Kanban Methodology Fix
+- Corrected anti-canonical Kanban patterns in global MEMORY.md, hermes-kanban skill, and HMK library.
+- `--assignee` auto-promotes to `ready` by design — canonical.
+- Parent/child dependency gating — canonical.
+- Code tasks use `review-required` block pattern per `kanban-worker` skill.
+
+### Runtime State
+- DaemonCraft `feat/canonical-loop`: 1272 lines, 8 new commits this session.
+- hermes-agent `feat/daemoncraft`: 2 new commits (wire policy + Tier 2a recovery).
+- Deploy target synced. Gateway active and authorized.
+- Bot CompAII on :3003, position (538, 118, -376), health 20.
+
+### Next Session Priority
+- Test loops: use Mariano/Fede experiment methodology to validate tool access and loop integrity.
+- Dashboard unification card: `t_e13dbc90`.
