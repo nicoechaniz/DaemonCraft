@@ -2,6 +2,30 @@
 
 ## Current Snapshot — 2026-05-16 (lab/default gateway/Gemma-Andy)
 
+### Decision Architecture — What to use when (from benchmark session)
+
+Based on 45-iteration benchmark today with lab-v1 experiments against our world:
+
+| Task type | Best approach | Why |
+|-----------|--------------|-----|
+| **Navigation** (come, follow, goto) | `embodied_plan` + narrow `allowed_tools` | "ven aca" → goto works. verbose+constraints → follow surgical. Without constraints, model adds clutter (mine_blocks, craft_item). |
+| **Building** (place, fill) | `embodied_plan` AFTER `setup` clears floor | dead_bush/leaf_litter blocks placement. `clear_area` in experiment setup fixes it. `hermes_style` English intents cleanest. Explicit inventory mention CONFUSES. |
+| **Recovery** (stuck, missing_material) | `embodied_plan` + `previous_error` | stuck→goto recovery works 100%. `recovery_naive_retry` mitigation fires correctly. Recovery generalization solid (17/18 on 008/009). |
+| **Fallback** (Andy unavailable/confused) | `mc_*` direct tools (Path 0) | When Gemma emits clutter or times out, use direct mc_move, mc_build, mc_mine. |
+| **Verification** (before/after) | `mc_bit(format='full')` small volume | 4×4×4 full grid for exact diff. mBit context now injected into world_state. |
+| **Spatial awareness** | `mc_bit(format='binary')` before navigation | Checks walkability. Use `surface` before building. `rows` for escape direction. |
+
+**Key patterns:**
+- Spanish terse intents ("ven aca", "seguime NicoElViejoGamer") work but produce clutter with wide tools
+- Narrow `allowed_tools` = clean single-purpose plans; wide = creative but noisy
+- `hermes_style` English intents most reliable
+- Explicit inventory mentions ("tenés terracotta(60)") confuse Gemma-Andy — model checks inventory instead of acting
+- Recovery with `previous_error` is solid, especially `stuck` → replan
+- `place_block` now validates materialization post-placement (commit 249a024)
+- Setup phase with `clear_area` + `give_items` is essential for building experiments
+
+**Player:** NicoElViejoGamer (full username, not "Nico")
+
 ## Session Summary — 2026-05-16 (CompAII deepseek-v4-pro)
 
 ### Bugs Fixed (5 commits in feat/canonical-loop)
