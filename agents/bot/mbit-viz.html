@@ -3,158 +3,136 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>mBit 3D Visualizer — DaemonCraft</title>
+<title>mBit Visualizer — DaemonCraft</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
   * { margin:0; padding:0; box-sizing:border-box; }
   body {
     background: #020617; color: #e2e8f0;
     font-family: 'JetBrains Mono', monospace;
-    overflow: hidden; height: 100vh;
+    height: 100vh; display: flex;
   }
-  #canvas3d { width: 100%; height: 100%; display: block; }
   #panel {
-    position: absolute; top: 16px; left: 16px;
-    background: rgba(15,23,42,0.92); border: 1px solid #1e293b;
-    border-radius: 10px; padding: 14px;
-    font-size: 12px; min-width: 280px;
-    z-index: 10;
+    width: 280px; min-width: 280px;
+    background: rgba(15,23,42,0.95); border-right: 1px solid #1e293b;
+    padding: 14px; font-size: 12px;
+    overflow-y: auto;
   }
   #panel h2 { color: #22d3ee; font-size: 14px; margin-bottom: 10px; }
-  label { color: #94a3b8; display: block; margin-top: 6px; }
+  label { color: #94a3b8; display: block; margin-top: 6px; font-size: 11px; }
   input, select { 
     background: #0f172a; color: #e2e8f0; border: 1px solid #334155;
-    border-radius: 4px; padding: 4px 8px; font-family: inherit; margin-top: 3px;
-    width: 100%;
+    border-radius: 4px; padding: 5px 8px; font-family: inherit; margin-top: 3px;
+    width: 100%; font-size: 12px;
   }
   .row { display: flex; gap: 6px; }
   .row input { width: 50%; }
   button {
     background: #1e293b; color: #22d3ee; border: 1px solid #334155;
-    border-radius: 4px; padding: 6px 12px; margin-top: 8px;
-    font-family: inherit; cursor: pointer; width: 100%;
+    border-radius: 4px; padding: 8px 12px; margin-top: 8px;
+    font-family: inherit; cursor: pointer; width: 100%; font-size: 12px;
   }
   button:hover { background: #334155; }
   button.active { background: #0e3a4a; border-color: #22d3ee; }
   #mode-btns { display: flex; gap: 4px; margin-top: 4px; }
-  #mode-btns button { flex: 1; font-size: 10px; }
-  #info {
-    position: absolute; bottom: 16px; left: 16px;
-    color: #64748b; font-size: 10px;
+  #mode-btns button { flex: 1; font-size: 10px; padding: 6px; }
+  #main { flex: 1; display: flex; flex-direction: column; }
+  #canvas-wrap { flex: 1; position: relative; overflow: hidden; }
+  canvas { display: block; }
+  #info-bar {
+    background: rgba(15,23,42,0.9); border-top: 1px solid #1e293b;
+    padding: 8px 14px; font-size: 11px; color: #64748b;
+    display: flex; justify-content: space-between; align-items: center;
   }
-  #legend {
-    position: absolute; top: 16px; right: 16px;
-    background: rgba(15,23,42,0.85); border: 1px solid #1e293b;
-    border-radius: 6px; padding: 8px 12px; font-size: 10px;
-  }
+  #y-slider-wrap { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+  #y-slider { flex:1; accent-color: #22d3ee; }
+  #y-label { color: #22d3ee; font-size: 11px; min-width: 50px; }
+  .legend-item { display: flex; align-items: center; gap: 6px; margin: 3px 0; font-size: 10px; }
+  .legend-swatch { width: 14px; height: 14px; border-radius: 2px; border: 1px solid #334155; }
 </style>
 </head>
 <body>
 <div id="panel">
-  <h2>mBit 3D Visualizer</h2>
+  <h2>mBit Visualizer</h2>
   <label>Format</label>
   <select id="fmt">
-    <option value="full" selected>Full (chars)</option>
-    <option value="binary">Binary (0/1)</option>
-    <option value="surface">Surface</option>
+    <option value="full" selected>Full (all layers)</option>
+    <option value="binary">Binary (walkable)</option>
+    <option value="surface">Surface (ground)</option>
   </select>
-  <label>Chunk center</label>
+  <label>Bot position</label>
   <div class="row">
     <input id="cx" type="number" value="0" placeholder="X">
     <input id="cz" type="number" value="0" placeholder="Z">
   </div>
   <label>Y base</label>
-  <input id="ybase" type="number" value="114" placeholder="Y base">
-  <label>Size (radius)</label>
-  <input id="radius" type="number" value="8" min="1" max="16">
+  <input id="ybase" type="number" value="115" placeholder="Y base">
+  <label>Radius (blocks)</label>
+  <input id="radius" type="number" value="8" min="1" max="24">
+  <div id="y-slider-wrap" style="display:none">
+    <span id="y-label">Y=115</span>
+    <input id="y-slider" type="range" min="0" max="255" value="115">
+  </div>
   <div id="mode-btns">
     <button id="btn-char" class="active" onclick="setMode('char')">🔤 Chars</button>
     <button id="btn-block" onclick="setMode('block')">🧊 Blocks</button>
   </div>
   <button onclick="refresh()">🔄 Refresh</button>
-  <label style="margin-top:6px;font-size:10px">
+  <label style="font-size:10px">
     <input type="checkbox" id="auto" checked onchange="toggleAuto()">
     Auto-refresh (2s)
   </label>
-  <label style="margin-top:2px;font-size:10px">
+  <label style="font-size:10px">
     <input type="checkbox" id="follow" onchange="toggleFollow()">
-    Follow bot
+    Follow bot (3s)
   </label>
+  <div style="margin-top:8px">
+    <div style="color:#94a3b8;font-size:10px;margin-bottom:3px">Legend</div>
+    <div class="legend-item"><span class="legend-swatch" style="background:#7c9c4c"></span> G grass_block</div>
+    <div class="legend-item"><span class="legend-swatch" style="background:#8b6914"></span> d dirt</div>
+    <div class="legend-item"><span class="legend-swatch" style="background:#b86838"></span> T terracotta</div>
+    <div class="legend-item"><span class="legend-swatch" style="background:#808080"></span> # stone</div>
+    <div class="legend-item"><span class="legend-swatch" style="background:#8b6b3e"></span> l oak_log</div>
+    <div class="legend-item"><span class="legend-swatch" style="background:#3a6b1e"></span> L leaves</div>
+    <div class="legend-item"><span class="legend-swatch" style="background:#3344cc"></span> ~ water</div>
+    <div class="legend-item"><span class="legend-swatch" style="background:#dcc080"></span> n sand</div>
+    <div class="legend-item"><span class="legend-swatch" style="background:#888888"></span> g gravel</div>
+  </div>
 </div>
-<div id="info">Drag to rotate • Scroll to zoom • Right-drag to pan</div>
-<div id="legend">
-  <div style="color:#22d3ee;margin-bottom:4px">Legend</div>
-  <div>G = grass  |  d = dirt  |  T = terracotta</div>
-  <div># = stone  |  l = log   |  L = leaves</div>
-  <div>, = grass  |  . = bush  |  ~ = water</div>
+<div id="main">
+  <div id="canvas-wrap">
+    <canvas id="c"></canvas>
+  </div>
+  <div id="info-bar">
+    <span id="info">Ready</span>
+    <span id="perf"></span>
+  </div>
 </div>
-<div id="canvas3d"></div>
 
-<script type="importmap">
-{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-               "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/" } }
-</script>
-<script type="module">
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-
+<script>
 const BOT_URL = 'http://localhost:3003';
-const scene = new THREE.Scene();
-scene.background = new THREE.Color('#020617');
-scene.fog = new THREE.Fog('#020617', 20, 60);
-
-const camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, 1, 200);
-camera.position.set(12, 16, 20);
-camera.lookAt(0, 8, 0);
-
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-document.getElementById('canvas3d').appendChild(renderer.domElement);
-
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 8, 0);
-controls.enableDamping = true;
-controls.dampingFactor = 0.08;
-controls.update();
-
-// Lighting
-scene.add(new THREE.AmbientLight('#334155', 1.5));
-const dir = new THREE.DirectionalLight('#e2e8f0', 1.2);
-dir.position.set(20, 30, 20);
-scene.add(dir);
-
-// Grid
-scene.add(new THREE.GridHelper(32, 32, '#1e293b', '#0f172a'));
-
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
 let currentMode = 'char';
-let objects = [];
+let currentLayer = 115;
+let blockData = null;
 let autoTimer = null;
 let followTimer = null;
 
-function clearObjects() {
-  for (const obj of objects) scene.remove(obj);
-  objects = [];
-}
-
 const BLOCK_COLORS = {
-  air: '#00000000', grass_block: '#7c9c4c', dirt: '#8b6914',
-  coarse_dirt: '#6b5020', stone: '#808080', cobblestone: '#5a5a5a',
-  terracotta: '#b86838', orange_terracotta: '#b86838',
-  brown_terracotta: '#705030', yellow_terracotta: '#b8a030',
-  oak_log: '#8b6b3e', oak_leaves: '#3a6b1e', oak_planks: '#b8944c',
-  water: '#3344cc', lava: '#cc3300', sand: '#dcc080',
-  gravel: '#888888', clay: '#8888cc', coal_ore: '#444444',
-  iron_ore: '#cc8844', gold_ore: '#ccaa00', diamond_ore: '#44cccc',
-  bedrock: '#222222', obsidian: '#1a0a2e',
-  default: '#555555',
+  air:'#00000000', grass_block:'#7c9c4c', dirt:'#8b6914',
+  coarse_dirt:'#6b5020', stone:'#808080', cobblestone:'#5a5a5a',
+  terracotta:'#b86838', orange_terracotta:'#b86838',
+  brown_terracotta:'#705030', yellow_terracotta:'#b8a030',
+  oak_log:'#8b6b3e', oak_leaves:'#3a6b1e', oak_planks:'#b8944c',
+  water:'#3344cc', lava:'#cc3300', sand:'#dcc080',
+  gravel:'#888888', clay:'#8888cc', coal_ore:'#444444',
+  iron_ore:'#cc8844', gold_ore:'#ccaa00', diamond_ore:'#44cccc',
+  bedrock:'#222222', obsidian:'#1a0a2e', default:'#555555',
+  short_grass:'#5a8a3c', tall_grass:'#4a7a2c', dead_bush:'#6b5020',
+  leaf_litter:'#8b6914',
 };
 
-function blockColor(name) {
-  return BLOCK_COLORS[name] || BLOCK_COLORS.default;
-}
-
-// Single-character mapping (matches lib/mbit.js)
 const CHAR_MAP = {
   air:' ', cave_air:' ', void_air:' ',
   water:'~', lava:'!',
@@ -168,167 +146,266 @@ const CHAR_MAP = {
   coal_ore:'o', iron_ore:'O', gold_ore:'O',
   bedrock:'B', obsidian:'B',
   leaf_litter:'.',
+  short_dry_grass:',', tall_dry_grass:';',
 };
 
+function colorFor(name) { return BLOCK_COLORS[name] || BLOCK_COLORS.default; }
 function charFor(name) { return CHAR_MAP[name] || name?.[0] || '?'; }
 
 async function refresh() {
-  clearObjects();
-  const r = parseInt(document.getElementById('radius').value) || 8;
   const fmt = document.getElementById('fmt').value;
-  const yBase = parseInt(document.getElementById('ybase').value) || 114;
-  const yEnd = yBase + (fmt === 'surface' ? 0 : (fmt === 'binary' ? 1 : r * 2));
-
+  const r = parseInt(document.getElementById('radius').value) || 8;
   let cx = parseInt(document.getElementById('cx').value) || 0;
   let cz = parseInt(document.getElementById('cz').value) || 0;
+  let yBase = parseInt(document.getElementById('ybase').value) || 115;
 
-  // Auto-center from bot position
+  // Auto-center from bot
   try {
     const st = await fetch(BOT_URL + '/status').then(r => r.json());
     if (st.ok && st.data) {
       const p = st.data.position;
       document.getElementById('ybase').value = Math.floor(p.y);
-      if (!document.getElementById('cx').value) document.getElementById('cx').value = Math.floor(p.x);
-      if (!document.getElementById('cz').value) document.getElementById('cz').value = Math.floor(p.z);
-      cx = Math.floor(p.x);
-      cz = Math.floor(p.z);
+      if (!document.getElementById('cx').value || document.getElementById('follow').checked) {
+        document.getElementById('cx').value = Math.floor(p.x);
+      }
+      if (!document.getElementById('cz').value || document.getElementById('follow').checked) {
+        document.getElementById('cz').value = Math.floor(p.z);
+      }
+      cx = Math.floor(p.x); cz = Math.floor(p.z);
+      yBase = Math.floor(p.y);
     }
   } catch(e) {}
 
-  const x1 = cx - r; const x2 = cx + r;
-  const z1 = cz - r; const z2 = cz + r;
+  const size = r * 2 + 1;
+  const x1 = cx - r, x2 = cx + r;
+  const z1 = cz - r, z2 = cz + r;
+  const yEnd = fmt === 'surface' ? yBase : (fmt === 'binary' ? yBase + 1 : yBase + r * 2);
 
+  const t0 = performance.now();
   try {
     const params = new URLSearchParams({ x1,x2, z1,z2, y1:yBase, y2:yEnd, format:fmt });
     const resp = await fetch(BOT_URL + '/blocks?' + params).then(r => r.json());
-    if (!resp.ok) { console.error(resp.error); return; }
-    
+    if (!resp.ok) { document.getElementById('info').textContent = 'Error: ' + resp.error; return; }
+
     const text = resp.data.text;
     const count = resp.data.count;
+    const elapsed = resp.data.elapsed_ms;
+    const renderMs = Math.round(performance.now() - t0);
+
     document.getElementById('info').textContent = 
-      `${fmt} | ${count} blocks | ${resp.data.elapsed_ms}ms | center (${cx}, ${cz}) | Y ${yBase}-${yEnd}`;
+      `${fmt} | ${count} blocks | API ${elapsed}ms | render ${renderMs}ms | (${x1},${yBase},${z1}) → (${x2},${yEnd},${z2})`;
+    document.getElementById('perf').textContent = `center (${cx}, ${cz}) Y${yBase}-${yEnd}`;
 
     if (fmt === 'full') {
-      renderFull(text, x1, z1, yBase, yEnd);
+      gridData = parseFull(text, x1, z1, yBase, yEnd);
+      showFullUI(size, yBase, yEnd);
     } else if (fmt === 'binary') {
-      renderBinary(text, x1, z1, yBase);
+      gridData = parseBinary(text, x1, z1, yBase);
+      showSimpleUI();
     } else if (fmt === 'surface') {
-      renderSurface(text, x1, z1, yBase);
+      gridData = parseSurface(text, x1, z1, yBase);
+      showSimpleUI();
     }
-  } catch(e) { console.error(e); }
+    
+    resizeCanvas();
+    draw();
+  } catch(e) {
+    document.getElementById('info').textContent = 'Error: ' + e.message;
+  }
 }
 
-function renderFull(text, minX, minZ, yBase, yEnd) {
-  const layers = text.split('--- Y=');
-  const sizeX = (2 * parseInt(document.getElementById('radius').value)) + 1;
+let gridData = null; // { minX, minZ, width, height, layers: { y: [name[row][col]] } }
 
-  for (let li = 1; li < layers.length; li++) {
-    const lines = layers[li].split('\n');
-    const yStr = lines[0].trim();
-    const y = parseInt(yStr);
+function parseFull(text, minX, minZ, yBase, yEnd) {
+  const layers = {};
+  const sections = text.split('--- Y=');
+  for (let si = 1; si < sections.length; si++) {
+    const sec = sections[si];
+    const nl = sec.indexOf('\n');
+    const y = parseInt(sec.slice(0, nl).trim());
     if (isNaN(y)) continue;
+    const rows = sec.slice(nl + 1).trim().split('\n');
+    const grid = [];
+    for (const row of rows) {
+      grid.push(row.split(''));
+    }
+    if (grid.length > 0) layers[y] = grid;
+  }
+  return { minX, minZ, layers, yMin: yBase, yMax: yEnd, format: 'full' };
+}
 
-    for (let zi = 0; zi < lines.length - 1; zi++) {
-      const line = lines[zi + 1] || '';
-      for (let xi = 0; xi < line.length; xi++) {
-        const ch = line[xi];
-        if (ch === ' ') continue;
-        const wx = minX + xi + 0.5;
-        const wz = minZ + zi + 0.5;
-        const wy = y + 0.5;
+function parseBinary(text, minX, minZ, yBase) {
+  const rows = text.trim().split('\n');
+  const grid = [];
+  for (const row of rows) {
+    grid.push(row.trim().split(''));
+  }
+  return { minX, minZ, layers: { [yBase]: grid }, yMin: yBase, yMax: yBase, format: 'binary' };
+}
 
-        if (currentMode === 'char') {
-          addCharLabel(ch, wx, wy, wz);
+function parseSurface(text, minX, minZ, yBase) {
+  const rows = text.trim().split('\n');
+  const grid = [];
+  for (const row of rows) {
+    grid.push(row.trim().split(''));
+  }
+  return { minX, minZ, layers: { [yBase]: grid }, yMin: yBase, yMax: yBase, format: 'surface' };
+}
+
+function showFullUI(size, yBase, yEnd) {
+  const wrap = document.getElementById('y-slider-wrap');
+  wrap.style.display = 'flex';
+  const slider = document.getElementById('y-slider');
+  slider.min = yBase;
+  slider.max = yEnd;
+  currentLayer = yBase;
+  slider.value = currentLayer;
+  updateYLabel();
+  slider.oninput = () => { currentLayer = parseInt(slider.value); updateYLabel(); draw(); };
+}
+
+function showSimpleUI() {
+  document.getElementById('y-slider-wrap').style.display = 'none';
+}
+
+function updateYLabel() {
+  document.getElementById('y-label').textContent = 'Y=' + currentLayer;
+}
+
+function resizeCanvas() {
+  const wrap = document.getElementById('canvas-wrap');
+  canvas.width = wrap.clientWidth;
+  canvas.height = wrap.clientHeight;
+}
+
+function draw() {
+  if (!gridData) return;
+  const data = gridData;
+  const isFull = data.format === 'full';
+  const isBinary = data.format === 'binary';
+  
+  // Determine which layer to show
+  let layerY = currentLayer;
+  if (!isFull) {
+    layerY = data.yMin;
+  }
+
+  const grid = data.layers[layerY];
+  if (!grid) {
+    ctx.fillStyle = '#020617';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#64748b';
+    ctx.font = '14px JetBrains Mono';
+    ctx.textAlign = 'center';
+    ctx.fillText(`No blocks at Y=${layerY}`, canvas.width/2, canvas.height/2);
+    return;
+  }
+
+  const rows = grid.length;
+  const cols = grid[0]?.length || 0;
+  if (rows === 0 || cols === 0) return;
+
+  // Calculate cell size to fit canvas
+  const cellW = Math.floor(canvas.width / cols);
+  const cellH = Math.floor(canvas.height / rows);
+  const cellSize = Math.min(cellW, cellH);
+  const offsetX = Math.floor((canvas.width - cellSize * cols) / 2);
+  const offsetY = Math.floor((canvas.height - cellSize * rows) / 2);
+
+  // Background
+  ctx.fillStyle = '#020617';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Draw grid lines
+  ctx.strokeStyle = '#1e293b';
+  ctx.lineWidth = 0.5;
+  for (let r = 0; r <= rows; r++) {
+    ctx.beginPath();
+    ctx.moveTo(offsetX, offsetY + r * cellSize);
+    ctx.lineTo(offsetX + cols * cellSize, offsetY + r * cellSize);
+    ctx.stroke();
+  }
+  for (let c = 0; c <= cols; c++) {
+    ctx.beginPath();
+    ctx.moveTo(offsetX + c * cellSize, offsetY);
+    ctx.lineTo(offsetX + c * cellSize, offsetY + rows * cellSize);
+    ctx.stroke();
+  }
+
+  // Draw cells
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const ch = grid[r][c];
+      if (!ch || ch === ' ') continue;
+      const x = offsetX + c * cellSize;
+      const y = offsetY + r * cellSize;
+
+      if (isBinary) {
+        if (ch === '0') {
+          ctx.fillStyle = 'rgba(34,68,34,0.4)';
         } else {
-          addBlockCube(ch, wx, wy, wz);
+          ctx.fillStyle = 'rgba(136,34,34,0.5)';
+        }
+        ctx.fillRect(x + 1, y + 1, cellSize - 2, cellSize - 2);
+        if (cellSize > 12) {
+          ctx.fillStyle = '#e2e8f0';
+          ctx.font = `${Math.floor(cellSize * 0.6)}px JetBrains Mono`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(ch, x + cellSize/2, y + cellSize/2);
+        }
+        continue;
+      }
+
+      if (currentMode === 'char') {
+        // Render as character
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(x + 1, y + 1, cellSize - 2, cellSize - 2);
+        if (cellSize > 10) {
+          ctx.fillStyle = '#22d3ee';
+          ctx.font = `bold ${Math.floor(cellSize * 0.7)}px JetBrains Mono`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(ch, x + cellSize/2, y + cellSize/2);
+        }
+      } else {
+        // Render as colored block
+        const symbolToName = Object.entries(CHAR_MAP).find(([n, c]) => c === ch)?.[0] || 'default';
+        const color = colorFor(symbolToName);
+        if (color === '#00000000') continue;
+        ctx.fillStyle = color;
+        ctx.fillRect(x + 1, y + 1, cellSize - 2, cellSize - 2);
+        if (cellSize > 16) {
+          ctx.fillStyle = '#020617';
+          ctx.font = `${Math.floor(cellSize * 0.5)}px JetBrains Mono`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(ch, x + cellSize/2, y + cellSize/2);
         }
       }
     }
   }
-  controls.target.set((minX + sizeX/2), (yBase + yEnd)/2, (minZ + sizeX/2));
-}
 
-function renderBinary(text, minX, minZ, yBase) {
-  const lines = text.trim().split('\n');
-  for (let zi = 0; zi < lines.length; zi++) {
-    const line = lines[zi].trim();
-    for (let xi = 0; xi < line.length; xi++) {
-      const ch = line[xi];
-      const wx = minX + xi + 0.5;
-      const wz = minZ + zi + 0.5;
-      if (ch === '0') {
-        // Walkable: green semi-transparent
-        const geo = new THREE.BoxGeometry(0.8, 0.2, 0.8);
-        const mat = new THREE.MeshStandardMaterial({ color:'#224422', transparent:true, opacity:0.5 });
-        const m = new THREE.Mesh(geo, mat); m.position.set(wx, yBase+0.1, wz);
-        scene.add(m); objects.push(m);
-      } else {
-        // Solid: red
-        const geo = new THREE.BoxGeometry(0.6, 0.6, 0.6);
-        const mat = new THREE.MeshStandardMaterial({ color:'#882222', transparent:true, opacity:0.6 });
-        const m = new THREE.Mesh(geo, mat); m.position.set(wx, yBase+0.3, wz);
-        scene.add(m); objects.push(m);
-      }
+  // Draw coordinate labels on edges
+  if (cellSize > 20) {
+    ctx.fillStyle = '#64748b';
+    ctx.font = '9px JetBrains Mono';
+    ctx.textAlign = 'center';
+    for (let c = 0; c < cols; c++) {
+      ctx.fillText(data.minX + c, offsetX + c * cellSize + cellSize/2, offsetY - 4);
+    }
+    ctx.textAlign = 'right';
+    for (let r = 0; r < rows; r++) {
+      ctx.fillText(data.minZ + r, offsetX - 4, offsetY + r * cellSize + cellSize/2 + 3);
     }
   }
-}
-
-function renderSurface(text, minX, minZ, yBase) {
-  const lines = text.trim().split('\n');
-  for (let zi = 0; zi < lines.length; zi++) {
-    const line = lines[zi].trim();
-    for (let xi = 0; xi < line.length; xi++) {
-      const ch = line[xi];
-      if (ch === ' ') continue;
-      const wx = minX + xi + 0.5;
-      const wz = minZ + zi + 0.5;
-      const wy = yBase + 0.5;
-      if (currentMode === 'char') {
-        addCharLabel(ch, wx, wy, wz);
-      } else {
-        addBlockCube(ch, wx, wy, wz);
-      }
-    }
-  }
-}
-
-function addCharLabel(ch, x, y, z) {
-  const canvas = document.createElement('canvas');
-  canvas.width = 64; canvas.height = 64;
-  const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#22d3ee';
-  ctx.font = 'bold 40px JetBrains Mono';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(ch, 32, 32);
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.minFilter = THREE.LinearFilter;
-  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: true });
-  const sprite = new THREE.Sprite(mat);
-  sprite.position.set(x, y, z);
-  sprite.scale.set(0.6, 0.6, 0.6);
-  scene.add(sprite);
-  objects.push(sprite);
-}
-
-function addBlockCube(ch, x, y, z) {
-  // Map symbol back to approximate block name for coloring
-  const symbolToName = Object.entries(CHAR_MAP).find(([n, c]) => c === ch)?.[0] || 'default';
-  const color = blockColor(symbolToName);
-  if (color === '#00000000') return;
-  const geo = new THREE.BoxGeometry(0.85, 0.85, 0.85);
-  const mat = new THREE.MeshStandardMaterial({ color, transparent: true, opacity: 0.85 });
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.set(x, y, z);
-  scene.add(mesh);
-  objects.push(mesh);
 }
 
 window.setMode = function(mode) {
   currentMode = mode;
   document.getElementById('btn-char').classList.toggle('active', mode === 'char');
   document.getElementById('btn-block').classList.toggle('active', mode === 'block');
-  refresh();
+  draw();
 };
 
 window.refresh = refresh;
@@ -358,7 +435,7 @@ window.toggleFollow = function() {
   }
 };
 
-// WebSocket for real-time chunk updates
+// WebSocket
 try {
   const wsUrl = BOT_URL.replace('http', 'ws') + '/ws';
   const ws = new WebSocket(wsUrl);
@@ -370,26 +447,18 @@ try {
       }
     } catch {}
   };
-  ws.onopen = () => console.log('[mBit viz] WebSocket connected');
-  ws.onerror = () => console.log('[mBit viz] WebSocket error (dashboard may not be connected)');
+  ws.onopen = () => console.log('[mBit] WS connected');
 } catch(e) {}
 
-// Init
+resizeCanvas();
 refresh();
 if (document.getElementById('auto').checked) autoTimer = setInterval(refresh, 2000);
 
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
+window.addEventListener('resize', () => { resizeCanvas(); draw(); });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowUp') { currentLayer++; updateYLabel(); draw(); }
+  if (e.key === 'ArrowDown') { currentLayer--; updateYLabel(); draw(); }
 });
-
-function animate() {
-  requestAnimationFrame(animate);
-  controls.update();
-  renderer.render(scene, camera);
-}
-animate();
 </script>
 </body>
 </html>
