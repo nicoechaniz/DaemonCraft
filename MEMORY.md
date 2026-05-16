@@ -42,6 +42,36 @@ Available casts: `landfolk`, `civilization`, `companion`, `rolemaster`
 
 Service file: `/home/nicolas/.config/systemd/user/daemoncraft-cast.service`
 
+### CompAII Bot Service (Laboratory Mode)
+
+CompAII operates in **laboratory mode**: the bot runs as a persistent systemd service, while the agent (CompAII) controls it directly via `mc_*` tools from the CLI. No `agent_loop.py`, no autonomia — direct human-in-the-loop control.
+
+| Service | Purpose | Port | Status |
+|---|---|---|---|
+| `daemoncraft-bot-compaii.service` | Bot server (Mineflayer API) | 3003 | Active |
+| `daemoncraft.service` | Minecraft server (Docker) | 25565 | Active |
+| `daemoncraft-cast.service` | Agent cast launcher | — | Inactive |
+
+**Commands:**
+```bash
+systemctl --user status daemoncraft-bot-compaii.service
+systemctl --user restart daemoncraft-bot-compaii.service
+journalctl --user -u daemoncraft-bot-compaii.service -f
+```
+
+**Config:** `~/Projects/DaemonCraft/agents/bot/config-compaii.json`
+**API:** `http://localhost:3003`
+**Username:** `CompAII`
+
+**Env vars in `~/.hermes/.env`:**
+```
+MC_API_URL=http://localhost:3003
+EMBODIED_SERVICE_URL=http://localhost:7790
+MC_USERNAME=CompAII
+```
+
+Service file: `/home/nicolas/.config/systemd/user/daemoncraft-bot-compaii.service`
+
 ## Hermes Agent Integration — Development Workflow
 
 When DaemonCraft features require changes to `hermes-agent` (gateway adapter, toolsets, platform config), follow this workflow to avoid breaking the running gateway or your CLI sessions.
