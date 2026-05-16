@@ -239,7 +239,9 @@ async function refresh() {
             const name = Object.entries(CHAR_MAP).find(([n, c]) => c === ch)?.[0] || 'default';
             const color = colorFor(name);
             if (color !== '#00000000') {
-              const geo = new THREE.BoxGeometry(0.75, 0.75, 0.75);
+              // Use full 1×1×1 voxel cubes so adjacent cells touch like Minecraft blocks.
+              // The earlier 0.75 size made the visualizer look like separated floating cubes.
+              const geo = new THREE.BoxGeometry(1, 1, 1);
               const opacity = currentMode === 'both' ? 0.5 : currentMode === 'wire' ? 0.3 : 0.85;
               const mat = new THREE.MeshStandardMaterial({ color, transparent: true, opacity });
               const mesh = new THREE.Mesh(geo, mat);
