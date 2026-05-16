@@ -626,6 +626,16 @@ async function createBotImpl() {
       });
 
       // Death tracking
+      // Block changes → WebSocket real-time events for mBit visualizer
+      bot.on('blockUpdate', (oldBlock, newBlock) => {
+        if (!oldBlock || !newBlock) return;
+        broadcastDashboard('block_update', {
+          x: newBlock.position.x, y: newBlock.position.y, z: newBlock.position.z,
+          old_name: oldBlock.name, new_name: newBlock.name,
+          time: Date.now(),
+        });
+      });
+
       bot.on('death', () => {
         combatStats.deaths++;
         lastDeath = {

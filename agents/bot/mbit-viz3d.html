@@ -62,7 +62,7 @@
   </div>
   <button onclick="refresh()">🔄 Refresh</button>
   <label style="font-size:9px">
-    <input type="checkbox" id="auto" checked onchange="toggleAuto()"> Auto (2s)
+    <span style="color:#64748b">WS live</span>
   </label>
   <label style="font-size:9px">
     <input type="checkbox" id="follow" checked onchange="toggleFollow()"> Follow bot
@@ -101,7 +101,7 @@ scene.add(grid);
 
 let currentMode = 'char';
 let objects = [];
-let autoTimer = null, followTimer = null;
+let followTimer = null;
 let lastText = ''; // cache to skip re-render on no delta
 
 function clearObjects() {
@@ -292,8 +292,23 @@ window.toggleFollow = function() {
   } else { clearInterval(followTimer); }
 };
 
+// WebSocket — real-time: refresh on block changes or actions
+(function() {
+  const wsUrl = BOT_URL.replace('http', 'ws') + '/ws';
+  const ws = new WebSocket(wsUrl);
+  ws.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'actions' || msg.type === 'block_update' || msg.type === 'chunk_update') {
+        refresh();
+      }
+    } catch {}
+  };
+  ws.onopen = () => console.log('[mBit3D] WebSocket live');
+  ws.onerror = () => console.log('[mBit3D] WebSocket error');
+})();
+
 refresh();
-if (document.getElementById('auto').checked) autoTimer = setInterval(refresh, 2000);
 if (document.getElementById('follow').checked) toggleFollow();
 
 window.addEventListener('resize', () => {

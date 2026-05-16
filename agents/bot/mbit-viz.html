@@ -80,7 +80,7 @@
   <button onclick="refresh()">🔄 Refresh</button>
   <label style="font-size:10px">
     <input type="checkbox" id="auto" checked onchange="toggleAuto()">
-    Auto-refresh (2s)
+    WS live
   </label>
   <label style="font-size:10px">
     <input type="checkbox" id="follow" checked onchange="toggleFollow()">
@@ -116,7 +116,6 @@ const ctx = canvas.getContext('2d');
 let currentMode = 'char';
 let currentLayer = 115;
 let blockData = null;
-let autoTimer = null;
 let followTimer = null;
 let lastText = '';
 
@@ -416,14 +415,6 @@ window.setMode = function(mode) {
 
 window.refresh = refresh;
 
-window.toggleAuto = function() {
-  if (document.getElementById('auto').checked) {
-    autoTimer = setInterval(refresh, 2000);
-  } else {
-    clearInterval(autoTimer);
-  }
-};
-
 window.toggleFollow = function() {
   if (document.getElementById('follow').checked) {
     followTimer = setInterval(async () => {
@@ -458,7 +449,6 @@ try {
 
 resizeCanvas();
 refresh();
-if (document.getElementById('auto').checked) autoTimer = setInterval(refresh, 2000);
 
 window.addEventListener('resize', () => { resizeCanvas(); draw(); });
 document.addEventListener('keydown', (e) => {
