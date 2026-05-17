@@ -8,6 +8,7 @@
 #   BOT=<name> ./send-event.sh message "hello"  # target specific bot
 
 BOT="${BOT:-${MC_USERNAME:-CompAII}}"
+BOT=$(echo "$BOT" | tr '[:upper:]' '[:lower:]')
 EVENTS_FILE=~/.hermes/sessions/"${BOT}-events.jsonl"
 
 if [ $# -lt 2 ]; then
