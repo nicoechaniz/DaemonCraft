@@ -1938,7 +1938,7 @@ async collect({ block, count = 1 }) {
         // Navigate to stand one block ABOVE the target, so we mine down onto it
         // rather than standing beside it at the same level (which creates a pit).
         if (b.entity.position.distanceTo(pos) > 4.5) {
-          await b.pathfinder.goto(new goals.GoalNear(pos.x, pos.y + 1, pos.z, 3));
+          await Promise.race([b.pathfinder.goto(new goals.GoalNear(pos.x, pos.y + 1, pos.z, 3)), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 15000))]);
         }
 
         // Safety: never mine the block directly under our feet
@@ -1967,7 +1967,7 @@ async collect({ block, count = 1 }) {
       if (drops.length === 0) break;
       for (const drop of drops.slice(0, 6)) {
         try {
-          await b.pathfinder.goto(new goals.GoalNear(drop.position.x, drop.position.y, drop.position.z, 1));
+          await Promise.race([b.pathfinder.goto(new goals.GoalNear(drop.position.x, drop.position.y, drop.position.z, 1)), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 15000))]);
           await sleep(400);
         } catch {}
       }
@@ -2015,7 +2015,7 @@ async collect({ block, count = 1 }) {
     }
     await b.tool.equipForBlock(target);
     if (b.entity.position.distanceTo(target.position) > 4.5) {
-      await b.pathfinder.goto(new goals.GoalNear(x, y, z, 3));
+      await Promise.race([b.pathfinder.goto(new goals.GoalNear(x, y, z, 3)), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 15000))]);
     }
     await b.dig(target, true);
     return { result: `Mined ${target.name} at ${x}, ${y}, ${z}` };
@@ -2035,7 +2035,7 @@ async collect({ block, count = 1 }) {
 
       for (const drop of drops.slice(0, 8)) {
         try {
-          await b.pathfinder.goto(new goals.GoalNear(drop.position.x, drop.position.y, drop.position.z, 1));
+          await Promise.race([b.pathfinder.goto(new goals.GoalNear(drop.position.x, drop.position.y, drop.position.z, 1)), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 15000))]);
           await sleep(400);
         } catch {}
       }
@@ -2170,7 +2170,7 @@ async collect({ block, count = 1 }) {
     }
 
     try {
-      await b.craft(recipe, count, craftTable || undefined);
+      await Promise.race([b.craft(recipe, count, craftTable || undefined), new Promise((_, r) => setTimeout(() => r(new Error('Crafting timeout')), 15000))]);
     } catch (err) {
       const available = itemCounts(b.inventory.items());
       const diagnostic = recipeDiagnostics(recipe, mcData, available, count, Boolean(table));
@@ -2268,7 +2268,7 @@ async collect({ block, count = 1 }) {
 
     // Approach and attack
     if (entity.position.distanceTo(b.entity.position) > 3) {
-      await b.pathfinder.goto(new goals.GoalNear(entity.position.x, entity.position.y, entity.position.z, 2));
+      await Promise.race([b.pathfinder.goto(new goals.GoalNear(entity.position.x, entity.position.y, entity.position.z, 2)), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 15000))]);
     }
     await b.attack(entity);
     return { result: `Attacked ${entity.name || target} (${fmt(entity.position.distanceTo(b.entity.position))}m away)` };
@@ -2316,6 +2316,47 @@ async collect({ block, count = 1 }) {
       throw new Error(`No ${blockName} in inventory. ${hint} Collect, craft, or pick up ${blockName} first.`);
     }
 
+    // Guard against placing inside the bot's own bounding box.  Server
+    // silently rejects these placements and the materialize-check at the
+    // bottom then surfaces "did not materialize" — a confusing error for
+    // what is really "you targeted yourself".  Auto-shift to the first
+    // adjacent empty cell that has a solid neighbour to place against.
+    const botPos = b.entity.position;
+    const botFeetCell = { x: Math.floor(botPos.x), y: Math.floor(botPos.y), z: Math.floor(botPos.z) };
+    const botHeadCell = { x: botFeetCell.x, y: botFeetCell.y + 1, z: botFeetCell.z };
+    const targetCell = { x: Math.floor(x), y: Math.floor(y), z: Math.floor(z) };
+    const cellEq = (a, c) => a.x === c.x && a.y === c.y && a.z === c.z;
+    if (cellEq(targetCell, botFeetCell) || cellEq(targetCell, botHeadCell)) {
+      // Try horizontal neighbours first (most natural for tables/furnaces),
+      // then above, then below. Skip cells the bot also occupies.
+      const candidates = [
+        [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1],
+        [0, 2, 0],            // two above feet — clear of head
+        [0, -1, 0],           // below feet — only if we're floating (rare)
+      ];
+      let picked = null;
+      for (const [dx, dy, dz] of candidates) {
+        const cand = new Vec3(targetCell.x + dx, targetCell.y + dy, targetCell.z + dz);
+        const candCell = { x: cand.x, y: cand.y, z: cand.z };
+        if (cellEq(candCell, botFeetCell) || cellEq(candCell, botHeadCell)) continue;
+        const blk = b.blockAt(cand);
+        if (blk && (blk.name === 'air' || blk.name === 'cave_air')) {
+          // Confirm there's a solid neighbour to place against (any side).
+          const placeOffsets = [[0,-1,0],[0,1,0],[1,0,0],[-1,0,0],[0,0,1],[0,0,-1]];
+          const hasRef = placeOffsets.some(([ox, oy, oz]) => {
+            const nb = b.blockAt(cand.offset(ox, oy, oz));
+            return nb && nb.name !== 'air' && nb.name !== 'cave_air';
+          });
+          if (hasRef) { picked = cand; break; }
+        }
+      }
+      if (!picked) {
+        throw new Error(`Can't place ${blockName} at (${x}, ${y}, ${z}): that cell is inside my own body and no adjacent empty cell has a solid neighbour to place against. Move me to a clearer spot first.`);
+      }
+      log(`[place] target (${x},${y},${z}) overlaps bot — shifted to (${picked.x},${picked.y},${picked.z})`);
+      x = picked.x; y = picked.y; z = picked.z;
+    }
+
     const targetPos = new Vec3(x, y, z);
     const existing = b.blockAt(targetPos);
     if (existing && existing.name !== 'air' && existing.name !== 'cave_air') {
@@ -2326,7 +2367,7 @@ async collect({ block, count = 1 }) {
 
     // Approach if far
     if (b.entity.position.distanceTo(targetPos) > 4.5) {
-      await b.pathfinder.goto(new goals.GoalNear(x, y, z, 3));
+      await Promise.race([b.pathfinder.goto(new goals.GoalNear(x, y, z, 3)), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 15000))]);
     }
 
     // Find reference block to place against
@@ -2395,7 +2436,7 @@ async collect({ block, count = 1 }) {
       await b.equip(item, 'hand');
 
       if (b.entity.position.distanceTo(new Vec3(pos.x, pos.y, pos.z)) > 4.5) {
-        try { await b.pathfinder.goto(new goals.GoalNear(pos.x, pos.y, pos.z, 3)); } catch {}
+        try { await Promise.race([b.pathfinder.goto(new goals.GoalNear(pos.x, pos.y, pos.z, 3)), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 15000))]); } catch {}
       }
 
       let hadSupport = false;
@@ -2440,7 +2481,7 @@ async collect({ block, count = 1 }) {
 
     // Approach if far
     if (b.entity.position.distanceTo(targetPos) > 4.5) {
-      await b.pathfinder.goto(new goals.GoalNear(x, y, z, 3));
+      await Promise.race([b.pathfinder.goto(new goals.GoalNear(x, y, z, 3)), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 15000))]);
     }
 
     // Find reference block to place against
@@ -2470,7 +2511,7 @@ async collect({ block, count = 1 }) {
       throw new Error(`Can't interact at ${x}, ${y}, ${z}: target is ${actual}. Use coordinates of an interactable block like chest, door, furnace, bed, or farmland.`);
     }
     if (b.entity.position.distanceTo(block.position) > 4.5) {
-      await b.pathfinder.goto(new goals.GoalNear(x, y, z, 2));
+      await Promise.race([b.pathfinder.goto(new goals.GoalNear(x, y, z, 2)), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 15000))]);
     }
     await b.activateBlock(block);
     return { result: `Interacted with ${block.name} at ${x}, ${y}, ${z}` };
@@ -2486,12 +2527,12 @@ async collect({ block, count = 1 }) {
     }
     const dist = b.entity.position.distanceTo(target.position);
     if (dist > 4.5) {
-      await b.pathfinder.goto(new goals.GoalNear(x, y, z, 2));
+      await Promise.race([b.pathfinder.goto(new goals.GoalNear(x, y, z, 2)), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 15000))]);
     } else if (dist < 1.8) {
       // Too close — back up so the hitbox doesn't overlap the block face
       const away = b.entity.position.minus(target.position).normalize().scale(2.5);
       const dest = target.position.plus(away);
-      await b.pathfinder.goto(new goals.GoalNear(dest.x, dest.y, dest.z, 1));
+      await Promise.race([b.pathfinder.goto(new goals.GoalNear(dest.x, dest.y, dest.z, 1)), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 15000))]);
     }
     const held = b.heldItem?.name || 'hand';
     if (!held.includes('hoe')) {
@@ -2517,11 +2558,11 @@ async collect({ block, count = 1 }) {
     }
     const dist = b.entity.position.distanceTo(target.position);
     if (dist > 4.5) {
-      await b.pathfinder.goto(new goals.GoalNear(x, y, z, 2));
+      await Promise.race([b.pathfinder.goto(new goals.GoalNear(x, y, z, 2)), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 15000))]);
     } else if (dist < 1.8) {
       const away = b.entity.position.minus(target.position).normalize().scale(2.5);
       const dest = target.position.plus(away);
-      await b.pathfinder.goto(new goals.GoalNear(dest.x, dest.y, dest.z, 1));
+      await Promise.race([b.pathfinder.goto(new goals.GoalNear(dest.x, dest.y, dest.z, 1)), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 15000))]);
     }
     const held = b.heldItem?.name || 'hand';
     if (held !== 'bone_meal') {
@@ -2542,11 +2583,11 @@ async collect({ block, count = 1 }) {
     }
     const dist = b.entity.position.distanceTo(target.position);
     if (dist > 4.5) {
-      await b.pathfinder.goto(new goals.GoalNear(x, y, z, 2));
+      await Promise.race([b.pathfinder.goto(new goals.GoalNear(x, y, z, 2)), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 15000))]);
     } else if (dist < 1.8) {
       const away = b.entity.position.minus(target.position).normalize().scale(2.5);
       const dest = target.position.plus(away);
-      await b.pathfinder.goto(new goals.GoalNear(dest.x, dest.y, dest.z, 1));
+      await Promise.race([b.pathfinder.goto(new goals.GoalNear(dest.x, dest.y, dest.z, 1)), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 15000))]);
     }
     const held = b.heldItem?.name || 'hand';
     if (!held.includes('shovel')) {
@@ -2571,11 +2612,11 @@ async collect({ block, count = 1 }) {
     }
     const dist = b.entity.position.distanceTo(target.position);
     if (dist > 4.5) {
-      await b.pathfinder.goto(new goals.GoalNear(x, y, z, 2));
+      await Promise.race([b.pathfinder.goto(new goals.GoalNear(x, y, z, 2)), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 15000))]);
     } else if (dist < 1.8) {
       const away = b.entity.position.minus(target.position).normalize().scale(2.5);
       const dest = target.position.plus(away);
-      await b.pathfinder.goto(new goals.GoalNear(dest.x, dest.y, dest.z, 1));
+      await Promise.race([b.pathfinder.goto(new goals.GoalNear(dest.x, dest.y, dest.z, 1)), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 15000))]);
     }
     const held = b.heldItem?.name || 'hand';
     if (held !== 'flint_and_steel') {
@@ -2714,7 +2755,7 @@ async collect({ block, count = 1 }) {
           -(entity.position.x - b.entity.position.x) * 2, 0,
           -(entity.position.z - b.entity.position.z) * 2
         );
-        try { await b.pathfinder.goto(new goals.GoalNear(fleePos.x, fleePos.y, fleePos.z, 2)); } catch {}
+        try { await Promise.race([b.pathfinder.goto(new goals.GoalNear(fleePos.x, fleePos.y, fleePos.z, 2)), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 15000))]); } catch {}
         const food = b.inventory.items().find(i => mcData.foodsByName?.[i.name]);
         if (food) { await b.equip(food, 'hand'); try { await b.consume(); } catch {} }
         return { result: `Retreated from ${targetName} at ${b.health} HP. ${hits} hits dealt.` };
@@ -2784,7 +2825,7 @@ async collect({ block, count = 1 }) {
     const fleeZ = b.entity.position.z + (dz/len) * distance;
 
     try {
-      await b.pathfinder.goto(new goals.GoalNear(fleeX, b.entity.position.y, fleeZ, 3));
+      await Promise.race([b.pathfinder.goto(new goals.GoalNear(fleeX, b.entity.position.y, fleeZ, 3)), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 15000))]);
       return { result: `Fled ${distance} blocks from ${from || 'threat'}` };
     } catch {
       return { result: `Tried to flee, moved partially. Health: ${b.health}` };
@@ -2812,7 +2853,7 @@ async collect({ block, count = 1 }) {
     const pos = lastDeath.position;
     const age = Math.round((Date.now() - lastDeath.time) / 1000);
     const b = ensureBot();
-    await b.pathfinder.goto(new goals.GoalNear(pos.x, pos.y, pos.z, 3));
+    await Promise.race([b.pathfinder.goto(new goals.GoalNear(pos.x, pos.y, pos.z, 3)), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 15000))]);
     return { result: `At death #${lastDeath.deathNumber} (${age}s ago). Lost: ${lastDeath.inventory.map(i=>`${i.name}x${i.count}`).join(', ')}` };
   },
 
@@ -2822,7 +2863,7 @@ async collect({ block, count = 1 }) {
     const block = b.blockAt(new Vec3(x, y, z));
     if (!block) return { result: 'No block at those coordinates' };
     if (b.entity.position.distanceTo(block.position) > 4.5)
-      await b.pathfinder.goto(new goals.GoalNear(x, y, z, 3));
+      await Promise.race([b.pathfinder.goto(new goals.GoalNear(x, y, z, 3)), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 15000))]);
     const chest = await b.openContainer(block);
     const items = chest.containerItems();
     const summary = items.length > 0 ? items.map(i => `${i.name}x${i.count}`).join(', ') : '(empty)';
@@ -2835,7 +2876,7 @@ async collect({ block, count = 1 }) {
     const block = b.blockAt(new Vec3(x, y, z));
     if (!block) return { result: 'No block there' };
     if (b.entity.position.distanceTo(block.position) > 4.5)
-      await b.pathfinder.goto(new goals.GoalNear(x, y, z, 3));
+      await Promise.race([b.pathfinder.goto(new goals.GoalNear(x, y, z, 3)), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 15000))]);
     const chest = await b.openContainer(block);
     const invItem = b.inventory.items().find(i => i.name.includes(item));
     if (!invItem) { chest.close(); return { result: `No ${item} in inventory` }; }
@@ -2850,7 +2891,7 @@ async collect({ block, count = 1 }) {
     const block = b.blockAt(new Vec3(x, y, z));
     if (!block) return { result: 'No block there' };
     if (b.entity.position.distanceTo(block.position) > 4.5)
-      await b.pathfinder.goto(new goals.GoalNear(x, y, z, 3));
+      await Promise.race([b.pathfinder.goto(new goals.GoalNear(x, y, z, 3)), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 15000))]);
     const chest = await b.openContainer(block);
     const chestItem = chest.containerItems().find(i => i.name.includes(item));
     if (!chestItem) { chest.close(); return { result: `No ${item} in container` }; }
@@ -2887,7 +2928,7 @@ async collect({ block, count = 1 }) {
     if (!locs[name]) return { result: `No location '${name}'` };
     const l = locs[name];
     const b = ensureBot();
-    await b.pathfinder.goto(new goals.GoalNear(l.x, l.y, l.z, 2));
+    await Promise.race([b.pathfinder.goto(new goals.GoalNear(l.x, l.y, l.z, 2)), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 15000))]);
     return { result: `Arrived at '${name}' (${l.x},${l.y},${l.z})` };
   },
   async unmark({ name }) {
@@ -3001,7 +3042,7 @@ async collect({ block, count = 1 }) {
     // Sprint toward and attack — extra knockback on first sprint hit
     b.setControlState('sprint', true);
     if (entity.position.distanceTo(b.entity.position) > 3.5) {
-      await b.pathfinder.goto(new goals.GoalNear(entity.position.x, entity.position.y, entity.position.z, 2));
+      await Promise.race([b.pathfinder.goto(new goals.GoalNear(entity.position.x, entity.position.y, entity.position.z, 2)), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 15000))]);
     }
     await b.lookAt(entity.position.offset(0, entity.height * 0.8, 0));
     await b.attack(entity);
@@ -3030,7 +3071,7 @@ async collect({ block, count = 1 }) {
     
     // Approach
     if (entity.position.distanceTo(b.entity.position) > 3.5) {
-      await b.pathfinder.goto(new goals.GoalNear(entity.position.x, entity.position.y, entity.position.z, 2));
+      await Promise.race([b.pathfinder.goto(new goals.GoalNear(entity.position.x, entity.position.y, entity.position.z, 2)), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 15000))]);
     }
     
     // Jump + attack on the way down = critical hit (150% damage)
@@ -3211,7 +3252,7 @@ async collect({ block, count = 1 }) {
       throw new Error(`No furnace at ${x},${y},${z}`);
 
     if (b.entity.position.distanceTo(furnaceBlock.position) > 4.5) {
-      await b.pathfinder.goto(new goals.GoalNear(x, y, z, 3));
+      await Promise.race([b.pathfinder.goto(new goals.GoalNear(x, y, z, 3)), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 15000))]);
     }
     const furnace = await b.openFurnace(furnaceBlock);
     const inputItem = furnace.inputItem();
@@ -3236,7 +3277,7 @@ async collect({ block, count = 1 }) {
     if (!furnaceBlock) throw new Error(`No block at ${x},${y},${z}`);
 
     if (b.entity.position.distanceTo(furnaceBlock.position) > 4.5) {
-      await b.pathfinder.goto(new goals.GoalNear(x, y, z, 3));
+      await Promise.race([b.pathfinder.goto(new goals.GoalNear(x, y, z, 3)), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 15000))]);
     }
     const furnace = await b.openFurnace(furnaceBlock);
     const output = furnace.outputItem();
