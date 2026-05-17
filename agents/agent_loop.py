@@ -164,8 +164,114 @@ def fetch_bot_inventory() -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════════════════════════════════════════════
-# Autonomía Corporal — Plan execution (Gemma-Andy $0/call)
+# Singleton Session — Context Stream + Event Queue
 # ══════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+_SESSION_DIR = Path.home() / ".hermes" / "sessions"
+_STREAM_FILE = _SESSION_DIR / "daemoncraft-stream.json"
+_EVENTS_FILE = _SESSION_DIR / "daemoncraft-events.jsonl"
+_EVENTS_PROCESSING = _SESSION_DIR / "daemoncraft-events.processing"
+_STREAM_TMP = _SESSION_DIR / "daemoncraft-stream.tmp"
+
+_SESSION_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def export_context_stream(status: dict, nearby: dict, inventory: dict,
+                          bot_plan: dict = None, last_chat: list = None,
+                          errors: list = None, events_consumed: int = 0,
+                          tick: int = 0, session_id: str = "daemoncraft-singleton"):
+    """Export current bot state to daemoncraft-stream.json via atomic rename."""
+    try:
+        payload = {
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "tick": tick,
+            "session_id": session_id,
+            "bot": {
+                "health": status.get("health"),
+                "max_health": status.get("maxHealth"),
+                "food": status.get("food"),
+                "position": status.get("position"),
+                "holding": status.get("holding"),
+                "on_ground": status.get("onGround"),
+                "is_in_water": status.get("isInWater"),
+                "dimension": status.get("dimension"),
+                "is_day": status.get("isDay"),
+            },
+            "nearby": {
+                "entities": nearby.get("entities") or status.get("nearbyEntities", []),
+                "blocks": nearby.get("blocks") or status.get("nearbyBlocks", []),
+            },
+            "inventory": inventory,
+            "plan": bot_plan,
+            "last_action": status.get("task"),
+            "last_chat": last_chat or status.get("unreadChat", []),
+            "errors": errors or [],
+            "events_consumed": events_consumed,
+        }
+        _STREAM_TMP.write_text(json.dumps(payload, indent=2))
+        _STREAM_TMP.rename(_STREAM_FILE)
+    except Exception as e:
+        print(f"[loop] Context stream export failed: {e}", flush=True)
+
+
+def read_and_clear_event_queue() -> list[dict]:
+    """Read and clear the event queue atomically. Returns list of event dicts."""
+    if not _EVENTS_FILE.exists():
+        return []
+    try:
+        # Atomic claim: rename to processing file
+        _EVENTS_FILE.rename(_EVENTS_PROCESSING)
+        events = []
+        for line in _EVENTS_PROCESSING.read_text().strip().split("\n"):
+            if line.strip():
+                try:
+                    events.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+        _EVENTS_PROCESSING.unlink(missing_ok=True)
+        return events
+    except FileNotFoundError:
+        # Already claimed by another process (unlikely in single-writer model)
+        return []
+    except Exception as e:
+        print(f"[loop] Event queue read error: {e}", flush=True)
+        # Recover: if processing file exists, try to read it
+        if _EVENTS_PROCESSING.exists():
+            try:
+                events = []
+                for line in _EVENTS_PROCESSING.read_text().strip().split("\n"):
+                    if line.strip():
+                        try:
+                            events.append(json.loads(line))
+                        except json.JSONDecodeError:
+                            pass
+                _EVENTS_PROCESSING.unlink(missing_ok=True)
+                return events
+            except Exception:
+                pass
+        return []
+
+
+def format_events_for_injection(events: list[dict]) -> str:
+    """Format event queue entries as context for the inner session."""
+    if not events:
+        return ""
+    lines = ["External events since last tick:"]
+    for e in events:
+        ev_type = e.get("event", "unknown")
+        src = e.get("src", "unknown")
+        if ev_type == "tool_called":
+            lines.append(f"- CLI called {e.get('tool', '?')}: {e.get('cmd', '?')}")
+        elif ev_type == "world_change":
+            lines.append(f"- World changed: {e.get('note', '?')}")
+        elif ev_type == "code_changed":
+            lines.append(f"- Code updated: {e.get('commit', '?')} — {e.get('note', '?')}")
+        elif ev_type == "message":
+            lines.append(f"- Message from dev session: {e.get('text', '?')}")
+        else:
+            lines.append(f"- [{src}] {ev_type}: {json.dumps(e)}")
+    lines.append("")
+    return "\n".join(lines)
 
 _MAX_EMBODIED_RETRIES = 3
 _EMBODIED_BACKOFF_BASE = 2.0
@@ -633,6 +739,20 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 7):
                     nearby = fetch_bot_nearby()
                     inventory = fetch_bot_inventory()
                     bot_plan = fetch_plan()
+
+                    # Singleton Session: read event queue
+                    events_raw = read_and_clear_event_queue()
+                    events_context = format_events_for_injection(events_raw)
+                    if events_context:
+                        print(f"[loop] Consumed {len(events_raw)} external events", flush=True)
+
+                    # Singleton Session: export context stream
+                    export_context_stream(
+                        status=status, nearby=nearby, inventory=inventory,
+                        bot_plan=bot_plan,
+                        events_consumed=len(events_raw),
+                        tick=turn_count,
+                    )
 
                     events = []
                     if triggered:
