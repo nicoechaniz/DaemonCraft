@@ -2370,6 +2370,38 @@ async collect({ block, count = 1 }) {
       await Promise.race([b.pathfinder.goto(new goals.GoalNear(x, y, z, 3)), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 15000))]);
     }
 
+    // After the goto, the bot may have walked INTO the target cell
+    // (GoalNear range=3 can land the bot exactly on the requested coord).
+    // Re-run the overlap check and shift one cell away if needed.
+    {
+      const nowFeet = { x: Math.floor(b.entity.position.x), y: Math.floor(b.entity.position.y), z: Math.floor(b.entity.position.z) };
+      const nowHead = { x: nowFeet.x, y: nowFeet.y + 1, z: nowFeet.z };
+      const cur = { x: Math.floor(x), y: Math.floor(y), z: Math.floor(z) };
+      const eq = (a, c) => a.x === c.x && a.y === c.y && a.z === c.z;
+      if (eq(cur, nowFeet) || eq(cur, nowHead)) {
+        const candidates = [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 2, 0]];
+        let picked = null;
+        for (const [dx, dy, dz] of candidates) {
+          const cand = new Vec3(cur.x + dx, cur.y + dy, cur.z + dz);
+          if (eq({ x: cand.x, y: cand.y, z: cand.z }, nowFeet) || eq({ x: cand.x, y: cand.y, z: cand.z }, nowHead)) continue;
+          const blk = b.blockAt(cand);
+          if (blk && (blk.name === 'air' || blk.name === 'cave_air')) {
+            const ofs = [[0,-1,0],[0,1,0],[1,0,0],[-1,0,0],[0,0,1],[0,0,-1]];
+            const hasRef = ofs.some(([ox, oy, oz]) => {
+              const nb = b.blockAt(cand.offset(ox, oy, oz));
+              return nb && nb.name !== 'air' && nb.name !== 'cave_air';
+            });
+            if (hasRef) { picked = cand; break; }
+          }
+        }
+        if (picked) {
+          log(`[place] post-goto overlap — re-shifted target from (${x},${y},${z}) to (${picked.x},${picked.y},${picked.z})`);
+          x = picked.x; y = picked.y; z = picked.z;
+          targetPos.set(x, y, z);
+        }
+      }
+    }
+
     // Find reference block to place against
     const offsets = [[0, -1, 0], [0, 1, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1]];
     for (const [dx, dy, dz] of offsets) {
@@ -2447,7 +2479,18 @@ async collect({ block, count = 1 }) {
           try {
             // Use _genericPlace instead of placeBlock to avoid blockUpdate timeout
             await b._genericPlace(ref, new Vec3(-dx, -dy, -dz), { swingArm: 'right', forceLook: true });
-            placed++;
+            // Wait for the server's block-update packet so the next iteration's
+            // support check (which may need this just-placed block) reads fresh state.
+            // _genericPlace returns before confirmation; without this wait, multi-level
+            // structures (e.g. tall pillars) silently fail level-by-level.
+            await new Promise(r => setTimeout(r, 150));
+            // Validate the place actually materialized — server can silently reject.
+            const placedBlk = b.blockAt(new Vec3(pos.x, pos.y, pos.z));
+            if (placedBlk && placedBlk.name !== 'air' && placedBlk.name !== 'cave_air') {
+              placed++;
+            } else {
+              failed++;
+            }
           } catch {
             failed++;
           }
@@ -2458,9 +2501,15 @@ async collect({ block, count = 1 }) {
     }
     const details = [];
     if (noSupport) details.push(`${noSupport} skipped: no adjacent support block`);
-    if (failed) details.push(`${failed} failed during placement`);
+    if (failed) details.push(`${failed} failed during placement (server rejected or out of reach)`);
     const suffix = details.length ? ` (${details.join('; ')})` : '';
-    return { result: `Placed ${placed}/${openPositions.length} ${blockName} blocks (${hollow ? 'hollow' : 'solid'})${suffix}` };
+    const summary = `Placed ${placed}/${openPositions.length} ${blockName} blocks (${hollow ? 'hollow' : 'solid'})${suffix}`;
+    // Surface partial failure to the dispatcher — captain needs to know when
+    // most of a structure didn't materialize so it can recover or report it.
+    if (openPositions.length > 0 && placed < openPositions.length * 0.5) {
+      throw new Error(summary + '. Less than half placed — likely out of reach or chunk issue. Move closer or split the fill into smaller boxes.');
+    }
+    return { result: summary };
   },
 
   async place_sign({ block: blockName = 'oak_sign', x, y, z, lines = '' }) {
