@@ -4123,6 +4123,26 @@ const httpServer = http.createServer(async (req, res) => {
           return respond(res, 413, { ok: false, error: "message too large" });
         }
 
+        // TP safety: intercept /tp commands sent via chat/send (used by mc_command tool)
+        const tpMatchChat = message.match(/^\/tp\s+(\S+)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s*$/);
+        if (tpMatchChat) {
+          const b = ensureBot();
+          const chatTargetPlayer = tpMatchChat[1];
+          if (chatTargetPlayer.toLowerCase() === 'compaii') {
+            const chtx = parseFloat(tpMatchChat[2]);
+            const chty = parseFloat(tpMatchChat[3]);
+            const chtz = parseFloat(tpMatchChat[4]);
+            const safeChat = findSafeTeleportSpot(b, chtx, chty, chtz);
+            if (safeChat === null) {
+              return respond(res, 422, { ok: false, error: `TP aborted: destination ${chtx} ${chty} ${chtz} is solid and no safe spot found within 3 blocks.` });
+            }
+            if (safeChat.adjusted) {
+              log(`[TP Safety chat/send] Adjusted CompAII destination from ${chtx} ${chty} ${chtz} -> ${safeChat.x} ${safeChat.y} ${safeChat.z}`);
+              body.message = `/tp ${chatTargetPlayer} ${safeChat.x} ${safeChat.y} ${safeChat.z}`;
+            }
+          }
+        }
+
         const b = ensureBot();
         const botName = b.username;
 
