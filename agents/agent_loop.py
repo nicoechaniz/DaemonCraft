@@ -269,6 +269,8 @@ def format_events_for_injection(events: list[dict]) -> str:
             lines.append(f"- Code updated: {e.get('commit', '?')} — {e.get('note', '?')}")
         elif ev_type == "message":
             lines.append(f"- Message from dev session: {e.get('text', '?')}")
+        elif ev_type == "chat":
+            lines.append(f"- [Minecraft] {e.get('player', '?')}: {e.get('text', '?')}")
         else:
             lines.append(f"- [{src}] {ev_type}: {json.dumps(e)}")
     lines.append("")
