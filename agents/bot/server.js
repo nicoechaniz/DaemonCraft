@@ -835,6 +835,51 @@ function ensureBot() {
   return bot;
 }
 
+/** Find nearest safe air block for teleport within 3-block radius.
+ *  Returns adjusted coordinates if original spot (feet or head) is solid.
+ */
+function findSafeTeleportSpot(b, x, y, z) {
+  const bx = Math.floor(x);
+  const by = Math.floor(y);
+  const bz = Math.floor(z);
+  const isAir = (block) => block && (block.name === 'air' || block.name === 'cave_air');
+
+  // Original spot safe?
+  const feet = b.blockAt(new Vec3(bx, by, bz));
+  const head = b.blockAt(new Vec3(bx, by + 1, bz));
+  if (isAir(feet) && isAir(head)) {
+    return { x: bx, y: by, z: bz, adjusted: false };
+  }
+
+  // Search expanding shell sorted by Manhattan distance
+  const candidates = [];
+  for (let dx = -3; dx <= 3; dx++) {
+    for (let dy = -3; dy <= 3; dy++) {
+      for (let dz = -3; dz <= 3; dz++) {
+        if (dx === 0 && dy === 0 && dz === 0) continue;
+        const dist = Math.abs(dx) + Math.abs(dy) + Math.abs(dz);
+        if (dist > 3) continue;
+        candidates.push({ dx, dy, dz, dist });
+      }
+    }
+  }
+  candidates.sort((a, b) => a.dist - b.dist);
+
+  for (const c of candidates) {
+    const tx = bx + c.dx;
+    const ty = by + c.dy;
+    const tz = bz + c.dz;
+    const f = b.blockAt(new Vec3(tx, ty, tz));
+    const h = b.blockAt(new Vec3(tx, ty + 1, tz));
+    if (isAir(f) && isAir(h)) {
+      return { x: tx, y: ty, z: tz, adjusted: true };
+    }
+  }
+
+  // Fallback: return original even if unsafe (server command will handle it)
+  return { x: bx, y: by, z: bz, adjusted: false };
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // Chat Chunking & Delivery
 // ═══════════════════════════════════════════════════════════════════
@@ -4006,11 +4051,27 @@ const httpServer = http.createServer(async (req, res) => {
 
       // Execute a command as the bot and return the server response
       if (path === '/command') {
-        const command = body?.command;
+        let command = body?.command;
         if (!command || typeof command !== 'string') {
           return respond(res, 400, { ok: false, error: 'Missing or invalid "command" field' });
         }
         const b = ensureBot();
+
+        // TP safety check: scan destination via mBit before teleporting CompAII
+        const tpMatch = command.match(/^\/tp\s+(\S+)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s*$/);
+        if (tpMatch) {
+          const targetPlayer = tpMatch[1];
+          const tx = parseFloat(tpMatch[2]);
+          const ty = parseFloat(tpMatch[3]);
+          const tz = parseFloat(tpMatch[4]);
+          if (targetPlayer.toLowerCase() === 'compaii') {
+            const safe = findSafeTeleportSpot(b, tx, ty, tz);
+            if (safe.adjusted) {
+              command = `/tp ${targetPlayer} ${safe.x} ${safe.y} ${safe.z}`;
+              log(`[TP Safety] Adjusted CompAII destination from ${tx} ${ty} ${tz} -> ${safe.x} ${safe.y} ${safe.z}`);
+            }
+          }
+        }
 
         const responses = [];
         const onMessage = (msg) => {
