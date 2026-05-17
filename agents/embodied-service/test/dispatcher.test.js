@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { dispatch, SIGNAL_TOOLS, HANDLERS, foldBotResponse, detectSoftFailure } from "../lib/dispatcher.js";
+import { dispatch, SIGNAL_TOOLS, HANDLERS, foldBotResponse, detectSoftFailure, classifyBotError } from "../lib/dispatcher.js";
 import { _reset } from "../lib/schema.js";
 
 describe("dispatcher", () => {
@@ -173,5 +173,80 @@ describe("executor semantic tests (Layer 4: ok reflects embodied success, not to
     const out = detectSoftFailure({ result: msg });
     assert.ok(out);
     assert.match(out, /Refusing to/);
+  });
+});
+
+// ── Spatial error classifier ───────────────────────────────────────────────
+// Promotes a bot's free-text error to one of three canonical error_types
+// the runner's Tier 2a auto-recovery is keyed on
+// (local_agent/embodied.py:SPATIAL_ERRORS and
+// hermes-agent/tools/embodied_plan_tool.py retry block).
+describe("classifyBotError", () => {
+  it("classifies 'target space is occupied by ...' as target_occupied", () => {
+    const msg = "Can't place crafting_table at 0, 70, 1: target space is occupied by prismarine. Dig that block first or choose an empty adjacent space.";
+    assert.equal(classifyBotError(msg), "target_occupied");
+  });
+
+  it("classifies 'inside my own body' as bot_in_target", () => {
+    const msg = "Can't place cobblestone at (5,71,3): that cell is inside my own body and no adjacent empty cell has a solid neighbour to place against. Move me to a clearer spot first.";
+    assert.equal(classifyBotError(msg), "bot_in_target");
+  });
+
+  it("classifies 'no solid adjacent block' as no_solid_neighbor", () => {
+    const msg = "Can't place cobblestone at 0, 100, 0: no solid adjacent block to place against. Choose an empty space next to/above an existing block, or place a support block first.";
+    assert.equal(classifyBotError(msg), "no_solid_neighbor");
+  });
+
+  it("returns null for unrelated error strings", () => {
+    assert.equal(classifyBotError("Bot movement pathfinder timeout"), null);
+    assert.equal(classifyBotError("Mined 0/1 oak_log. Have 0 oak_log in inventory."), null);
+    assert.equal(classifyBotError("Can't see any quartz_ore from 28, 76, 53."), null);
+  });
+
+  it("returns null for empty / non-string input", () => {
+    assert.equal(classifyBotError(""), null);
+    assert.equal(classifyBotError(null), null);
+    assert.equal(classifyBotError(undefined), null);
+    assert.equal(classifyBotError(42), null);
+  });
+});
+
+// ── foldBotResponse: classifier integration ────────────────────────────────
+// When a known spatial pattern matches, the canonical error_type is
+// emitted INSTEAD of the generic bot_action_failed / bot_soft_failure,
+// while preserving the original details string verbatim.
+describe("foldBotResponse with spatial classifier", () => {
+  it("HTTP 500 + 'target space is occupied' → error_type=target_occupied", () => {
+    const out = foldBotResponse({
+      ok: false, status: 500,
+      body: { error: "Can't place crafting_table at 0, 70, 1: target space is occupied by prismarine. Dig that block first or choose an empty adjacent space." },
+    });
+    assert.equal(out.ok, false);
+    assert.equal(out.error_type, "target_occupied");
+    assert.match(out.details, /target space is occupied/);
+  });
+
+  it("HTTP 500 + 'inside my own body' → error_type=bot_in_target", () => {
+    const out = foldBotResponse({
+      ok: false, status: 500,
+      body: { error: "Can't place cobblestone at (0,71,0): that cell is inside my own body." },
+    });
+    assert.equal(out.error_type, "bot_in_target");
+  });
+
+  it("HTTP 500 + 'no solid adjacent block' → error_type=no_solid_neighbor", () => {
+    const out = foldBotResponse({
+      ok: false, status: 500,
+      body: { error: "Can't place cobblestone at 0, 100, 0: no solid adjacent block to place against." },
+    });
+    assert.equal(out.error_type, "no_solid_neighbor");
+  });
+
+  it("HTTP 500 generic error → unchanged error_type=bot_action_failed", () => {
+    const out = foldBotResponse({
+      ok: false, status: 500,
+      body: { error: "Bot movement pathfinder timeout" },
+    });
+    assert.equal(out.error_type, "bot_action_failed");
   });
 });

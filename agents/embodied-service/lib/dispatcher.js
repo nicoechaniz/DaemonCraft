@@ -370,6 +370,32 @@ async function botAction(name, body, botUrl = null) {
 }
 
 /**
+ * Canonical spatial-failure classifiers — pattern-match the bot's error
+ * string and promote a generic `bot_action_failed` / `bot_soft_failure`
+ * to one of the three canonical spatial error_types the runner's Tier 2a
+ * auto-recovery is keyed on (`local_agent/embodied.py:SPATIAL_ERRORS`
+ * and `hermes-agent/tools/embodied_plan_tool.py` retry block).
+ *
+ * Kept deliberately small (3 patterns) to avoid drift from the runner's
+ * expected set. Anything not matched here falls through to the generic
+ * `bot_action_failed` / `bot_soft_failure` and is recovered at the SOUL
+ * pattern-matching layer instead.
+ */
+const SPATIAL_ERROR_CLASSIFIERS = [
+  [/target space is occupied/i, "target_occupied"],
+  [/inside my own body|own footprint/i, "bot_in_target"],
+  [/no solid adjacent block|no solid neighbour to place against/i, "no_solid_neighbor"],
+];
+
+function classifyBotError(details) {
+  if (!details || typeof details !== "string") return null;
+  for (const [pattern, error_type] of SPATIAL_ERROR_CLASSIFIERS) {
+    if (pattern.test(details)) return error_type;
+  }
+  return null;
+}
+
+/**
  * Fold the bot's `{ok, status, body}` into `{ok, data?, error?, error_type?, status?}`.
  *
  * The bot returns HTTP 200 with `{ok: true, result: "Mined 0/1 oak_log..."}`
@@ -379,6 +405,12 @@ async function botAction(name, body, botUrl = null) {
  * which misleads upstream agents trying to recover. Detected via
  * `result` string patterns and surfaced as `ok=false` with
  * `error_type: "bot_soft_failure"`.
+ *
+ * Spatial placement failures are further classified into canonical
+ * error_types (`target_occupied | bot_in_target | no_solid_neighbor`)
+ * via `classifyBotError()` so the runner's Tier 2a auto-recovery (which
+ * is keyed on these exact strings) fires deterministically instead of
+ * relying on the SOUL pattern-matching fallback.
  */
 function foldBotResponse(r) {
   if (r.ok) {
@@ -387,17 +419,18 @@ function foldBotResponse(r) {
     if (softFailure) {
       return {
         ok: false,
-        error_type: "bot_soft_failure",
+        error_type: classifyBotError(softFailure) || "bot_soft_failure",
         details: softFailure,
         data: rest,
       };
     }
     return { ok: true, data: rest };
   }
+  const details = r.body?.error ?? `bot returned status ${r.status}`;
   return {
     ok: false,
-    error_type: "bot_action_failed",
-    details: r.body?.error ?? `bot returned status ${r.status}`,
+    error_type: classifyBotError(details) || "bot_action_failed",
+    details,
     status: r.status,
   };
 }
@@ -512,4 +545,4 @@ export async function dispatch(toolCall, botUrl = null, allowedTools = null) {
   }
 }
 
-export { SIGNAL_TOOLS, HANDLERS, DEFAULT_BOT_URL, foldBotResponse, detectSoftFailure };
+export { SIGNAL_TOOLS, HANDLERS, DEFAULT_BOT_URL, foldBotResponse, detectSoftFailure, classifyBotError };

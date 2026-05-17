@@ -273,6 +273,15 @@ async function handleIntent(req, res) {
       return jsonResponse(res, 200, {
         ok: false,
         context_id,
+        // Populate `error` so upstream consumers (embodied_plan_tool.py,
+        // local_agent/embodied.py) don't fall through to "unknown error".
+        // The structured `plan`/`execution_results`/`mitigations` below
+        // are kept for full observability.
+        error: {
+          error_type: "empty_model_response",
+          details:
+            "Ollama returned empty raw output; consumer-side mitigation synthesized raise_guardian_event(model_unavailable)",
+        },
         plan: {
           body_plan: ["model returned empty response; consumer-side mitigation"],
           checks: ["parse_failed with empty raw — likely Ollama or model availability issue"],
