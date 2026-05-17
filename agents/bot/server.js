@@ -1865,6 +1865,7 @@ async collect({ block, count = 1 }) {
     // Only mine blocks at the bot's eye level or above.
     // Use bot Y (eye level), not feet — the goto already put us at the block's Y,
     // so comparing against feet would let through blocks at the bot's new lower level.
+    const botPos = b.entity.position;
     const botEyeY = Math.floor(botPos.y);
     const botFeet = botEyeY - 1;
 
