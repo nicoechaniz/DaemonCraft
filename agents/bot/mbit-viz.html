@@ -110,7 +110,9 @@
 </div>
 
 <script>
-const BOT_URL = 'http://localhost:3003';
+// Use the origin that served this page so the viewer works regardless of
+// which bot's port serves it (3001 AsciiProbe, 3002 gAndy, 3003 CompAII…).
+const BOT_URL = window.location.origin;
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 let currentMode = 'char';
@@ -119,8 +121,9 @@ let blockData = null;
 let followTimer = null;
 let lastText = '';
 
-// Also start follow if checked
-if (document.getElementById('follow')?.checked) toggleFollow();
+// Follow auto-init is deferred to the bottom of this script — it depends on
+// toggleFollow() being defined, and that's a window.* assignment (not a
+// hoisted declaration), so calling it here would throw ReferenceError.
 
 const BLOCK_COLORS = {
   air:'#00000000', grass_block:'#7c9c4c', dirt:'#8b6914',
@@ -449,6 +452,10 @@ try {
 
 resizeCanvas();
 refresh();
+
+// Auto-start follow mode if the checkbox is checked at boot.
+// (Definition of toggleFollow is above this line — see window.toggleFollow.)
+if (document.getElementById('follow')?.checked) toggleFollow();
 
 window.addEventListener('resize', () => { resizeCanvas(); draw(); });
 document.addEventListener('keydown', (e) => {
