@@ -78,7 +78,9 @@
 <script src="/three.min.js"></script>
 <script src="/OrbitControls.js"></script>
 <script>
-const BOT_URL = 'http://localhost:3003';
+// Use the origin that served this page so the viewer works regardless of
+// which bot's port serves it (3001 AsciiProbe, 3002 gAndy, 3003 CompAII…).
+const BOT_URL = window.location.origin;
 const scene = new THREE.Scene();
 scene.background = new THREE.Color('#020617');
 scene.fog = new THREE.Fog('#020617', 15, 50);

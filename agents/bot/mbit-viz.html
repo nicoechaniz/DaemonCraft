@@ -110,7 +110,9 @@
 </div>
 
 <script>
-const BOT_URL = 'http://localhost:3003';
+// Use the origin that served this page so the viewer works regardless of
+// which bot's port serves it (3001 AsciiProbe, 3002 gAndy, 3003 CompAII…).
+const BOT_URL = window.location.origin;
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 let currentMode = 'char';
