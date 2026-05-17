@@ -223,11 +223,14 @@ class AgentRunner:
 
             if tool_calls:
                 # Append assistant message with tool_calls
-                self.messages.append({
+                assistant_msg = {
                     "role": "assistant",
                     "content": msg.get("content", ""),
                     "tool_calls": tool_calls,
-                })
+                }
+                if "reasoning_content" in msg:
+                    assistant_msg["reasoning_content"] = msg["reasoning_content"]
+                self.messages.append(assistant_msg)
 
                 for tc in tool_calls:
                     fn = tc.get("function", {})

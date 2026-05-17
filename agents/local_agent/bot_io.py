@@ -125,6 +125,7 @@ class BotIO:
 
         for e in new_entries:
             self._last_seen_timestamp = max(self._last_seen_timestamp, e.get("time", 0))
+        logger.debug("BotIO parsed %d new chat msgs (last_seen=%.0f)", len(new_entries), self._last_seen_timestamp)
 
         results: list[ChatMsg] = []
         for entry in new_entries:

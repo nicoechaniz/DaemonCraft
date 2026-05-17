@@ -57,6 +57,7 @@ async def test_chat_posts_correct_payload():
 async def test_chat_preserves_custom_model_name():
     client = KimiClient(api_key="sk-test", model="custom-model-v1.2")
     mock_resp = MagicMock()
+    mock_resp.status_code = 200
     mock_resp.json.return_value = {"choices": []}
     mock_resp.raise_for_status = MagicMock()
 

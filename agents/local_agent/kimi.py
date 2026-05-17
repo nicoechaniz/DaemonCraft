@@ -13,7 +13,9 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import logging
 
+logger = logging.getLogger(__name__)
 
 # Replicate _kimi_coding_patches.py — preserve the dot in kimi-k2.6
 _KIMI_MODEL_OVERRIDES = {
@@ -158,5 +160,7 @@ class KimiClient:
 
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             resp = await client.post(url, headers=headers, json=payload)
+            if resp.status_code >= 400:
+                logger.error("Kimi API error %s: %s", resp.status_code, resp.text[:800])
             resp.raise_for_status()
             return resp.json()  # type: ignore[no-any-return]
