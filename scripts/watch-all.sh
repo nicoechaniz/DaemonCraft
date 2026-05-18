@@ -16,8 +16,11 @@ MAG='\033[0;35m';    CYN='\033[0;36m';     GRAY='\033[0;90m'
 BOLD='\033[1m';      NC='\033[0m'
 
 # Cleanup on exit
-cleanup() { kill 0 2>/dev/null; }
-trap cleanup EXIT INT TERM
+cleanup() {
+  jobs -p | xargs -r kill 2>/dev/null
+  wait 2>/dev/null
+}
+trap cleanup EXIT INT TERM HUP
 
 echo -e "${BOLD}=== DaemonCraft Unified Watch — ${CAST}/${AGENT} ===${NC}"
 echo -e "  ${CYN}[GANDY]${NC} embodied-service (Gemma-Andy plans, tool dispatch)"
@@ -54,7 +57,11 @@ tail -n 0 -F "${LOG_DIR}/${AGENT}_bot.log" 2>/dev/null \
   | while IFS= read -r line; do
       # Bot verbose requests
       if echo "$line" | grep -q '\[req\]'; then
-        echo -e "${GRN}[BOT]${NC} ${line#*\[req\] }"
+        req=$(echo "$line" | sed 's/^.*\[req\] //')
+        echo -e "${GRN}[BOT]${NC} REQ ${req}"
+      elif echo "$line" | grep -q '\[res\]'; then
+        res=$(echo "$line" | sed 's/^.*\[res\] //')
+        echo -e "${GRAY}[BOT]${NC} RES ${res}"
       # Bot startup/config messages
       elif echo "$line" | grep -qE '\[config\]|\[registry\]|\[ws\]'; then
         echo -e "${GRN}[BOT]${NC} ${line}"

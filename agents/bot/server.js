@@ -3494,6 +3494,12 @@ function parseBody(req) {
 }
 
 function respond(res, status, data) {
+  if (process.env.BOT_VERBOSE) {
+    const bodyStr = JSON.stringify(data);
+    const snippet = bodyStr.length > 150 ? bodyStr.slice(0, 150) + '…' : bodyStr;
+    const methodPath = res._verbose_req || '';
+    console.error(`[res] ${methodPath} → ${status} ${snippet}`);
+  }
   res.writeHead(status, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
   res.end(JSON.stringify(data));
 }
@@ -3513,13 +3519,13 @@ const httpServer = http.createServer(async (req, res) => {
   const path = url.pathname;
 
   if (process.env.BOT_VERBOSE) {
+    res._verbose_req = `${req.method} ${path}`;
     const bodyHint = req.method !== 'GET'
       ? await new Promise(resolve => {
           let data = ''; req.on('data', c => data += c); req.on('end', () => resolve(data.slice(0,120)));
         })
       : '';
-    const peer = req.socket?.remoteAddress || '';
-    console.error(`[req] ${req.method} ${path}${bodyHint ? ' ' + bodyHint : ''} (${peer})`);
+    console.error(`[req] ${req.method} ${path}${bodyHint ? ' ' + bodyHint : ''} (${req.socket?.remoteAddress || ''})`);
   }
 
   try {
