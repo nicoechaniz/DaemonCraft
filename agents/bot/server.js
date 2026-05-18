@@ -3505,10 +3505,13 @@ function parseBody(req) {
 
 function respond(res, status, data) {
   if (process.env.BOT_VERBOSE) {
-    const bodyStr = JSON.stringify(data);
-    const snippet = bodyStr.length > 150 ? bodyStr.slice(0, 150) + '…' : bodyStr;
     const methodPath = res._verbose_req || '';
-    console.error(`[res] ${methodPath} → ${status} ${snippet}`);
+    // Also skip RES for quiet polling endpoints
+    if (!res._verbose_quiet) {
+      const bodyStr = JSON.stringify(data);
+      const snippet = bodyStr.length > 150 ? bodyStr.slice(0, 150) + '…' : bodyStr;
+      console.error(`[res] ${methodPath} → ${status} ${snippet}`);
+    }
   }
   res.writeHead(status, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
   res.end(JSON.stringify(data));
@@ -3530,7 +3533,13 @@ const httpServer = http.createServer(async (req, res) => {
 
   if (process.env.BOT_VERBOSE) {
     res._verbose_req = `${req.method} ${path}`;
-    console.error(`[req] ${req.method} ${path} (${req.socket?.remoteAddress || ''})`);
+    // Skip logging spammy polling endpoints — only log on POST or interesting GETs
+    const QUIET_GETS = new Set(['/status', '/health', '/nearby', '/inventory', '/marks', '/bot/status', '/bot/effects', '/bot/gamemode']);
+    const isQuiet = req.method === 'GET' && QUIET_GETS.has(path);
+    if (isQuiet) res._verbose_quiet = true;
+    if (!isQuiet) {
+      console.error(`[req] ${req.method} ${path} (${req.socket?.remoteAddress || ''})`);
+    }
   }
 
   try {
