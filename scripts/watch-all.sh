@@ -56,7 +56,10 @@ journalctl --user -u embodied-service.service -f -n 0 -o cat 2>/dev/null \
 tail -n 0 -F "${LOG_DIR}/${AGENT}_bot.log" 2>/dev/null \
   | while IFS= read -r line; do
       # Bot verbose requests
-      if echo "$line" | grep -q '\[mineflayer\]'; then
+      if echo "$line" | grep -q '\[motion\]'; then
+        m=$(echo "$line" | sed 's/^.*\[motion\] //')
+        echo -e "${MAG}[MOTN]${NC} ${m}"
+      elif echo "$line" | grep -q '\[mineflayer\]'; then
         mf=$(echo "$line" | sed 's/^.*\[mineflayer\] //')
         echo -e "${BLU}[MFLY]${NC} ${mf}"
       elif echo "$line" | grep -q '\[req-body\]'; then

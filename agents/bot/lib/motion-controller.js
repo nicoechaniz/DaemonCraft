@@ -3,6 +3,10 @@
  *
  * All pathfinding, goal setting, and movement cleanup is centralized here so server.js
  * never touches pathfinder directly for navigation.
+ *
+ * Stuck recovery: when the pathfinder reports consecutive "stuck" resets,
+ * the controller spams jump for a few seconds while the pathfinder keeps
+ * trying to move forward — like a human would.
  */
 
 import pathfinderPkg from 'mineflayer-pathfinder';
@@ -12,9 +16,43 @@ export class MotionController {
   constructor(bot) {
     this.bot = bot;
     this._active = false;
+    this._stuckCount = 0;
+    this._jumpTimer = null;
+
+    // Listen for pathfinder stuck signals
+    bot.on('path_reset', (reason) => {
+      if (reason === 'stuck') {
+        this._stuckCount++;
+        if (this._stuckCount >= 3 && !this._jumpTimer) {
+          this._startJumpSpam();
+        }
+      }
+    });
+    bot.on('goal_reached', () => {
+      this._stuckCount = 0;
+      this._stopJumpSpam();
+    });
   }
 
   get isActive() { return this._active; }
+
+  _startJumpSpam() {
+    console.error('[motion] stuck-jump: spamming jump for 3s');
+    this.bot.setControlState('jump', true);
+    this._jumpTimer = setTimeout(() => {
+      console.error('[motion] stuck-jump: done');
+      this._stopJumpSpam();
+    }, 3000);
+  }
+
+  _stopJumpSpam() {
+    if (this._jumpTimer) {
+      clearTimeout(this._jumpTimer);
+      this._jumpTimer = null;
+    }
+    this.bot.setControlState('jump', false);
+    this.bot.setControlState('forward', false);
+  }
 
   async goto(x, y, z, timeoutMs = 15000) {
     await this.stop();
@@ -65,6 +103,8 @@ export class MotionController {
 
   async stop() {
     this._active = false;
+    this._stuckCount = 0;
+    this._stopJumpSpam();
     try { this.bot.pathfinder.setGoal(null); } catch {}
     try { this.bot.stopDigging(); } catch {}
     try { this.bot.clearControlStates(); } catch {}
