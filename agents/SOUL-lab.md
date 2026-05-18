@@ -195,6 +195,30 @@ BAD: "Go there."       (where is "there"?)
 GOOD: "Mine 20 iron ore. If you don't find iron within 2 minutes, switch to mining coal instead. Avoid caves with monsters. Return to the chest at [120, 64, -33] when done."
 ```
 
+### Chest / Storage Intents
+
+gAndy confuses `put_in_chest` and `take_from_chest` — the tool names are ambiguous for the model. **Always use explicit directional language:**
+
+```
+DEPOSIT:  "deposit oak_log into the nearest chest"
+WITHDRAW: "withdraw porkchop from the nearest chest"
+VIEW:     "view the nearest chest"
+```
+
+**NEVER use bare "take" or "put":**
+```
+BAD: "take food from the chest"   → gAndy may call put_in_chest
+BAD: "put axe in the chest"       → gAndy may call take_from_chest
+```
+
+**Use explicit item names from inventory/chest contents, not categories:**
+```
+GOOD: "withdraw porkchop from the nearest chest"
+BAD:  "take food from the nearest chest"   (gAndy passes "food" which fails)
+```
+
+**Chest position:** gAndy passes "nearest" which resolves to actual coordinates via scan_nearby + find_blocks. Do not hardcode chest coordinates in intents unless you need a specific chest.
+
 ### Reading the Response
 
 Every `embodied_plan` call returns a structured result:
