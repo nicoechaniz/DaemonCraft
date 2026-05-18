@@ -48,7 +48,7 @@ import http from 'http';
 import { URL } from 'url';
 import mineflayer from 'mineflayer';
 import pathfinderPkg from 'mineflayer-pathfinder';
-const { pathfinder, Movements, goals } = pathfinderPkg;
+const { pathfinder, Movements } = pathfinderPkg;
 // pvp plugin disabled — its deprecated physicTick event breaks pathfinder
 // import pvpPkg from 'mineflayer-pvp';
 // const pvpPlugin = pvpPkg.plugin;
@@ -85,6 +85,7 @@ import {
   recipeDiagnostics,
   recipeIngredientCounts,
 } from './lib/action_feedback.js';
+import { MotionController } from './lib/motion-controller.js';
 // mine-photo removed — prismarine-viewer + puppeteer replaced it (see line 253).
 // The package was broken on Node 22 (fs.globSync at module load) and the
 // only call site (Camera ray-tracing init) was removed below.
@@ -242,6 +243,7 @@ const WORKSPACE_DIR = unifiedConfig.workspace_dir || process.env.WORKSPACE_DIR |
 // ═══════════════════════════════════════════════════════════════════
 
 let bot = null;
+let motion = null;
 let mcData = null;
 let botReady = false;
 let chatLog = [];
@@ -523,6 +525,10 @@ async function createBotImpl() {
       moves.allowParkour = PATHFINDER_CFG.allow_parkour ?? true;
       bot.pathfinder.setMovements(moves);
 
+      // MotionController owns all pathfinding state
+      motion = new MotionController(bot);
+      bot.motion = motion;
+
       // DEBUG: log pathfinder state every 5 seconds
       setInterval(() => {
         if (!bot || !bot.pathfinder) return;
@@ -613,8 +619,7 @@ async function createBotImpl() {
         const dist = pos.distanceTo(lastPos);
         if (dist > 5) {
           // Likely teleported — cancel pathfinder and current task
-          try { bot.pathfinder.setGoal(null); } catch {}
-          try { bot.stopDigging(); } catch {}
+          if (bot && bot.motion) { bot.motion.stop().catch(() => {}); }
           if (currentTask && currentTask.status === 'running') {
             currentTask.status = 'cancelled';
             currentTask.error = `Teleported ${dist.toFixed(1)} blocks by server — navigation cancelled`;
@@ -828,7 +833,7 @@ async function climbStaircase(bot, targetY) {
 
     if (Math.floor(bot.entity.position.y) >= targetY) break;
   }
-  bot.clearControlStates();
+  if (bot.motion) bot.motion.stop().catch(() => {});
 }
 
 // List visible entities by type with distances
@@ -1840,33 +1845,16 @@ const ACTIONS = {
   // ── Movement ─────────────────────────────────────
   async goto({ x, y, z }) {
     const b = ensureBot();
-    const goal = new goals.GoalBlock(Math.floor(x), Math.floor(y), Math.floor(z));
-    // Timeout after 15s to prevent blocking the agent forever
-    const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 15000));
-    try {
-      await Promise.race([b.pathfinder.goto(goal), timeout]);
-      return { result: `Arrived at ${fmt(x)}, ${fmt(y)}, ${fmt(z)}` };
-    } catch (e) {
-      try { b.pathfinder.setGoal(null); } catch {}
-      const pos = posObj();
-      if (e.message === 'timeout') return { result: `Walked toward ${fmt(x)},${fmt(y)},${fmt(z)} for 15s, now at ${pos.x},${pos.y},${pos.z}. Use mc bg_goto for long distances.` };
-      return { result: `Navigation failed: ${e.message}. Try mc bg_goto instead.` };
-    }
+    const m = b.motion;
+    if (!m) throw new Error('Motion controller not initialized');
+    return await m.goto(x, y, z);
   },
 
   async goto_near({ x, y, z, range = 2 }) {
     const b = ensureBot();
-    const goal = new goals.GoalNear(Math.floor(x), Math.floor(y), Math.floor(z), range);
-    const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 15000));
-    try {
-      await Promise.race([b.pathfinder.goto(goal), timeout]);
-      return { result: `Arrived near ${fmt(x)}, ${fmt(y)}, ${fmt(z)}` };
-    } catch (e) {
-      try { b.pathfinder.setGoal(null); } catch {}
-      const pos = posObj();
-      if (e.message === 'timeout') return { result: `Walked toward ${fmt(x)},${fmt(y)},${fmt(z)} for 15s, now at ${pos.x},${pos.y},${pos.z}. Use mc bg_goto for long distances.` };
-      return { result: `Navigation failed: ${e.message}. Try mc bg_goto instead.` };
-    }
+    const m = b.motion;
+    if (!m) throw new Error('Motion controller not initialized');
+    return await m.gotoNear(x, y, z, range);
   },
 
   async follow({ player }) {
@@ -1881,8 +1869,9 @@ const ACTIONS = {
       const hint = nearbyEntitiesHint(b);
       throw new Error(`Player/entity "${player}" not found nearby. Visible nearby: ${hint}. Move closer, wait for them, or ask for coordinates.`);
     }
-    b.pathfinder.setGoal(new goals.GoalFollow(entity, 2), true);
-    return { result: `Following ${player}. Use /action/stop to stop.` };
+    const m = b.motion;
+    if (m) return await m.follow(entity);
+    throw new Error('Motion controller not initialized');
   },
 
   async look({ x, y, z }) {
@@ -1893,13 +1882,9 @@ const ACTIONS = {
 
   async stop() {
     const b = ensureBot();
-    b.pathfinder.setGoal(null);
-    try { b.stopDigging(); } catch {}
+    const m = b.motion;
+    if (m) await m.stop();
     if (b.pvp) try { b.pvp.stop(); } catch {}
-    // CRITICAL: Clear all control states to prevent phantom movement/digging
-    // when a new action starts. This prevents goals from previous actions
-    // from interfering with the current one.
-    b.clearControlStates();
     return { result: 'Stopped all actions.' };
   },
 
@@ -1963,7 +1948,7 @@ async collect({ block, count = 1 }) {
         // Navigate to stand one block ABOVE the target, so we mine down onto it
         // rather than standing beside it at the same level (which creates a pit).
         if (b.entity.position.distanceTo(pos) > 4.5) {
-          await b.pathfinder.goto(new goals.GoalNear(pos.x, pos.y + 1, pos.z, 3));
+          if (b.motion) await b.motion.gotoNear(pos.x, pos.y + 1, pos.z, 3);
         }
 
         // Safety: never mine the block directly under our feet
@@ -1992,7 +1977,7 @@ async collect({ block, count = 1 }) {
       if (drops.length === 0) break;
       for (const drop of drops.slice(0, 6)) {
         try {
-          await b.pathfinder.goto(new goals.GoalNear(drop.position.x, drop.position.y, drop.position.z, 1));
+          if (b.motion) await b.motion.gotoNear(drop.position.x, drop.position.y, drop.position.z, 1);
           await sleep(400);
         } catch {}
       }
@@ -2040,7 +2025,7 @@ async collect({ block, count = 1 }) {
     }
     await b.tool.equipForBlock(target);
     if (b.entity.position.distanceTo(target.position) > 4.5) {
-      await b.pathfinder.goto(new goals.GoalNear(x, y, z, 3));
+      if (b.motion) await b.motion.gotoNear(x, y, z, 3);
     }
     await b.dig(target, true);
     return { result: `Mined ${target.name} at ${x}, ${y}, ${z}` };
@@ -2060,7 +2045,7 @@ async collect({ block, count = 1 }) {
 
       for (const drop of drops.slice(0, 8)) {
         try {
-          await b.pathfinder.goto(new goals.GoalNear(drop.position.x, drop.position.y, drop.position.z, 1));
+          if (b.motion) await b.motion.gotoNear(drop.position.x, drop.position.y, drop.position.z, 1);
           await sleep(400);
         } catch {}
       }
@@ -2293,7 +2278,7 @@ async collect({ block, count = 1 }) {
 
     // Approach and attack
     if (entity.position.distanceTo(b.entity.position) > 3) {
-      await b.pathfinder.goto(new goals.GoalNear(entity.position.x, entity.position.y, entity.position.z, 2));
+      if (b.motion) await b.motion.gotoNear(entity.position.x, entity.position.y, entity.position.z, 2);
     }
     await b.attack(entity);
     return { result: `Attacked ${entity.name || target} (${fmt(entity.position.distanceTo(b.entity.position))}m away)` };
@@ -2351,7 +2336,7 @@ async collect({ block, count = 1 }) {
 
     // Approach if far
     if (b.entity.position.distanceTo(targetPos) > 4.5) {
-      await b.pathfinder.goto(new goals.GoalNear(x, y, z, 3));
+      if (b.motion) await b.motion.gotoNear(x, y, z, 3);
     }
 
     // Find reference block to place against
@@ -2420,7 +2405,7 @@ async collect({ block, count = 1 }) {
       await b.equip(item, 'hand');
 
       if (b.entity.position.distanceTo(new Vec3(pos.x, pos.y, pos.z)) > 4.5) {
-        try { await b.pathfinder.goto(new goals.GoalNear(pos.x, pos.y, pos.z, 3)); } catch {}
+        try { if (b.motion) await b.motion.gotoNear(pos.x, pos.y, pos.z, 3); } catch {}
       }
 
       let hadSupport = false;
@@ -2465,7 +2450,7 @@ async collect({ block, count = 1 }) {
 
     // Approach if far
     if (b.entity.position.distanceTo(targetPos) > 4.5) {
-      await b.pathfinder.goto(new goals.GoalNear(x, y, z, 3));
+      if (b.motion) await b.motion.gotoNear(x, y, z, 3);
     }
 
     // Find reference block to place against
@@ -2495,7 +2480,7 @@ async collect({ block, count = 1 }) {
       throw new Error(`Can't interact at ${x}, ${y}, ${z}: target is ${actual}. Use coordinates of an interactable block like chest, door, furnace, bed, or farmland.`);
     }
     if (b.entity.position.distanceTo(block.position) > 4.5) {
-      await b.pathfinder.goto(new goals.GoalNear(x, y, z, 2));
+      if (b.motion) await b.motion.gotoNear(x, y, z, 2);
     }
     await b.activateBlock(block);
     return { result: `Interacted with ${block.name} at ${x}, ${y}, ${z}` };
@@ -2511,12 +2496,12 @@ async collect({ block, count = 1 }) {
     }
     const dist = b.entity.position.distanceTo(target.position);
     if (dist > 4.5) {
-      await b.pathfinder.goto(new goals.GoalNear(x, y, z, 2));
+      if (b.motion) await b.motion.gotoNear(x, y, z, 2);
     } else if (dist < 1.8) {
       // Too close — back up so the hitbox doesn't overlap the block face
       const away = b.entity.position.minus(target.position).normalize().scale(2.5);
       const dest = target.position.plus(away);
-      await b.pathfinder.goto(new goals.GoalNear(dest.x, dest.y, dest.z, 1));
+      if (b.motion) await b.motion.gotoNear(dest.x, dest.y, dest.z, 1);
     }
     const held = b.heldItem?.name || 'hand';
     if (!held.includes('hoe')) {
@@ -2542,11 +2527,11 @@ async collect({ block, count = 1 }) {
     }
     const dist = b.entity.position.distanceTo(target.position);
     if (dist > 4.5) {
-      await b.pathfinder.goto(new goals.GoalNear(x, y, z, 2));
+      if (b.motion) await b.motion.gotoNear(x, y, z, 2);
     } else if (dist < 1.8) {
       const away = b.entity.position.minus(target.position).normalize().scale(2.5);
       const dest = target.position.plus(away);
-      await b.pathfinder.goto(new goals.GoalNear(dest.x, dest.y, dest.z, 1));
+      if (b.motion) await b.motion.gotoNear(dest.x, dest.y, dest.z, 1);
     }
     const held = b.heldItem?.name || 'hand';
     if (held !== 'bone_meal') {
@@ -2567,11 +2552,11 @@ async collect({ block, count = 1 }) {
     }
     const dist = b.entity.position.distanceTo(target.position);
     if (dist > 4.5) {
-      await b.pathfinder.goto(new goals.GoalNear(x, y, z, 2));
+      if (b.motion) await b.motion.gotoNear(x, y, z, 2);
     } else if (dist < 1.8) {
       const away = b.entity.position.minus(target.position).normalize().scale(2.5);
       const dest = target.position.plus(away);
-      await b.pathfinder.goto(new goals.GoalNear(dest.x, dest.y, dest.z, 1));
+      if (b.motion) await b.motion.gotoNear(dest.x, dest.y, dest.z, 1);
     }
     const held = b.heldItem?.name || 'hand';
     if (!held.includes('shovel')) {
@@ -2596,11 +2581,11 @@ async collect({ block, count = 1 }) {
     }
     const dist = b.entity.position.distanceTo(target.position);
     if (dist > 4.5) {
-      await b.pathfinder.goto(new goals.GoalNear(x, y, z, 2));
+      if (b.motion) await b.motion.gotoNear(x, y, z, 2);
     } else if (dist < 1.8) {
       const away = b.entity.position.minus(target.position).normalize().scale(2.5);
       const dest = target.position.plus(away);
-      await b.pathfinder.goto(new goals.GoalNear(dest.x, dest.y, dest.z, 1));
+      if (b.motion) await b.motion.gotoNear(dest.x, dest.y, dest.z, 1);
     }
     const held = b.heldItem?.name || 'hand';
     if (held !== 'flint_and_steel') {
@@ -2739,7 +2724,7 @@ async collect({ block, count = 1 }) {
           -(entity.position.x - b.entity.position.x) * 2, 0,
           -(entity.position.z - b.entity.position.z) * 2
         );
-        try { await b.pathfinder.goto(new goals.GoalNear(fleePos.x, fleePos.y, fleePos.z, 2)); } catch {}
+        try { if (b.motion) await b.motion.gotoNear(fleePos.x, fleePos.y, fleePos.z, 2); } catch {}
         const food = b.inventory.items().find(i => mcData.foodsByName?.[i.name]);
         if (food) { await b.equip(food, 'hand'); try { await b.consume(); } catch {} }
         return { result: `Retreated from ${targetName} at ${b.health} HP. ${hits} hits dealt.` };
@@ -2751,12 +2736,12 @@ async collect({ block, count = 1 }) {
 
       const dist = entity.position.distanceTo(b.entity.position);
       if (dist > 3.5) {
-        b.pathfinder.setGoal(new goals.GoalFollow(entity, 2), true);
+        if (b.motion) await b.motion.follow(entity, 2);
         await sleep(300);
         continue;
       }
 
-      b.pathfinder.setGoal(null);
+      if (b.motion) await b.motion.stop();
       await b.lookAt(entity.position.offset(0, entity.height * 0.8, 0));
       await b.attack(entity);
       hits++;
@@ -2809,7 +2794,7 @@ async collect({ block, count = 1 }) {
     const fleeZ = b.entity.position.z + (dz/len) * distance;
 
     try {
-      await b.pathfinder.goto(new goals.GoalNear(fleeX, b.entity.position.y, fleeZ, 3));
+      if (b.motion) await b.motion.gotoNear(fleeX, b.entity.position.y, fleeZ, 3);
       return { result: `Fled ${distance} blocks from ${from || 'threat'}` };
     } catch {
       return { result: `Tried to flee, moved partially. Health: ${b.health}` };
@@ -2837,7 +2822,7 @@ async collect({ block, count = 1 }) {
     const pos = lastDeath.position;
     const age = Math.round((Date.now() - lastDeath.time) / 1000);
     const b = ensureBot();
-    await b.pathfinder.goto(new goals.GoalNear(pos.x, pos.y, pos.z, 3));
+    if (b.motion) await b.motion.gotoNear(pos.x, pos.y, pos.z, 3);
     return { result: `At death #${lastDeath.deathNumber} (${age}s ago). Lost: ${lastDeath.inventory.map(i=>`${i.name}x${i.count}`).join(', ')}` };
   },
 
@@ -2847,7 +2832,7 @@ async collect({ block, count = 1 }) {
     const block = b.blockAt(new Vec3(x, y, z));
     if (!block) return { result: 'No block at those coordinates' };
     if (b.entity.position.distanceTo(block.position) > 4.5)
-      await b.pathfinder.goto(new goals.GoalNear(x, y, z, 3));
+      if (b.motion) await b.motion.gotoNear(x, y, z, 3);
     const chest = await b.openContainer(block);
     const items = chest.containerItems();
     const summary = items.length > 0 ? items.map(i => `${i.name}x${i.count}`).join(', ') : '(empty)';
@@ -2860,7 +2845,7 @@ async collect({ block, count = 1 }) {
     const block = b.blockAt(new Vec3(x, y, z));
     if (!block) return { result: 'No block there' };
     if (b.entity.position.distanceTo(block.position) > 4.5)
-      await b.pathfinder.goto(new goals.GoalNear(x, y, z, 3));
+      if (b.motion) await b.motion.gotoNear(x, y, z, 3);
     const chest = await b.openContainer(block);
     const invItem = b.inventory.items().find(i => i.name.includes(item));
     if (!invItem) { chest.close(); return { result: `No ${item} in inventory` }; }
@@ -2875,7 +2860,7 @@ async collect({ block, count = 1 }) {
     const block = b.blockAt(new Vec3(x, y, z));
     if (!block) return { result: 'No block there' };
     if (b.entity.position.distanceTo(block.position) > 4.5)
-      await b.pathfinder.goto(new goals.GoalNear(x, y, z, 3));
+      if (b.motion) await b.motion.gotoNear(x, y, z, 3);
     const chest = await b.openContainer(block);
     const chestItem = chest.containerItems().find(i => i.name.includes(item));
     if (!chestItem) { chest.close(); return { result: `No ${item} in container` }; }
@@ -2912,7 +2897,7 @@ async collect({ block, count = 1 }) {
     if (!locs[name]) return { result: `No location '${name}'` };
     const l = locs[name];
     const b = ensureBot();
-    await b.pathfinder.goto(new goals.GoalNear(l.x, l.y, l.z, 2));
+    if (b.motion) await b.motion.gotoNear(l.x, l.y, l.z, 2);
     return { result: `Arrived at '${name}' (${l.x},${l.y},${l.z})` };
   },
   async unmark({ name }) {
@@ -3026,7 +3011,7 @@ async collect({ block, count = 1 }) {
     // Sprint toward and attack — extra knockback on first sprint hit
     b.setControlState('sprint', true);
     if (entity.position.distanceTo(b.entity.position) > 3.5) {
-      await b.pathfinder.goto(new goals.GoalNear(entity.position.x, entity.position.y, entity.position.z, 2));
+      if (b.motion) await b.motion.gotoNear(entity.position.x, entity.position.y, entity.position.z, 2);
     }
     await b.lookAt(entity.position.offset(0, entity.height * 0.8, 0));
     await b.attack(entity);
@@ -3055,7 +3040,7 @@ async collect({ block, count = 1 }) {
     
     // Approach
     if (entity.position.distanceTo(b.entity.position) > 3.5) {
-      await b.pathfinder.goto(new goals.GoalNear(entity.position.x, entity.position.y, entity.position.z, 2));
+      if (b.motion) await b.motion.gotoNear(entity.position.x, entity.position.y, entity.position.z, 2);
     }
     
     // Jump + attack on the way down = critical hit (150% damage)
@@ -3236,7 +3221,7 @@ async collect({ block, count = 1 }) {
       throw new Error(`No furnace at ${x},${y},${z}`);
 
     if (b.entity.position.distanceTo(furnaceBlock.position) > 4.5) {
-      await b.pathfinder.goto(new goals.GoalNear(x, y, z, 3));
+      if (b.motion) await b.motion.gotoNear(x, y, z, 3);
     }
     const furnace = await b.openFurnace(furnaceBlock);
     const inputItem = furnace.inputItem();
@@ -3261,7 +3246,7 @@ async collect({ block, count = 1 }) {
     if (!furnaceBlock) throw new Error(`No block at ${x},${y},${z}`);
 
     if (b.entity.position.distanceTo(furnaceBlock.position) > 4.5) {
-      await b.pathfinder.goto(new goals.GoalNear(x, y, z, 3));
+      if (b.motion) await b.motion.gotoNear(x, y, z, 3);
     }
     const furnace = await b.openFurnace(furnaceBlock);
     const output = furnace.outputItem();
@@ -3994,8 +3979,7 @@ const httpServer = http.createServer(async (req, res) => {
       // Cancel current task
       if (path === '/task/cancel') {
         const b = ensureBot();
-        b.pathfinder.setGoal(null);
-        try { b.stopDigging(); } catch {}
+        if (b.motion) b.motion.stop().catch(() => {});
         if (currentTask && currentTask.status === 'running') {
           currentTask.status = 'cancelled';
         }
@@ -4005,8 +3989,7 @@ const httpServer = http.createServer(async (req, res) => {
       // Interrupt agent loop LLM turn (not just physical actions)
       if (path === '/agent/interrupt') {
         const b = ensureBot();
-        b.pathfinder.setGoal(null);
-        try { b.stopDigging(); } catch {}
+        if (b.motion) b.motion.stop().catch(() => {});
         if (currentTask && currentTask.status === 'running') {
           currentTask.status = 'cancelled';
         }
@@ -4370,16 +4353,8 @@ const httpServer = http.createServer(async (req, res) => {
         return respond(res, 400, { ok: false, error: `Unknown action "${actionName}". Available: ${available}` });
       }
 
-      // Cancel any lingering pathfinder goal from a previous action
-      // so the new action can safely use pathfinder.goto() without
-      // "The goal was changed before it could be completed!" errors.
-      // Skip for pathfinding actions (goto, follow, etc.) — they
-      // need their own goal to stay alive.
+      // PATHFINDING_ACTIONS guard kept per spec (cleanup block removed — MotionController owns state)
       const PATHFINDING_ACTIONS = new Set(['goto', 'goto_near', 'follow', 'move_away']);
-      if (bot && bot.pathfinder && !PATHFINDING_ACTIONS.has(actionName)) {
-        try { bot.pathfinder.setGoal(null); } catch {}
-        try { bot.clearControlStates(); } catch {}
-      }
 
       actionInProgress = true;
       try {
@@ -4421,9 +4396,7 @@ setInterval(() => {
     if (old) {
       const dist = Math.sqrt((pos.x-old.x)**2+(pos.y-old.y)**2+(pos.z-old.z)**2);
       if (dist < 2) {
-        try { bot.pathfinder.setGoal(null); } catch {}
-        try { bot.stopDigging(); } catch {}
-        try { bot.clearControlStates(); } catch {}
+        if (bot.motion) bot.motion.stop().catch(() => {});
         currentTask.status = 'stuck';
         currentTask.error = `Stuck at ${Math.round(pos.x)},${Math.round(pos.y)},${Math.round(pos.z)} — try a different approach`;
         log('STUCK detected (10s no movement) — task cancelled');
@@ -4432,9 +4405,7 @@ setInterval(() => {
     // General task timeout — any running task > 60s is suspicious
     const elapsed = currentTask.started ? Date.now() - currentTask.started : 0;
     if (elapsed > 60000) {
-      try { bot.pathfinder.setGoal(null); } catch {}
-      try { bot.stopDigging(); } catch {}
-      try { bot.clearControlStates(); } catch {}
+      if (bot.motion) bot.motion.stop().catch(() => {});
       currentTask.status = 'stuck';
       currentTask.error = `Task timed out after ${Math.round(elapsed/1000)}s — try a different approach`;
       log(`TASK TIMEOUT (${Math.round(elapsed/1000)}s) — task cancelled`);
@@ -4449,8 +4420,7 @@ setInterval(() => {
       );
       if (allSameSpot && !bot.entity.onGround) {
         // Jumping in place — stop all controls
-        try { bot.clearControlStates(); } catch {}
-        try { bot.pathfinder.setGoal(null); } catch {}
+        if (bot.motion) bot.motion.stop().catch(() => {});
         log('Jump-stuck detected — cleared controls');
       }
     }
@@ -4461,9 +4431,7 @@ setInterval(() => {
     if (old) {
       const dist = Math.sqrt((pos.x-old.x)**2+(pos.y-old.y)**2+(pos.z-old.z)**2);
       if (dist < 2) {
-        try { bot.pathfinder.setGoal(null); } catch {}
-        try { bot.stopDigging(); } catch {}
-        try { bot.clearControlStates(); } catch {}
+        if (bot.motion) bot.motion.stop().catch(() => {});
         log('Phantom pathfinder goal detected (no running task, 10s no movement) — cleared');
       }
     }
@@ -4474,9 +4442,7 @@ setInterval(() => {
       const avgZ = recent.reduce((s, p) => s + p.z, 0) / recent.length;
       const maxDev = Math.max(...recent.map(p => Math.sqrt((p.x - avgX)**2 + (p.z - avgZ)**2)));
       if (maxDev < 2.5) {
-        try { bot.pathfinder.setGoal(null); } catch {}
-        try { bot.stopDigging(); } catch {}
-        try { bot.clearControlStates(); } catch {}
+        if (bot.motion) bot.motion.stop().catch(() => {});
         log('Phantom pathfinder goal detected (micro-oscillation within 2.5 blocks) — cleared');
       }
     }
