@@ -739,6 +739,31 @@ async function createBotImpl() {
       resolve(bot);
     });
 
+    // ── Verbose pathfinder event logging (BOT_VERBOSE) ──
+    if (process.env.BOT_VERBOSE) {
+      bot.on('goal_updated', (goal, dynamic) => {
+        const g = goal ? { x: goal.x?.toFixed(1), y: goal.y?.toFixed(1), z: goal.z?.toFixed(1) } : null;
+        console.error(`[mineflayer] goal_updated dynamic=${dynamic} goal=${g ? JSON.stringify(g) : 'null'}`);
+      });
+      bot.on('goal_reached', (goal) => {
+        const g = goal ? { x: goal.x?.toFixed(1), y: goal.y?.toFixed(1), z: goal.z?.toFixed(1) } : null;
+        console.error(`[mineflayer] goal_reached at ${g ? JSON.stringify(g) : '?'}`);
+      });
+      bot.on('path_reset', (reason) => {
+        console.error(`[mineflayer] path_reset reason="${reason}"`);
+      });
+      bot.on('path_stop', () => {
+        console.error(`[mineflayer] path_stop`);
+      });
+      bot.on('path_update', (results) => {
+        if (results.status === 'success') {
+          console.error(`[mineflayer] path_update path_len=${results.path.length} cycles=${results.cycles}`);
+        } else {
+          console.error(`[mineflayer] path_update FAILED status=${results.status}`);
+        }
+      });
+    }
+
     bot.on('error', (err) => {
       log(`Bot error: ${err.message}`);
     });

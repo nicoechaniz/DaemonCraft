@@ -12,8 +12,8 @@ LOG_DIR="$HOME/.local/share/daemoncraft/${CAST}/logs"
 
 # Colors (ANSI)
 RED='\033[0;31m';    GRN='\033[0;32m';    YLW='\033[1;33m'
-MAG='\033[0;35m';    CYN='\033[0;36m';     GRAY='\033[0;90m'
-BOLD='\033[1m';      NC='\033[0m'
+MAG='\033[0;35m';    CYN='\033[0;36m';    BLU='\033[0;34m'
+GRAY='\033[0;90m';   BOLD='\033[1m';      NC='\033[0m'
 
 # Cleanup on exit
 cleanup() {
@@ -56,7 +56,10 @@ journalctl --user -u embodied-service.service -f -n 0 -o cat 2>/dev/null \
 tail -n 0 -F "${LOG_DIR}/${AGENT}_bot.log" 2>/dev/null \
   | while IFS= read -r line; do
       # Bot verbose requests
-      if echo "$line" | grep -q '\[req-body\]'; then
+      if echo "$line" | grep -q '\[mineflayer\]'; then
+        mf=$(echo "$line" | sed 's/^.*\[mineflayer\] //')
+        echo -e "${BLU}[MFLY]${NC} ${mf}"
+      elif echo "$line" | grep -q '\[req-body\]'; then
         body=$(echo "$line" | sed 's/^.*\[req-body\] //')
         echo -e "${GRAY}[BOT]${NC} BODY ${body}"
       elif echo "$line" | grep -q '\[req\]'; then
