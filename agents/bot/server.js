@@ -3512,6 +3512,16 @@ const httpServer = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${config.api.port}`);
   const path = url.pathname;
 
+  if (process.env.BOT_VERBOSE) {
+    const bodyHint = req.method !== 'GET'
+      ? await new Promise(resolve => {
+          let data = ''; req.on('data', c => data += c); req.on('end', () => resolve(data.slice(0,120)));
+        })
+      : '';
+    const peer = req.socket?.remoteAddress || '';
+    console.error(`[req] ${req.method} ${path}${bodyHint ? ' ' + bodyHint : ''} (${peer})`);
+  }
+
   try {
     // ── GET endpoints (observation) ──────────────
     if (req.method === 'GET') {
@@ -4327,6 +4337,16 @@ const httpServer = http.createServer(async (req, res) => {
       if (!actionFn) {
         const available = Object.keys(ACTIONS).join(', ');
         return respond(res, 400, { ok: false, error: `Unknown action "${actionName}". Available: ${available}` });
+      }
+
+      // Cancel any lingering pathfinder goal from a previous action
+      // so the new action can safely use pathfinder.goto() without
+      // "The goal was changed before it could be completed!" errors.
+      // This covers place, collect, dig, attack, and all other actions
+      // that internally call pathfinder after a move/follow/go_mark.
+      if (bot && bot.pathfinder) {
+        try { bot.pathfinder.setGoal(null); } catch {}
+        try { bot.clearControlStates(); } catch {}
       }
 
       actionInProgress = true;
