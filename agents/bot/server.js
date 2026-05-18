@@ -4373,9 +4373,10 @@ const httpServer = http.createServer(async (req, res) => {
       // Cancel any lingering pathfinder goal from a previous action
       // so the new action can safely use pathfinder.goto() without
       // "The goal was changed before it could be completed!" errors.
-      // This covers place, collect, dig, attack, and all other actions
-      // that internally call pathfinder after a move/follow/go_mark.
-      if (bot && bot.pathfinder) {
+      // Skip for pathfinding actions (goto, follow, etc.) — they
+      // need their own goal to stay alive.
+      const PATHFINDING_ACTIONS = new Set(['goto', 'goto_near', 'follow', 'move_away']);
+      if (bot && bot.pathfinder && !PATHFINDING_ACTIONS.has(actionName)) {
         try { bot.pathfinder.setGoal(null); } catch {}
         try { bot.clearControlStates(); } catch {}
       }

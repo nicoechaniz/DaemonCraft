@@ -224,8 +224,12 @@ const HANDLERS = {
   // ── Inventory ──────────────────────────────────────────────────
   get_inventory: async (_args) => botGet("/inventory").then(toResult),
 
-  equip_item: async (args) =>
-    botAction("equip", { item: args.item, slot: args.slot ?? "hand" }),
+  equip_item: async (args) => {
+    const SLOT_MAP = {0: 'hand', 1: 'off-hand', 2: 'head', 3: 'torso', 4: 'legs', 5: 'feet'};
+    let slot = args.slot ?? 'hand';
+    if (typeof slot === 'number') slot = SLOT_MAP[slot] || 'hand';
+    return botAction("equip", { item: args.item, slot });
+  },
 
   toss_item: async (args) =>
     botAction("toss", { item: args.item, count: args.quantity ?? 1 }),
