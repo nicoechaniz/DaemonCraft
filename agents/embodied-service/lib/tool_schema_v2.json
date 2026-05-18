@@ -507,7 +507,7 @@
         "chest_ref": "BlockRef optional"
       },
       "risk_default": "medium",
-      "notes": "Maps to mc_manage.deposit."
+      "notes": "Deposit items INTO a chest. Use when player says 'put', 'deposit', 'store'."
     },
     {
       "name": "take_from_chest",
@@ -519,7 +519,7 @@
         "chest_ref": "BlockRef optional"
       },
       "risk_default": "medium",
-      "notes": "Maps to mc_manage.withdraw. Other-player chest access is blocked."
+      "notes": "Withdraw items FROM a chest. Use when player says 'take', 'withdraw', 'get', 'grab'."
     },
     {
       "name": "view_chest",

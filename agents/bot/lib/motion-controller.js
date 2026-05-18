@@ -55,9 +55,13 @@ export class MotionController {
     this._log('recovery: backstep (crouched)');
     b.setControlState('sneak', true);
     b.setControlState('back', true);
-    await new Promise(r => setTimeout(r, 200));
+    await new Promise(r => setTimeout(r, 260));
     b.setControlState('back', false);
     b.setControlState('sneak', false);
+
+    // Randomize yaw ±20% so each jump hits differently
+    const yawJitter = (Math.random() - 0.5) * 0.4 * Math.PI; // ±20% of full circle
+    await b.look(b.entity.yaw + yawJitter, 0, false);
 
     // Jump forward
     this._log('recovery: jump forward');

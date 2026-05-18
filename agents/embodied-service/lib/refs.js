@@ -113,6 +113,17 @@ async function resolvePositionKeyword(keyword) {
   if (["above", "over", "head"].includes(k)) {
     return { x: cur.x, y: cur.y + 1, z: cur.z };
   }
+  if (k === "nearest") {
+    // Find nearest chest/barrel/shulker via /find_blocks
+    try {
+      const r = await botPost("/action/find_blocks", { block: "chest", radius: 16 });
+      const locs = r.body?.locations;
+      if (locs && locs.length > 0) {
+        return { x: Math.floor(locs[0].x), y: Math.floor(locs[0].y), z: Math.floor(locs[0].z) };
+      }
+    } catch {}
+    return null;
+  }
   return null;
 }
 
