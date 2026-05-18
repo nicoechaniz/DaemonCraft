@@ -256,11 +256,9 @@ GOOD: "Mine 20 iron ore. If you don't find iron within 2 minutes, switch to mini
 
 gAndy confuses `put_in_chest` and `take_from_chest` — the tool names are ambiguous for the model. **Always use explicit directional language:**
 
-```
-DEPOSIT:  "deposit oak_log into the nearest chest"
-WITHDRAW: "withdraw porkchop from the nearest chest"
-VIEW:     "view the nearest chest"
-```
+**Tested correct phrasings:**
+- Deposit: `"store netherite_axe into the nearest chest, put it inside the container"`
+- Withdraw: `"get porkchop from the nearest chest, take it out of the container"`
 
 **NEVER use bare "take" or "put":**
 - `"take food from the chest"` → gAndy may call put_in_chest
