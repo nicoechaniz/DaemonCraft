@@ -403,7 +403,7 @@ def start_bot(
         },
         "pathfinder": {
             "allow_sprinting": False,
-            "can_dig": True,
+            "can_dig": False,
             "allow_parkour": True,
         },
         "chat": {

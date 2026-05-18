@@ -62,6 +62,9 @@ tail -n 0 -F "${LOG_DIR}/${AGENT}_bot.log" 2>/dev/null \
       elif echo "$line" | grep -q '\[mineflayer\]'; then
         mf=$(echo "$line" | sed 's/^.*\[mineflayer\] //')
         echo -e "${BLU}[MFLY]${NC} ${mf}"
+      elif echo "$line" | grep -q '\[PATHFINDER\]'; then
+        pf=$(echo "$line" | sed 's/^.*\[PATHFINDER\] //')
+        echo -e "${CYN}[PATH]${NC} ${pf}"
       elif echo "$line" | grep -q '\[req-body\]'; then
         body=$(echo "$line" | sed 's/^.*\[req-body\] //')
         echo -e "${GRAY}[BOT]${NC} BODY ${body}"

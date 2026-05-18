@@ -12,7 +12,7 @@ agents:
     type: local
     hermes_home: ~/.hermes
     port: 3003
-    agent_loop: true
+    agent_loop: false
     bot_config:
       minecraft:
         host: localhost
@@ -22,7 +22,7 @@ agents:
         api_port: 3003
       pathfinder:
         allow_sprinting: false
-        can_dig: true
+        can_dig: false
         allow_parkour: true
       chat:
         fragment_max_chars: 240

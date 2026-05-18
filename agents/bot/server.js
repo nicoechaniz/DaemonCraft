@@ -4362,9 +4362,6 @@ const httpServer = http.createServer(async (req, res) => {
         return respond(res, 400, { ok: false, error: `Unknown action "${actionName}". Available: ${available}` });
       }
 
-      // PATHFINDING_ACTIONS guard kept per spec (cleanup block removed — MotionController owns state)
-      const PATHFINDING_ACTIONS = new Set(['goto', 'goto_near', 'follow', 'move_away']);
-
       actionInProgress = true;
       try {
         const result = await actionFn(body);
@@ -4388,75 +4385,11 @@ const httpServer = http.createServer(async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════
 // Stuck Detection Watchdog
 // ═══════════════════════════════════════════════════════════════════
+// Position tracking (kept for dashboard state only, no auto-cleanup)
+// MotionController owns all pathfinding lifecycle — no watchdog needed.
+// ═══════════════════════════════════════════════════════════════════
 
 let positionHistory = [];
-setInterval(() => {
-  if (!bot || !botReady) return;
-  // NEVER interfere when a synchronous action is in flight —
-  // the action owns the pathfinder until it completes.
-  if (actionInProgress) return;
-  const pos = bot.entity.position;
-  positionHistory.push({ time: Date.now(), x: pos.x, y: pos.y, z: pos.z });
-  positionHistory = positionHistory.filter(p => Date.now() - p.time < 60000);
-  // Stuck detection for movement-based tasks — 10s threshold
-  const movementActions = ['goto', 'goto_near', 'follow', 'collect', 'fight', 'flee', 'go_mark', 'deathpoint', 'pickup', 'sprint_attack', 'strafe', 'combo'];
-  if (currentTask && currentTask.status === 'running' && movementActions.includes(currentTask.action)) {
-    const old = positionHistory.find(p => Date.now() - p.time > 10000);
-    if (old) {
-      const dist = Math.sqrt((pos.x-old.x)**2+(pos.y-old.y)**2+(pos.z-old.z)**2);
-      if (dist < 2) {
-        if (bot.motion) bot.motion.stop().catch(() => {});
-        currentTask.status = 'stuck';
-        currentTask.error = `Stuck at ${Math.round(pos.x)},${Math.round(pos.y)},${Math.round(pos.z)} — try a different approach`;
-        log('STUCK detected (10s no movement) — task cancelled');
-      }
-    }
-    // General task timeout — any running task > 60s is suspicious
-    const elapsed = currentTask.started ? Date.now() - currentTask.started : 0;
-    if (elapsed > 60000) {
-      if (bot.motion) bot.motion.stop().catch(() => {});
-      currentTask.status = 'stuck';
-      currentTask.error = `Task timed out after ${Math.round(elapsed/1000)}s — try a different approach`;
-      log(`TASK TIMEOUT (${Math.round(elapsed/1000)}s) — task cancelled`);
-    }
-  }
-  // Also detect stuck on non-bg tasks: if bot is jumping repeatedly in place
-  if (!currentTask || currentTask.status !== 'running') {
-    const recent = positionHistory.filter(p => Date.now() - p.time < 8000);
-    if (recent.length >= 3) {
-      const allSameSpot = recent.every(p => 
-        Math.abs(p.x - recent[0].x) < 1.5 && Math.abs(p.z - recent[0].z) < 1.5
-      );
-      if (allSameSpot && !bot.entity.onGround) {
-        // Jumping in place — stop all controls
-        if (bot.motion) bot.motion.stop().catch(() => {});
-        log('Jump-stuck detected — cleared controls');
-      }
-    }
-  }
-  // Detect phantom pathfinder goals when no task is running but bot reports moving
-  if ((!currentTask || currentTask.status !== 'running') && bot.pathfinder && bot.pathfinder.goal) {
-    const old = positionHistory.find(p => Date.now() - p.time > 10000);
-    if (old) {
-      const dist = Math.sqrt((pos.x-old.x)**2+(pos.y-old.y)**2+(pos.z-old.z)**2);
-      if (dist < 2) {
-        if (bot.motion) bot.motion.stop().catch(() => {});
-        log('Phantom pathfinder goal detected (no running task, 10s no movement) — cleared');
-      }
-    }
-    // Micro-oscillation: pathfinder goal but positions vary within small radius (circling)
-    const recent = positionHistory.filter(p => Date.now() - p.time < 15000);
-    if (recent.length >= 5) {
-      const avgX = recent.reduce((s, p) => s + p.x, 0) / recent.length;
-      const avgZ = recent.reduce((s, p) => s + p.z, 0) / recent.length;
-      const maxDev = Math.max(...recent.map(p => Math.sqrt((p.x - avgX)**2 + (p.z - avgZ)**2)));
-      if (maxDev < 2.5) {
-        if (bot.motion) bot.motion.stop().catch(() => {});
-        log('Phantom pathfinder goal detected (micro-oscillation within 2.5 blocks) — cleared');
-      }
-    }
-  }
-}, 5000);
 
 // ═══════════════════════════════════════════════════════════════════
 // Live Dashboard WebSocket

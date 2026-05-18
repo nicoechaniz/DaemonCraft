@@ -50,6 +50,7 @@ const CHAR_MAP = {
   bedrock: 'B',    obsidian: 'B',
   glass: '▢',      glass_pane: '▢',
   torch: 't',      wall_torch: 't', lantern: 't',
+  target: '◎',     heavy_core: '◎',
   brown_bed: 'b',  yellow_bed: 'b',
   spawner: 'S',    mob_spawner: 'S',
   oak_stairs: '▲', birch_stairs: '▲',
