@@ -3520,12 +3520,7 @@ const httpServer = http.createServer(async (req, res) => {
 
   if (process.env.BOT_VERBOSE) {
     res._verbose_req = `${req.method} ${path}`;
-    const bodyHint = req.method !== 'GET'
-      ? await new Promise(resolve => {
-          let data = ''; req.on('data', c => data += c); req.on('end', () => resolve(data.slice(0,120)));
-        })
-      : '';
-    console.error(`[req] ${req.method} ${path}${bodyHint ? ' ' + bodyHint : ''} (${req.socket?.remoteAddress || ''})`);
+    console.error(`[req] ${req.method} ${path} (${req.socket?.remoteAddress || ''})`);
   }
 
   try {
@@ -3965,6 +3960,10 @@ const httpServer = http.createServer(async (req, res) => {
     // ── POST endpoints (actions) ────────────────
     if (req.method === 'POST') {
       const body = await parseBody(req);
+      if (process.env.BOT_VERBOSE) {
+        const snippet = JSON.stringify(body).slice(0, 150);
+        console.error(`[req-body] ${snippet}${snippet.length >= 150 ? '…' : ''}`);
+      }
 
       // Cancel current task
       if (path === '/task/cancel') {
