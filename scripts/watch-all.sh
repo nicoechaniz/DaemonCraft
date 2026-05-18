@@ -56,7 +56,10 @@ journalctl --user -u embodied-service.service -f -n 0 -o cat 2>/dev/null \
 tail -n 0 -F "${LOG_DIR}/${AGENT}_bot.log" 2>/dev/null \
   | while IFS= read -r line; do
       # Bot verbose requests
-      if echo "$line" | grep -q '\[req\]'; then
+      if echo "$line" | grep -q '\[req-body\]'; then
+        body=$(echo "$line" | sed 's/^.*\[req-body\] //')
+        echo -e "${GRAY}[BOT]${NC} BODY ${body}"
+      elif echo "$line" | grep -q '\[req\]'; then
         req=$(echo "$line" | sed 's/^.*\[req\] //')
         echo -e "${GRN}[BOT]${NC} REQ ${req}"
       elif echo "$line" | grep -q '\[res\]'; then
