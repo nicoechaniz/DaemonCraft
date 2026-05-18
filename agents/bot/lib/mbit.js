@@ -131,12 +131,15 @@ function blockAt3D(grid, x, y, z) {
 function encodeBinary(blocks) {
   const { grid, minX, maxX, minZ, maxZ, minY, maxY } = build3D(blocks);
   let out = '';
-  for (let z = minZ; z <= maxZ; z++) {
-    for (let x = minX; x <= maxX; x++) {
-      const b1 = blockAt3D(grid, x, minY, z);
-      const b2 = blockAt3D(grid, x, minY + 1, z);
-      const solid = !isWalkable(b1) || !isWalkable(b2);
-      out += solid ? '1' : '0';
+  for (let y = minY; y <= maxY; y++) {
+    out += `--- Y=${y} ---\n`;
+    for (let z = minZ; z <= maxZ; z++) {
+      for (let x = minX; x <= maxX; x++) {
+        const block = blockAt3D(grid, x, y, z);
+        const solid = !isWalkable(block);
+        out += solid ? '1' : '0';
+      }
+      out += '\n';
     }
     out += '\n';
   }
