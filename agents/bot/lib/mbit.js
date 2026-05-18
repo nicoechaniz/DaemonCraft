@@ -2,15 +2,17 @@
 /**
  * mBit — Minecraft chunk as LLM-native text.
  *
- * 5 perception formats from one 16×16×16 chunk:
- *   Binary  — walkable (0) / solid (1) per (X,Z) pair, Y-averaged
- *   Columns — (UP free, DOWN solid) per column
- *   Rows    — free blocks in N,S,E,W,Up,Down from center
+ * 5 perception formats:
+ *   Binary  — walkable (0) / solid (1) per (X,Y,Z), one grid per Y layer
+ *   Columns — (UP free, DOWN solid) per (X,Z) column
+ *   Rows    — free blocks in N,S,E,W,Up,Down from centre point
  *   Surface — ground block type per (X,Z)
- *   Full    — every block as a single character
+ *   Full    — every block as a single character, one grid per Y layer
+ *
+ * All formats accept arbitrary volume bounds via GET /blocks.
  *
  * API:
- *   encode(blocks, format, centerX, centerZ) → string
+ *   encode(blocks, format, centerX, centerY, centerZ) → string
  *
  * The blocks array is [{x, y, z, name}, ...] as returned by GET /blocks.
  */
@@ -126,12 +128,12 @@ function blockAt3D(grid, x, y, z) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// FORMAT 1: Binary — walkable map per (X,Z)
+// FORMAT 1: Binary — walkable map per (X,Y,Z), Y-major (top→bottom)
 // ═══════════════════════════════════════════════════════════════
 function encodeBinary(blocks) {
   const { grid, minX, maxX, minZ, maxZ, minY, maxY } = build3D(blocks);
   let out = '';
-  for (let y = minY; y <= maxY; y++) {
+  for (let y = maxY; y >= minY; y--) {
     out += `--- Y=${y} ---\n`;
     for (let z = minZ; z <= maxZ; z++) {
       for (let x = minX; x <= maxX; x++) {
@@ -177,10 +179,10 @@ function encodeColumns(blocks) {
 // ═══════════════════════════════════════════════════════════════
 // FORMAT 3: Rows — free distance in each cardinal + vertical direction
 // ═══════════════════════════════════════════════════════════════
-function encodeRows(blocks, centerX, centerZ) {
+function encodeRows(blocks, centerX, centerY, centerZ) {
   const { grid, minX, maxX, minZ, maxZ, minY, maxY } = build3D(blocks);
-  const cy = Math.floor((minY + maxY) / 2);
   const cx = centerX != null ? centerX : Math.floor((minX + maxX) / 2);
+  const cy = centerY != null ? centerY : Math.floor((minY + maxY) / 2);
   const cz = centerZ != null ? centerZ : Math.floor((minZ + maxZ) / 2);
 
   function freeDist(dx, dy, dz) {
@@ -243,11 +245,11 @@ function encodeFull(blocks) {
 // ═══════════════════════════════════════════════════════════════
 // Main encode function
 // ═══════════════════════════════════════════════════════════════
-function encode(blocks, format, centerX, centerZ) {
+function encode(blocks, format, centerX, centerY, centerZ) {
   switch (format) {
     case 'binary':  return encodeBinary(blocks);
     case 'columns': return encodeColumns(blocks);
-    case 'rows':    return encodeRows(blocks, centerX, centerZ);
+    case 'rows':    return encodeRows(blocks, centerX, centerY, centerZ);
     case 'surface': return encodeSurface(blocks);
     case 'full':    return encodeFull(blocks);
     default: throw new Error(`Unknown mBit format: ${format}. Use: binary, columns, rows, surface, full`);

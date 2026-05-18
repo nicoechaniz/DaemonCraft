@@ -3931,8 +3931,9 @@ const httpServer = http.createServer(async (req, res) => {
         if (format) {
           try {
             const centerX = parseInt(url.searchParams.get('cx')) || undefined;
+            const centerY = parseInt(url.searchParams.get('cy')) || undefined;
             const centerZ = parseInt(url.searchParams.get('cz')) || undefined;
-            const text = encodeMbit(blocks, format, centerX, centerZ);
+            const text = encodeMbit(blocks, format, centerX, centerY, centerZ);
             return respond(res, 200, { ok: true, data: { format, text, count: blocks.length, entities, elapsed_ms: elapsed } });
           } catch (err) {
             return respond(res, 400, { ok: false, error: `mBit encoding error: ${err.message}` });
