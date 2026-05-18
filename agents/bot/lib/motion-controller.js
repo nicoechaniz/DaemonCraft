@@ -32,6 +32,7 @@ export class MotionController {
       return { ok: true, result: `Navigation failed: ${e.message}.` };
     } finally {
       this._active = false;
+      try { this.bot.pathfinder.setGoal(null); } catch {}
     }
   }
 
@@ -51,6 +52,7 @@ export class MotionController {
       return { ok: true, result: `Navigation failed: ${e.message}.` };
     } finally {
       this._active = false;
+      try { this.bot.pathfinder.setGoal(null); } catch {}
     }
   }
 
