@@ -128,12 +128,12 @@ function blockAt3D(grid, x, y, z) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// FORMAT 1: Binary — walkable map per (X,Y,Z), Y-major (top→bottom)
+// FORMAT 1: Binary — walkable map per (X,Y,Z), Y-major (bottom→top)
 // ═══════════════════════════════════════════════════════════════
 function encodeBinary(blocks) {
   const { grid, minX, maxX, minZ, maxZ, minY, maxY } = build3D(blocks);
   let out = '';
-  for (let y = maxY; y >= minY; y--) {
+  for (let y = minY; y <= maxY; y++) {
     out += `--- Y=${y} ---\n`;
     for (let z = minZ; z <= maxZ; z++) {
       for (let x = minX; x <= maxX; x++) {
@@ -225,12 +225,12 @@ function encodeSurface(blocks) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// FORMAT 5: Full — every block as char, Y-major (layers top to bottom)
+// FORMAT 5: Full — every block as char, Y-major (bottom→top)
 // ═══════════════════════════════════════════════════════════════
 function encodeFull(blocks) {
   const { grid, minX, maxX, minZ, maxZ, minY, maxY } = build3D(blocks);
   let out = '';
-  for (let y = maxY; y >= minY; y--) {
+  for (let y = minY; y <= maxY; y++) {
     out += `--- Y=${y} ---\n`;
     for (let z = minZ; z <= maxZ; z++) {
       for (let x = minX; x <= maxX; x++) {

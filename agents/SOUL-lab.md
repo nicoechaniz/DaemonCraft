@@ -258,16 +258,16 @@ This is your primary workflow for any player request:
 
 | Format | What it shows | Use for |
 |--------|---------------|---------|
-| **binary** | `0`/`1` per (X,Z) column at **minY and minY+1 only** | **Pathfinding** — ground truth for "can I stand here?" |
-| **rows** | Free blocks in 6 directions at **one Y level** (scan midpoint) | Ceiling/doorway clearance. **Never for pathfinding.** |
+| **binary** | `0`/`1` per (X,Y,Z), one grid per Y layer with `--- Y=N ---` headers | **Pathfinding** — ground truth for "can I stand here?" |
+| **rows** | Free blocks in 6 directions from centre point | Ceiling/doorway clearance. **Never for pathfinding.** |
 | **surface** | Topmost block type per (X,Z) | Terrain identification only. |
-| **full** | Every block as char, layer by layer | Inspecting specific Y slices. |
+| **full** | Every block as char, one grid per Y layer | Inspecting specific Y slices, exact verification. |
 
-**Critical:** binary ignores all Y levels except the bottom two. If you scan `y=119..121`, binary only looks at `y=119` and `y=120`. A column can show `S:5` in rows (head space clear at `y=120`) while binary marks it `1` (solid feet at `y=119`).
+**Binary and full are Y-major (bottom→top):** the first layer shown is the lowest Y (closest to ground). Each cell = whether that exact (x,y,z) block is solid (`1`) or walkable (`0`).
 
-**Walkability:** `boundingBox='empty'` → passable. Leaves are passable despite minecraft-data `boundingBox='block'`. Glass is **not** passable. When in doubt, trust binary at foot+head level.
+**Walkability:** `boundingBox='empty'` → passable. Leaves are passable despite minecraft-data `boundingBox='block'`. Glass is **not** passable.
 
-**Decision rule:** To check if the bot can step to an adjacent column, scan with `y1 = bot_feet_y` and read binary. `0` = can step. `1` = blocked.
+**Decision rule:** For movement, scan 4 layers around the player (`y1=botY-1, y2=botY+2`). Check binary at feet Y: `0` = can step, `1` = blocked.
 
 ### Spatial Orientation (axes in mBit output)
 
@@ -278,11 +278,11 @@ All grid formats (binary, surface, full) use the same layout:
 - **Left column** = `minX` = WEST (−X)
 - **Right column** = `maxX` = EAST (+X)
 
-For scans centered on the bot (`x1=bot_x-8, x2=bot_x+7, z1=bot_z-8, z2=bot_z+7`):
+For scans centered on the bot:
 - The center of the grid = the bot's position.
-- Moving DOWN in the grid = moving SOUTH (forward if bot faces south).
+- Moving DOWN in the grid = moving SOUTH.
 
-**Rows format** uses cardinal directions from scan center (`cx`, `cz`):
+**Rows format** uses cardinal directions from scan center (`cx`, `cy`, `cz`):
 ```
 N:5 S:3 E:10 W:4 Up:8 Down:2
 ```
@@ -290,17 +290,26 @@ N:5 S:3 E:10 W:4 Up:8 Down:2
 - E = toward +X (east). W = toward −X (west).
 - Up = toward +Y. Down = toward −Y.
 
-**Full format** Y layers go top-to-bottom (`maxY` → `minY`), each layer is a standard X×Z grid.
-
 ### mBit Output Examples
 
-**Binary** — each row is one Z-level, each column is one X position:
+**Binary** — per-layer, bottom→top, each grid is X×Z:
 ```
-01011001
-00110000
-11001110
+--- Y=125 ---
+111111000
+111110000
+111111000
+
+--- Y=126 ---
+111110000
+111110000
+000000000
+
+--- Y=127 ---
+000000000
+000000000
+000000000
 ```
-→ `0` = walkable, `1` = solid. Bot can walk to columns marked `0`. **Only checks minY and minY+1.**
+→ `0` = walkable, `1` = solid at that exact (x,y,z). Find `0` with `1` below = valid placement spot.
 
 **Rows** — free blocks in each direction from scan center:
 ```
