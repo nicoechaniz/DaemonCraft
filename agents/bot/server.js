@@ -2159,21 +2159,26 @@ async collect({ block, count = 1 }) {
       recipes = b.recipesFor(itemType.id, null, 1, table);
     }
 
-    if (!recipes || recipes.length === 0) {
-      let allRecipes = [];
-      try { allRecipes = b.recipesAll(itemType.id, null, 1) || []; } catch {}
-      if (allRecipes.length === 0) {
-        throw new Error(`Can't craft ${item}: no known crafting recipe. Check spelling or use mc_craft(action="recipes", item="${item}").`);
+    // Try recipes in order — first one with available ingredients wins
+    let recipe = null;
+    const available = itemCounts(b.inventory.items());
+    for (const r of recipes) {
+      const required = recipeIngredientCounts(r, mcData, count);
+      const missing = Object.entries(required)
+        .filter(([name, need]) => need > (available[name] || 0));
+      if (missing.length === 0) {
+        recipe = r;
+        break;
       }
-      const available = itemCounts(b.inventory.items());
-      const diagnostics = allRecipes
+    }
+
+    if (!recipe) {
+      const diagnostics = recipes
         .slice(0, 3)
         .map(r => recipeDiagnostics(r, mcData, available, count, Boolean(table)))
         .join(' OR ');
       throw new Error(`Can't craft ${item} x${count}: ${diagnostics}. ${inventoryHint(b.inventory.items())} Collect missing materials first or place a crafting_table within 4 blocks.`);
     }
-
-    const recipe = recipes[0];
     const craftTable = (recipe.requiresTable !== false) ? table : null;
     if (recipe.requiresTable !== false && !craftTable) {
       throw new Error(`Can't craft ${item}: recipe needs a crafting_table nearby. Place one within 4 blocks first.`);
