@@ -29,8 +29,9 @@ export class BodyMutex {
     if (this.mode === CONTROL_MODE.REFLEX && this.owner === requester) {
       return { allowed: true };
     }
-    // Block if atomic action still within its deadline
-    if (this.actionTag === 'atomic' && Date.now() < this.atomicDeadline) {
+    // Block if an atomic action (claimed with maxMs deadline) is still in its uninterruptible window.
+    // Uses atomicDeadline presence (set for atomic-tagged actions like place_block/jump) rather than actionTag string.
+    if (this.atomicDeadline && Date.now() < this.atomicDeadline) {
       return {
         allowed: false,
         reason: 'atomic_in_progress',

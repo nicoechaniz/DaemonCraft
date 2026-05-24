@@ -276,6 +276,68 @@ let agentLog = []; // { turn, time, prompt, response, tool_calls, error }
 const MAX_AGENT_LOG = 50;
 let agentHeartbeat = { nextTurnIn: null, turnInProgress: false }; // countdown for dashboard
 
+// ═══════════════════════════════════════════════════════════════════
+// Phase 1 Reactive Runner — event producers (debounced edge detectors)
+// Emits 'runner_event' on bot; accumulated into runnerEventBuffer for /events
+// Consumed by EventPoller → RunnerThread → /mutex/claim for preemption
+// ═══════════════════════════════════════════════════════════════════
+let runnerEventBuffer = []; // drained by GET /events, bounded to EVENT_BUFFER_MAX
+const EVENT_BUFFER_MAX = 50;
+
+const eventDebounce = {
+  entity_near: {},
+  health_edge: 0,
+  hazard_edge: 0,
+};
+
+function checkEntityProximity() {
+  if (!bot || !bot.entity || !botReady) return;
+  const entities = bot.entities || {};
+  const now = Date.now();
+  // Hostile list follows patterns used in attack() and threat rendering elsewhere in server.js
+  const HOSTILES = ['zombie', 'skeleton', 'creeper', 'spider', 'witch', 'enderman', 'drowned', 'phantom', 'blaze', 'ghast', 'wither_skeleton', 'piglin_brute', 'cave_spider'];
+  for (const [id, entity] of Object.entries(entities)) {
+    if (entity === bot.entity) continue;
+    if (entity.type !== 'mob') continue;
+    const name = (entity.name || entity.mobType || entity.displayName || '').toLowerCase();
+    if (!name) continue;
+    const isHostile = HOSTILES.some(h => name.includes(h));
+    if (!isHostile) continue;
+    if (!entity.position) continue;
+    const dist = bot.entity.position.distanceTo(entity.position);
+    const key = entity.name || entity.mobType || entity.displayName || name;
+    const last = eventDebounce.entity_near[key] || 0;
+    if (dist < 5 && now - last > 1000) {
+      eventDebounce.entity_near[key] = now;
+      bot.emit('runner_event', {
+        type: 'entity_near',
+        entityType: key,
+        distance: Math.round(dist * 10) / 10,
+        priority: 'critical',
+        timestamp: now,
+      });
+    }
+  }
+}
+
+function checkHealthEdges() {
+  if (!bot || !botReady) return;
+  const now = Date.now();
+  const health = bot.health || 20;
+  if (health <= 6 && now - eventDebounce.health_edge > 500) {
+    eventDebounce.health_edge = now;
+    bot.emit('runner_event', {
+      type: 'health_low',
+      health,
+      maxHealth: 20,
+      priority: 'critical',
+      timestamp: now,
+    });
+  }
+}
+
+// (Future) checkHazardEdges() can use hazard_edge debounce for lava/fire etc.
+
 // ════════════════════════════════════════════════════════════════════════════════════════════
 // Fair Play Mode — perception constraints for realistic gameplay
 // ════════════════════════════════════════════════════════════════════════════════════════════
@@ -595,6 +657,27 @@ async function createBotImpl() {
           log(`Took ${damage.toFixed(1)} damage (HP: ${bot.health.toFixed(1)})`);
         }
         lastHealth = bot.health;
+      });
+
+      // ── Phase 1 Reactive Runner producers (physicsTick-driven) ──
+      // These run on every physicsTick (~20Hz) but are internally debounced.
+      // They emit 'runner_event' which is caught below and buffered for /events.
+      bot.on('runner_event', (evt) => {
+        runnerEventBuffer.push(evt);
+        if (runnerEventBuffer.length > EVENT_BUFFER_MAX) {
+          runnerEventBuffer.shift();
+        }
+      });
+
+      bot.on('physicsTick', () => {
+        try {
+          checkEntityProximity();
+          checkHealthEdges();
+          // checkHazardEdges() can be added here (uses hazard_edge debounce)
+        } catch (e) {
+          // Never let a tick handler crash the bot's physics loop
+          if (process.env.BOT_VERBOSE) console.error('[runner-events] physicsTick handler error:', e.message);
+        }
       });
 
       // Sound events: detect nearby entity digging
@@ -3546,7 +3629,7 @@ const httpServer = http.createServer(async (req, res) => {
   if (process.env.BOT_VERBOSE) {
     res._verbose_req = `${req.method} ${path}`;
     // Skip logging spammy polling endpoints — only log on POST or interesting GETs
-    const QUIET_GETS = new Set(['/status', '/health', '/nearby', '/inventory', '/marks', '/bot/status', '/bot/effects', '/bot/gamemode', '/mutex/status']);
+    const QUIET_GETS = new Set(['/status', '/health', '/nearby', '/inventory', '/marks', '/bot/status', '/bot/effects', '/bot/gamemode', '/mutex/status', '/events']);
     const isQuiet = req.method === 'GET' && QUIET_GETS.has(path);
     if (isQuiet) res._verbose_quiet = true;
     if (!isQuiet) {
@@ -3604,6 +3687,13 @@ const httpServer = http.createServer(async (req, res) => {
       if (path === '/mutex/status') {
         const s = bodyMutex ? bodyMutex.getStatus() : { mode: 0, owner: null, sinceMs: 0, actionTag: null, atomicDeadline: 0 };
         return respond(res, 200, { ok: true, data: s });
+      }
+
+      // Phase 1 Reactive Runner event drain (polled by EventPoller.py every ~200ms)
+      // Returns accumulated 'runner_event' emissions and clears the buffer (max 50 kept)
+      if (path === '/events') {
+        const events = runnerEventBuffer.splice(0, runnerEventBuffer.length);
+        return respond(res, 200, { ok: true, data: { events } });
       }
 
       if (path === '/inventory') {
