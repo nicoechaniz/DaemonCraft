@@ -86,6 +86,8 @@ import {
   recipeIngredientCounts,
 } from './lib/action_feedback.js';
 import { MotionController } from './lib/motion-controller.js';
+import { BodyMutex } from './lib/mutex.js';
+import { ACTION_REGISTRY, ON_ABORT } from './lib/action-registry.js';
 // mine-photo removed — prismarine-viewer + puppeteer replaced it (see line 253).
 // The package was broken on Node 22 (fs.globSync at module load) and the
 // only call site (Camera ray-tracing init) was removed below.
@@ -244,6 +246,7 @@ const WORKSPACE_DIR = unifiedConfig.workspace_dir || process.env.WORKSPACE_DIR |
 
 let bot = null;
 let motion = null;
+let bodyMutex = null;
 let mcData = null;
 let botReady = false;
 let chatLog = [];
@@ -528,6 +531,10 @@ async function createBotImpl() {
       // MotionController owns all pathfinding state
       motion = new MotionController(bot);
       bot.motion = motion;
+
+      // BodyMutex for Phase 1 reactive runner preemption (IDLE/GOAL/REFLEX/REFLEX_YIELD)
+      bodyMutex = new BodyMutex(bot);
+      bot.bodyMutex = bodyMutex;
 
       // DEBUG: log pathfinder state every 5 seconds
       setInterval(() => {
@@ -3539,7 +3546,7 @@ const httpServer = http.createServer(async (req, res) => {
   if (process.env.BOT_VERBOSE) {
     res._verbose_req = `${req.method} ${path}`;
     // Skip logging spammy polling endpoints — only log on POST or interesting GETs
-    const QUIET_GETS = new Set(['/status', '/health', '/nearby', '/inventory', '/marks', '/bot/status', '/bot/effects', '/bot/gamemode']);
+    const QUIET_GETS = new Set(['/status', '/health', '/nearby', '/inventory', '/marks', '/bot/status', '/bot/effects', '/bot/gamemode', '/mutex/status']);
     const isQuiet = req.method === 'GET' && QUIET_GETS.has(path);
     if (isQuiet) res._verbose_quiet = true;
     if (!isQuiet) {
@@ -3591,6 +3598,12 @@ const httpServer = http.createServer(async (req, res) => {
       if (path === '/bot/gamemode') {
         const b = ensureBot();
         return respond(res, 200, { ok: true, data: { gamemode: b.game?.gameMode || 'unknown' } });
+      }
+
+      // BodyMutex status (Phase 1 reactive runner)
+      if (path === '/mutex/status') {
+        const s = bodyMutex ? bodyMutex.getStatus() : { mode: 0, owner: null, sinceMs: 0, actionTag: null, atomicDeadline: 0 };
+        return respond(res, 200, { ok: true, data: s });
       }
 
       if (path === '/inventory') {
@@ -4010,6 +4023,62 @@ const httpServer = http.createServer(async (req, res) => {
         // Broadcast to all WebSocket clients so agent_loop can abort its LLM turn
         broadcastDashboard('interrupt', { reason: body?.reason || 'gateway_request', time: Date.now() });
         return respond(res, 200, { ok: true, result: 'Agent interrupted.', state: briefState() });
+      }
+
+      // ═══════════════════════════════════════════════════════════════
+      // BodyMutex endpoints (Phase 1 reactive runner preemption)
+      // ═══════════════════════════════════════════════════════════════
+      if (path === '/mutex/claim') {
+        const { requester = 'unknown', critical = false, actionTag = null, maxMs = null } = body || {};
+        if (!bodyMutex) {
+          return respond(res, 503, { ok: false, error: 'BodyMutex not initialized (bot not ready)' });
+        }
+        let result;
+        if (critical) {
+          result = await bodyMutex.claimCritical(requester, actionTag, maxMs);
+        } else {
+          result = await bodyMutex.claimYield(requester);
+        }
+        return respond(res, 200, { ok: true, ...result });
+      }
+
+      if (path === '/mutex/release') {
+        const { requester = 'unknown' } = body || {};
+        if (!bodyMutex) {
+          return respond(res, 200, { ok: true, released: false });
+        }
+        const released = await bodyMutex.release(requester);
+        return respond(res, 200, { ok: true, released });
+      }
+
+      if (path === '/mutex/emergency_stop') {
+        const { requester = 'unknown' } = body || {};
+        if (!bodyMutex) {
+          return respond(res, 200, { ok: true, previousMode: 0, previousOwner: null });
+        }
+        const r = await bodyMutex.emergencyStop(requester);
+        return respond(res, 200, { ok: true, previousMode: r.previousMode, previousOwner: r.previousOwner });
+      }
+
+      if (path === '/action/stop') {
+        const { requester = 'unknown' } = body || {};
+        try {
+          const b = ensureBot();
+          if (b.motion && typeof b.motion.stop === 'function') {
+            await b.motion.stop().catch(() => {});
+          } else {
+            try { b.pathfinder.stop(); } catch {}
+            try { b.clearControlStates(); } catch {}
+            try { b.stopDigging(); } catch {}
+          }
+          if (bodyMutex && typeof bodyMutex.emergencyStop === 'function') {
+            // Also escalate to mutex hard stop (records event)
+            await bodyMutex.emergencyStop(requester || 'action/stop');
+          }
+          return respond(res, 200, { ok: true, cancelled: true, requester });
+        } catch (e) {
+          return respond(res, 200, { ok: true, cancelled: false, error: e.message });
+        }
       }
 
       // Direct plan mutation — POST /plan/update

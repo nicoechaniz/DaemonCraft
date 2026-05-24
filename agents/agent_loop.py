@@ -796,6 +796,18 @@ def main():
     parser.add_argument("--interval", type=int, default=30, help="Seconds between heartbeats")
     args = parser.parse_args()
 
+    # Phase 1 Reactive Runner (daemon thread alongside heartbeat loop)
+    # Uses BodyMutex (/mutex/* + /action/stop) for reflex preemption of body control.
+    bot_api_url = MC_API_URL
+    try:
+        from agents.runner.thread import RunnerThread
+        runner = RunnerThread(bot_api_url=bot_api_url)
+        runner.start()
+        print("[loop] Reactive RunnerThread started (daemon)", flush=True)
+    except Exception as e:
+        # Additive; do not break existing loop if runner deps (requests/yaml) or package missing
+        print(f"[loop] RunnerThread not started (optional): {e}", flush=True)
+
     run_agent_loop(args.profile, args.prompt, args.interval)
 
 

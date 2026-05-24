@@ -1,0 +1,15 @@
+# DaemonCraft Runner (reflex layer) configuration
+# Place at ~/.config/daemoncraft/runner.yaml or pass via RunnerThread(config_path=...)
+# Loaded by agents/runner/thread.py
+
+runner:
+  combat:
+    threshold: 0.4          # aggression vs flee (lower = more flee)
+    flee_health: 6          # absolute health to force flee
+    preferred_weapon: iron_sword
+  survival:
+    eat_when_hunger_below: 6
+    avoid_lava: true
+  social:
+    loyalty: 0.9
+    follow_distance: 5
