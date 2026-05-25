@@ -86,7 +86,10 @@ export class BodyMutex {
   async emergencyStop(requester) {
     // Hard reset — bypass owner checks, any caller allowed
     const previous = { mode: this.mode, owner: this.owner };
-    await this._cancelCurrent();
+    // Route through MotionController for emergency (even mid-recovery)
+    if (this.bot && this.bot.motion) {
+      try { await this.bot.motion.requestEmergencyStop(requester); } catch {}
+    }
     this.mode = CONTROL_MODE.IDLE;
     this.owner = null;
     this.actionTag = null;
@@ -100,7 +103,10 @@ export class BodyMutex {
 
   async _cancelCurrent() {
     if (!this.bot) return;
-    try { this.bot.pathfinder.stop(); } catch {}
+    // Route through MotionController — do NOT touch pathfinder directly (Phase 3)
+    if (this.bot.motion) {
+      try { await this.bot.motion.requestMutexCancel(this.owner || 'mutex'); } catch {}
+    }
     try { this.bot.clearControlStates(); } catch {}
     // TODO: plugin-specific cleanup (mining, placing, inventory windows, auto-eat, etc.)
     // Future: if (this.bot.collectBlock) ... ; if (this.bot.tool) ...

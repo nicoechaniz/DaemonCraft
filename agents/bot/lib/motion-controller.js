@@ -283,6 +283,40 @@ export class MotionController {
     this._clearControls();
   }
 
+  /**
+   * Phase 3: Called by BodyMutex._cancelCurrent for normal preemption.
+   * Flags cancel; if mid-recovery, defers (lets atomic maneuver finish).
+   */
+  async requestMutexCancel(requester) {
+    const session = this._session;
+    if (!session) return;
+    session.cancelRequested = true;
+
+    if (session.state === SESSION_STATE.RECOVERY_ATOMIC || this._activeRecovery) {
+      this._log(`cancel requested by ${requester} during recovery — deferring`);
+      return;
+    }
+
+    // Normal cancel path (not in atomic recovery)
+    session.hardCancelled = true;
+    try { this.bot.pathfinder.setGoal(null); } catch {}
+    this._clearControls();
+  }
+
+  /**
+   * Phase 3: Called by BodyMutex.emergencyStop — hard stop even mid-recovery.
+   */
+  async requestEmergencyStop(requester) {
+    if (this._session) {
+      this._session.hardCancelled = true;
+      this._session.state = SESSION_STATE.CANCELLED;
+    }
+    this._activeRecovery = false;
+    try { this.bot.pathfinder.setGoal(null); } catch {}
+    this._clearControls();
+    this._session = null;
+  }
+
   // Clear all physical controls safely
   _clearControls() {
     const b = this.bot;

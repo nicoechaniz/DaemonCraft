@@ -4264,8 +4264,8 @@ const httpServer = http.createServer(async (req, res) => {
           if (b.motion && typeof b.motion.stop === 'function') {
             await b.motion.stop().catch(() => {});
           } else {
-            try { b.pathfinder.stop(); } catch {}
-            try { b.clearControlStates(); } catch {}
+            try { b.pathfinder.stop(); } catch {} // TODO: route through motion.requestReflex(requester)
+            try { b.clearControlStates(); } catch {} // TODO: route through motion.requestReflex(requester)
             try { b.stopDigging(); } catch {}
           }
           if (bodyMutex && typeof bodyMutex.emergencyStop === 'function') {
@@ -4633,6 +4633,21 @@ const httpServer = http.createServer(async (req, res) => {
         return respond(res, 400, { ok: false, error: `Unknown action "${actionName}". Available: ${available}` });
       }
 
+      // Light ACTION_REGISTRY integration (Phase 3): for 'interaction' category actions
+      // (those with maxMs = atomic short ops), claim via BodyMutex before running.
+      // Movement/navigation use MotionController session as their claim.
+      // Unregistered actions default to preemptible (no explicit claim here).
+      let mutexClaimed = false;
+      const actionDef = ACTION_REGISTRY[actionName];
+      if (actionDef && actionDef.maxMs && bodyMutex) {
+        // bodyCategory equiv 'interaction' for short atomic (maxMs present)
+        const claimResult = await bodyMutex.claimCritical('action:' + actionName, actionName, actionDef.maxMs);
+        if (!claimResult.allowed) {
+          return respond(res, 423, { ok: false, error: claimResult.reason || 'body busy' });
+        }
+        mutexClaimed = true;
+      }
+
       actionInProgress = true;
       try {
         const result = await actionFn(body);
@@ -4642,6 +4657,9 @@ const httpServer = http.createServer(async (req, res) => {
         return respond(res, 200, { ok: true, ...result, state: briefState() });
       } finally {
         actionInProgress = false;
+        if (mutexClaimed && bodyMutex) {
+          try { await bodyMutex.release('action:' + actionName); } catch {}
+        }
       }
     }
 

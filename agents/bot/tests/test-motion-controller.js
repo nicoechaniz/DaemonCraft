@@ -3,6 +3,7 @@
 // Phase 0 scaffolding tests.
 
 import { MotionController, SESSION_STATE, makeGoalDescriptor, createSession } from '../lib/motion-controller.js';
+import { BodyMutex } from '../lib/mutex.js';
 
 let failed = 0;
 
@@ -344,7 +345,89 @@ await test('recovery FSM clears controls on error', async () => {
   mc.dispose();
 });
 
-console.log(`\nAll Phase 0 + Phase 1 + Phase 2 tests complete. Failures: ${failed}`);
+// --- Phase 3 tests: BodyMutex integration + request*Cancel / emergency ---
+
+await test('requestMutexCancel during navigation sets cancelRequested', async () => {
+  const fake = makeFakeBot();
+  const mc = new MotionController(fake);
+  const desc = makeGoalDescriptor('block', 10, 64, 10);
+  const session = createSession('nav-cancel', desc);
+  session.state = SESSION_STATE.NAVIGATING;
+  mc._session = session;
+  mc._sessionGeneration++;
+
+  await mc.requestMutexCancel('test-nav');
+
+  if (!session.cancelRequested) throw new Error('cancelRequested not set during nav');
+  if (!session.hardCancelled) throw new Error('hardCancelled should be set for non-recovery nav cancel');
+  // session not auto-cleared (goto catch will handle via hardCancelled)
+  if (mc._session !== session) throw new Error('session should still be reference until navigation settles');
+  mc.dispose();
+});
+
+await test('requestMutexCancel during recovery defers, does not corrupt', async () => {
+  const fake = makeFakeBot();
+  const mc = new MotionController(fake);
+  const desc = makeGoalDescriptor('near', 20, 64, 20);
+  const session = createSession('rec-defer', desc);
+  session.state = SESSION_STATE.RECOVERY_ATOMIC;
+  mc._session = session;
+  mc._sessionGeneration++;
+  mc._activeRecovery = true;
+
+  await mc.requestMutexCancel('test-req');
+
+  if (!session.cancelRequested) throw new Error('cancelRequested must be set even on defer');
+  if (session.hardCancelled) throw new Error('hardCancelled must NOT be set when deferring recovery');
+  if (mc._session !== session) throw new Error('session must not be cleared on defer');
+  if (mc._activeRecovery !== true) throw new Error('activeRecovery must remain true during defer');
+  // recovery should proceed to its end (test does not run full FSM)
+  mc._activeRecovery = false; // cleanup for test
+  mc.dispose();
+});
+
+await test('requestEmergencyStop clears session even mid-recovery', async () => {
+  const fake = makeFakeBot();
+  const mc = new MotionController(fake);
+  const desc = makeGoalDescriptor('block', 30, 64, 30);
+  const session = createSession('emerg-stop', desc);
+  session.state = SESSION_STATE.RECOVERY_ATOMIC;
+  mc._session = session;
+  mc._sessionGeneration++;
+  mc._activeRecovery = true;
+
+  await mc.requestEmergencyStop('emerg-tester');
+
+  if (mc._session !== null) throw new Error('session must be nulled by emergency stop');
+  if (mc._activeRecovery !== false) throw new Error('_activeRecovery must be forced false');
+  // state on old session obj should be CANCELLED (if still referenced)
+  if (session.state !== SESSION_STATE.CANCELLED) throw new Error('session state should be CANCELLED');
+  if (!session.hardCancelled) throw new Error('hardCancelled should be set');
+  mc.dispose();
+});
+
+await test('BodyMutex emergencyStop calls motion.requestEmergencyStop', async () => {
+  const fake = makeFakeBot();
+  let calledWith = null;
+  fake.motion = {
+    requestEmergencyStop: async (requester) => {
+      calledWith = requester;
+    }
+  };
+  const bm = new BodyMutex(fake);
+  // simulate some owner
+  bm.mode = 2; // REFLEX
+  bm.owner = 'runnerX';
+
+  const res = await bm.emergencyStop('test-emerg');
+
+  if (calledWith !== 'test-emerg') throw new Error('motion.requestEmergencyStop not called with correct requester, got: ' + calledWith);
+  if (!res.ok) throw new Error('emergencyStop result not ok');
+  if (bm.mode !== 0 || bm.owner !== null) throw new Error('mutex state not reset to IDLE after emergency');
+  // no need to dispose mc, none created
+});
+
+console.log(`\nAll Phase 0 + Phase 1 + Phase 2 + Phase 3 tests complete. Failures: ${failed}`);
 if (failed > 0) {
   process.exit(1);
 }
