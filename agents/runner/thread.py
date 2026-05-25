@@ -65,11 +65,24 @@ class RunnerThread(threading.Thread):
         return False
 
     def _has_armor(self):
-        """Check if the bot has any armor equipped (via /status equipment)."""
+        """Check if the bot has armor via inventory slot names."""
+        try:
+            inv = self._get('/inventory')
+            items = inv.get('data', {}).get('items', [])
+            armor_names = ['helmet', 'chestplate', 'leggings', 'boots',
+                          'cap', 'tunic', 'pants',  # leather variants
+                          'shell', 'elytra']
+            for item in items:
+                name = item.get('name', '').lower()
+                if any(a in name for a in armor_names):
+                    return True
+        except:
+            pass
+        # Fallback: check holding for shield
         try:
             st = self._get('/status')
-            eq = st.get('data', {}).get('equipment', [])
-            if eq and len(eq) > 0:
+            holding = st.get('data', {}).get('holding', {})
+            if 'shield' in holding.get('name', ''):
                 return True
         except:
             pass
@@ -133,10 +146,9 @@ class RunnerThread(threading.Thread):
             has_weapon = self._has_weapon()
             has_armor = self._has_armor()
 
-            # Flee conditions: no weapon, no armor, cowardly personality, or previous flee failures
+            # Flee conditions: no weapon, cowardly personality, or previous flee failures
             must_flee = (
                 not has_weapon or
-                not has_armor or
                 p['combat']['threshold'] < 0.5
             )
 
