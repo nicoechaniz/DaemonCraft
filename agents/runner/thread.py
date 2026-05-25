@@ -13,7 +13,8 @@ class RunnerThread(threading.Thread):
         self._weapon_cache = (0, False)  # (timestamp, has_weapon)
         self._active_reflex = None     # current reflex action name or None
         self._last_reflex_at = 0       # timestamp of last reflex execution
-        self._reflex_history = []      # [{reflex, target, at}] last 5 reflexes — avoid /status timeout during combat
+        self._reflex_history = []      # [{reflex, target, at}] last 5 reflexes
+        self._last_flee_at = 0         # timestamp of last flee completion — avoid /status timeout during combat
 
     def _load_config(self, path):
         default = {
@@ -168,9 +169,13 @@ class RunnerThread(threading.Thread):
                 p['combat']['threshold'] < 0.5
             )
 
+            # Anti-flee-chain: if we fled recently and hostile is >6m, attack instead
+            if must_flee and time.time() - self._last_flee_at < 4.0 and dist > 6:
+                must_flee = False
+
             flee_count = self._flee_failed.get(entity_type, 0)
-            if flee_count >= 2:
-                must_flee = False  # fight instead
+            if flee_count >= 1:
+                must_flee = False  # fight instead — one failed flee is enough
 
             if must_flee and entity_type:
                 self._flee_positions[entity_type] = None
@@ -216,6 +221,7 @@ class RunnerThread(threading.Thread):
             except:
                 pass
             self._post_fire('/action/flee', params)
+            self._last_flee_at = time.time()
 
         elif name == 'attack':
             self._post_fire('/action/attack', params)

@@ -277,7 +277,7 @@ const MAX_AGENT_LOG = 50;
 let agentHeartbeat = { nextTurnIn: null, turnInProgress: false }; // countdown for dashboard
 
 // Controller Mode — explicit, not automagic. "lab" = no autonomous turns.
-let controllerMode = "autonomous";
+let controllerMode = "lab"; // hardcoded — config persistence being debugged
 
 // ═══════════════════════════════════════════════════════════════════
 // Phase 1 Reactive Runner — event producers (debounced edge detectors)
@@ -314,9 +314,18 @@ function checkEntityProximity() {
     if (!isHostile) continue;
     if (!entity.position) continue;
     const dist = bot.entity.position.distanceTo(entity.position);
+    // Only react to hostiles within 3m AND with line of sight (no walls between)
+    if (dist > 3) continue;
+    // Quick line-of-sight: check if mid-point block is air
+    const midX = (bot.entity.position.x + entity.position.x) / 2;
+    const midY = (bot.entity.position.y + entity.position.y) / 2;
+    const midZ = (bot.entity.position.z + entity.position.z) / 2;
+    const midBlock = bot.blockAt(new Vec3(midX, midY, midZ));
+    if (midBlock && midBlock.name !== 'air' && midBlock.name !== 'cave_air' && midBlock.boundingBox === 'block') continue;
+
     const key = entity.name || entity.mobType || entity.displayName || name;
     const last = eventDebounce.entity_near[key] || 0;
-    if (dist < 10 && now - last > 1000) {
+    if (now - last > 1000) {
       eventDebounce.entity_near[key] = now;
       bot.emit('runner_event', {
         type: 'entity_near',
@@ -736,14 +745,16 @@ async function createBotImpl() {
         if (!lastPos) { lastPos = pos.clone(); return; }
         const dist = pos.distanceTo(lastPos);
         if (dist > 5) {
-          // Likely teleported — cancel pathfinder and current task
+          // Teleported — central stop: motion, runner events, mutex
           if (bot && bot.motion) { bot.motion.stop().catch(() => {}); }
+          runnerEventBuffer = [];
+          if (bot && bot.bodyMutex) { bot.bodyMutex.emergencyStop('teleport').catch(() => {}); }
           if (currentTask && currentTask.status === 'running') {
             currentTask.status = 'cancelled';
-            currentTask.error = `Teleported ${dist.toFixed(1)} blocks by server — navigation cancelled`;
+            currentTask.error = `Teleported ${dist.toFixed(1)} blocks`;
             broadcastDashboard('task', currentTask);
           }
-          log(`Teleport detected: moved ${dist.toFixed(1)} blocks — cancelled navigation`);
+          log(`Teleport: moved ${dist.toFixed(1)} blocks — full stop (motion+events+mutex)`);
         }
         lastPos = pos.clone();
       });

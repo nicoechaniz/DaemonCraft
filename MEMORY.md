@@ -34,6 +34,17 @@
 - Controller Lease is the single arbiter of who spawns agent turns
 - `runner/thread.py` get_status() tracks reflex history (not used for session arbitration)
 
+
+## CRITICAL: Docker Mount Structure (2026-05-25)
+
+The Docker container `daemoncraft-minecraft` mounts:
+- `~/Projects/DaemonCraft/server/data/` → `/data/` (rw) — THIS is where server.properties, world/, purpur.yml etc actually live
+- `~/Projects/DaemonCraft/server/server.properties` is NOT the live file — it's a repo copy
+- To change server config: edit `server/data/server.properties`
+- To change gamerules: edit `server/data/server.properties` AND set at runtime via bot command
+- To check runtime: `docker exec daemoncraft-minecraft cat /data/server.properties`
+
+Bot config lives at: `agents/bot/config-compaii.json` (separate from Minecraft server config)
 ## Current Snapshot — 2026-05-16 (lab/default gateway/Gemma-Andy)
 
 ### Decision Architecture — What to use when (from benchmark session)
