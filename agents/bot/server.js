@@ -299,7 +299,12 @@ function checkEntityProximity() {
   for (const [id, entity] of Object.entries(entities)) {
     if (entity === bot.entity) continue;
     // Hostile mobs can have type 'mob' or 'hostile' depending on Minecraft version
-    if (entity.type !== 'mob' && entity.type !== 'hostile') continue;
+    if (entity.type !== 'mob' && entity.type !== 'hostile') {
+      if (entity.type && entity.type !== 'object' && entity.type !== 'player' && entity.type !== 'other') {
+        console.error(`[runner-events] unknown entity type: ${entity.type} name=${entity.name} mobType=${entity.mobType}`);
+      }
+      continue;
+    }
     const name = (entity.name || entity.mobType || entity.displayName || '').toLowerCase();
     if (!name) continue;
     const isHostile = HOSTILES.some(h => name.includes(h));
