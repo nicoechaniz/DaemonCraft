@@ -661,11 +661,15 @@ async function createBotImpl() {
         log('Auto-disguised as Allay');
       }, 3000);
 
-      // Configure auto-eat
+      // Configure auto-eat: stay topped up for combat regen, don't waste food.
+      // Minecraft natural regen requires hunger >= 18 (9 shanks).
+      // Cooked beef gives 8 hunger (4 shanks) → eat at 17 to avoid overflow waste.
       bot.autoEat.options = {
         priority: 'foodPoints',
-        startAt: 14,
-        bannedFood: [],
+        minHunger: 17,
+        minHealth: 14,
+        bannedFood: ['rotten_flesh', 'pufferfish', 'chorus_fruit', 'poisonous_potato', 'spider_eye'],
+        returnToLastItem: true,
       };
 
       // ── Reactive Events ──────────────────────────────
