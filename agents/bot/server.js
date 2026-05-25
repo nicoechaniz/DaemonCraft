@@ -2906,51 +2906,107 @@ async collect({ block, count = 1 }) {
 
   async flee({ distance = 16, from }) {
     const b = ensureBot();
+    await reactionDelay();
+
     const hostiles = ['zombie','skeleton','spider','slime','magma_cube','creeper','enderman','witch','drowned','husk','stray','phantom','blaze','wither_skeleton','player'];
 
-    // Determine flee direction: from coordinates ("x,y,z"), entity name, or nearest hostile
-    let fleeFromX, fleeFromZ;
+    // Find the fleeing-from entity (for micro-step reactive) or coords fallback or nearest
+    const rawEnts = Object.values(b.entities).filter(e => e !== b.entity);
+    const visible = filterEntitiesFairPlay(rawEnts);
+    let entity = null;
+    let fleeFromPos = null;
+
     if (from) {
-      // Try parsing as coordinates first (e.g. "541,118,-371")
-      const coordMatch = String(from).match(/^(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)$/);
+      const fromStr = String(from).toLowerCase().trim();
+      const coordMatch = fromStr.match(/^(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)$/);
       if (coordMatch) {
-        fleeFromX = parseFloat(coordMatch[1]);
-        fleeFromZ = parseFloat(coordMatch[3]);
+        fleeFromPos = {
+          x: parseFloat(coordMatch[1]),
+          y: parseFloat(coordMatch[2]),
+          z: parseFloat(coordMatch[3])
+        };
       } else {
-        // Match by entity name/username
-        const rawEnts = Object.values(b.entities).filter(e => e !== b.entity);
-        const visible = filterEntitiesFairPlay(rawEnts);
-        const threat = visible.find(e =>
-          (e.name || '').toLowerCase().includes(from.toLowerCase()) ||
-          (e.username || '').toLowerCase().includes(from.toLowerCase())
+        entity = visible.find(e =>
+          (e.name || '').toLowerCase().includes(fromStr) ||
+          (e.username || '').toLowerCase().includes(fromStr) ||
+          (e.mobType || '').toLowerCase().includes(fromStr) ||
+          (e.displayName || '').toLowerCase().includes(fromStr)
         );
-        if (threat) {
-          fleeFromX = threat.position.x;
-          fleeFromZ = threat.position.z;
-        }
       }
     }
-    if (fleeFromX == null) {
-      // No specific target — flee from nearest hostile
-      const rawEnts = Object.values(b.entities).filter(e => e !== b.entity);
-      const visible = filterEntitiesFairPlay(rawEnts);
-      const threat = visible.find(e => hostiles.some(h => (e.name || '').includes(h)));
-      if (!threat) return { result: 'No threats nearby' };
-      fleeFromX = threat.position.x;
-      fleeFromZ = threat.position.z;
+
+    if (!entity && !fleeFromPos) {
+      // nearest hostile
+      const threats = visible.filter(e => hostiles.some(h => (e.name || e.mobType || e.displayName || '').toLowerCase().includes(h)));
+      if (threats.length > 0) {
+        threats.sort((a, c) => a.position.distanceTo(b.entity.position) - c.position.distanceTo(b.entity.position));
+        entity = threats[0];
+      }
     }
 
-    const dx = b.entity.position.x - fleeFromX;
-    const dz = b.entity.position.z - fleeFromZ;
-    const len = Math.sqrt(dx*dx + dz*dz) || 1;
-    const fleeX = b.entity.position.x + (dx/len) * distance;
-    const fleeZ = b.entity.position.z + (dz/len) * distance;
+    if (entity && entity.isValid === false) {
+      return { result: 'Hostile gone' };
+    }
 
+    // Compute dist / source pos
+    let dist = 99;
+    let fromX = null, fromZ = null;
+    if (entity && entity.position) {
+      dist = entity.position.distanceTo(b.entity.position);
+      fromX = entity.position.x;
+      fromZ = entity.position.z;
+    } else if (fleeFromPos) {
+      const dxp = b.entity.position.x - fleeFromPos.x;
+      const dzp = b.entity.position.z - fleeFromPos.z;
+      dist = Math.sqrt(dxp * dxp + dzp * dzp);
+      fromX = fleeFromPos.x;
+      fromZ = fleeFromPos.z;
+    } else {
+      return { result: 'Hostile gone' };
+    }
+
+    if (dist > 5) {
+      return { result: 'Clear of hostile, can transition' };
+    }
+
+    if (!fromX || !fromZ) {
+      return { result: 'Hostile gone' };
+    }
+
+    // Face the threat (so back/strafe are relative to it)
     try {
-      if (b.motion) await b.motion.gotoNear(fleeX, b.entity.position.y, fleeZ, 3);
-      return { result: `Fled ${distance} blocks from ${from || 'threat'}` };
-    } catch {
-      return { result: `Tried to flee, moved partially. Health: ${b.health}` };
+      if (entity) {
+        await b.lookAt(entity.position.offset(0, (entity.height || 1) * 0.75, 0));
+      } else if (fleeFromPos) {
+        await b.lookAt(new Vec3(fromX, b.entity.position.y + 1.6, fromZ));
+      }
+    } catch {}
+
+    if (dist < 3) {
+      // 1. If hostile < 3m: crouch backstep (sneak+back 200ms) to disengage
+      b.setControlState('sneak', true);
+      b.setControlState('back', true);
+      await sleep(200);
+      b.setControlState('sneak', false);
+      b.setControlState('back', false);
+      try { b.clearControlStates(); } catch {}
+      const who = entity ? (entity.name || entity.mobType || from) : (from || 'threat');
+      return { result: `Backstepped from ${who} at ${dist.toFixed(1)}m` };
+    } else {
+      // 2. If hostile 3-5m: strafe away (turn slightly from hostile, strafe sideways 300ms)
+      const slight = (Math.random() - 0.5) * 0.8; // +/- ~23deg
+      try {
+        await b.look(b.entity.yaw + slight, b.entity.pitch || 0);
+      } catch {}
+      const dir = Math.random() > 0.5 ? 'left' : 'right';
+      b.setControlState('sneak', true);
+      b.setControlState(dir, true);
+      await sleep(300);
+      b.setControlState('sneak', false);
+      b.setControlState(dir, false);
+      try { b.clearControlStates(); } catch {}
+      const who = entity ? (entity.name || entity.mobType || from) : (from || 'threat');
+      return { result: `Strafed ${dir} away from ${who} (${dist.toFixed(1)}m)` };
     }
   },
 

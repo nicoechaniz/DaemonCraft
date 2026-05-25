@@ -9,8 +9,10 @@ class RunnerThread(threading.Thread):
         self._running = True
         self._flee_failed = {}     # entity_type -> count of failed flees
         self._flee_positions = {}  # entity_type -> position at last flee attempt
+        self._flee_steps = {}      # entity_type -> consecutive micro-flee steps (max 5 then fight)
         self._last_health = 20     # track health for damage detection
         self._weapon_cache = (0, False)  # (timestamp, has_weapon)
+        self._food_cache = (0, False)  # (timestamp, has_food)
         self._active_reflex = None     # current reflex action name or None
         self._last_reflex_at = 0       # timestamp of last reflex execution
         self._reflex_history = []      # [{reflex, target, at}] last 5 reflexes
@@ -61,6 +63,7 @@ class RunnerThread(threading.Thread):
             'active_reflex': reflex,
             'reflex_history': self._reflex_history[-5:],
             'flee_failed': dict(self._flee_failed),
+            'flee_steps': dict(self._flee_steps),
         }
 
     def _post(self, path, data, timeout=5):
@@ -94,6 +97,32 @@ class RunnerThread(threading.Thread):
             # /status timeout during combat — reuse last known state
             has = self._weapon_cache[1]
         self._weapon_cache = (now, has)
+        return has
+
+    def _has_food(self):
+        """Check if bot has safe food (for low-health eat preference during combat). Cached 3s."""
+        now = time.time()
+        cache_age = now - self._food_cache[0]
+        if cache_age < 3.0:
+            return self._food_cache[1]
+        has = False
+        try:
+            st = self._get('/status')
+            inv = st.get('data', {}).get('inventory', [])
+            banned = {'rotten_flesh', 'pufferfish', 'chorus_fruit', 'poisonous_potato', 'spider_eye'}
+            safe = {'bread', 'carrot', 'baked_potato', 'potato', 'apple', 'cooked_beef', 'cooked_porkchop',
+                    'cooked_chicken', 'cooked_mutton', 'cooked_rabbit', 'cooked_cod', 'cooked_salmon',
+                    'cookie', 'pumpkin_pie', 'melon_slice', 'sweet_berries', 'dried_kelp', 'beetroot',
+                    'golden_apple', 'enchanted_golden_apple', 'honey_bottle'}
+            for i in inv:
+                nm = (i.get('name') or '').lower()
+                if nm in safe or (nm and ('cooked' in nm or nm.startswith('beef') or nm.startswith('pork') or nm in ('chicken', 'mutton', 'rabbit', 'cod', 'salmon'))):
+                    if nm not in banned:
+                        has = True
+                        break
+        except:
+            has = True  # optimistic during timeout
+        self._food_cache = (now, has)
         return has
 
     def _check_damage(self):
@@ -135,7 +164,33 @@ class RunnerThread(threading.Thread):
 
         if action.get('name') == 'flee':
             entity_type = action.get('params', {}).get('from', '')
-            self._check_flee_result(entity_type)
+            # Micro-step reactive flee: do NOT release immediately — keep mutex briefly during the 200-300ms step.
+            # After micro-step, IMMEDIATELY re-check: still near? low health + food → eat; else → attack (counter).
+            # This lets bot eat / re-equip / counter-attack between micro flees. Next event tick decides further.
+            time.sleep(0.40)
+            try:
+                st = self._get('/status')
+                h = float(st.get('data', {}).get('health', 20))
+                near_ents = st.get('data', {}).get('nearbyEntities', [])
+                still_near = False
+                for e in near_ents:
+                    et = (e.get('type') or '').lower()
+                    if entity_type and entity_type.lower() in et and float(e.get('distance', 99)) < 6.0:
+                        still_near = True
+                        break
+                if still_near:
+                    if h < 8 and self._has_food():
+                        self._post_fire('/action/eat', {})
+                    else:
+                        # health ok → counter-attack
+                        self._post_fire('/action/attack', {'target': entity_type})
+                else:
+                    # clear of threat — reset step counter
+                    self._flee_steps[entity_type] = 0
+            except Exception:
+                pass
+            self._post('/mutex/release', {'requester': 'runner'})
+            return  # released inside flee branch
 
         self._post('/mutex/release', {'requester': 'runner'})
 
@@ -148,6 +203,29 @@ class RunnerThread(threading.Thread):
         action = self._select_action(event)
         if action:
             self._execute_action(action)
+            if action.get('name') == 'flee':
+                entity_type = action.get('params', {}).get('from', '')
+                # Keep mutex briefly for micro-step, then recheck for eat/attack transition (same as critical)
+                time.sleep(0.40)
+                try:
+                    st = self._get('/status')
+                    h = float(st.get('data', {}).get('health', 20))
+                    near_ents = st.get('data', {}).get('nearbyEntities', [])
+                    still_near = False
+                    for e in near_ents:
+                        et = (e.get('type') or '').lower()
+                        if entity_type and entity_type.lower() in et and float(e.get('distance', 99)) < 6.0:
+                            still_near = True
+                            break
+                    if still_near:
+                        if h < 8 and self._has_food():
+                            self._post_fire('/action/eat', {})
+                        else:
+                            self._post_fire('/action/attack', {'target': entity_type})
+                    else:
+                        self._flee_steps[entity_type] = 0
+                except Exception:
+                    pass
         self._post('/mutex/release', {'requester': 'runner'})
 
     def _select_action(self, event):
@@ -164,6 +242,15 @@ class RunnerThread(threading.Thread):
 
             # Situational awareness
             has_weapon = self._has_weapon()
+            has_food = self._has_food()
+            health = float(event.get('health', self._last_health or 20))
+
+            # Prefer eat over flee if health low + food available (let auto-eat plugin or explicit eat recover)
+            if health < 8 and has_food:
+                if entity_type:
+                    self._flee_steps[entity_type] = 0
+                    self._flee_failed[entity_type] = 0
+                return {'name': 'eat', 'params': {}}
 
             # Flee: no weapon, cowardly personality, or flee-fail cascade
             must_flee = (
@@ -175,22 +262,33 @@ class RunnerThread(threading.Thread):
             if must_flee and time.time() - self._last_flee_at < 4.0 and dist > 6:
                 must_flee = False
 
+            flee_step = self._flee_steps.get(entity_type, 0)
+            if flee_step >= 5 and has_weapon:
+                must_flee = False  # cornered — fight instead of infinite flee
+
             flee_count = self._flee_failed.get(entity_type, 0)
             if flee_count >= 1:
                 must_flee = False  # fight instead — one failed flee is enough
 
             if must_flee and entity_type:
                 self._flee_positions[entity_type] = None
+                self._flee_steps[entity_type] = flee_step + 1
                 return {'name': 'flee', 'params': {'from': entity_type, 'distance': 8}}
 
             # Fight: attack (goto + hit), re-triggers on next entity_near event
             if entity_type:
                 self._flee_failed[entity_type] = 0
+                self._flee_steps[entity_type] = 0
                 return {'name': 'attack', 'params': {'target': entity_type}}
             # taking_damage without known entity_type: just attack nearest
             return {'name': 'attack', 'params': {'target': ''}}
 
         elif etype in ('health_low', 'hunger_low'):
+            # Reset flee state when eating to recover
+            for k in list(self._flee_steps.keys()):
+                self._flee_steps[k] = 0
+            for k in list(self._flee_failed.keys()):
+                self._flee_failed[k] = 0
             return {'name': 'eat', 'params': {}}
         elif etype == 'voice_command' and event.get('intent') == 'emergency_stop':
             return {'name': 'stop', 'params': {}}
