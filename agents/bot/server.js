@@ -88,6 +88,7 @@ import {
 import { MotionController } from './lib/motion-controller.js';
 import { BodyMutex } from './lib/mutex.js';
 import { ACTION_REGISTRY, ON_ABORT } from './lib/action-registry.js';
+import { HOSTILE_NAMES, WEAPONS, BANNED_FOOD, isHostileName, equipBestWeapon } from './lib/combat-data.js';
 // mine-photo removed — prismarine-viewer + puppeteer replaced it (see line 253).
 // The package was broken on Node 22 (fs.globSync at module load) and the
 // only call site (Camera ray-tracing init) was removed below.
@@ -297,20 +298,12 @@ function checkEntityProximity() {
   if (!bot || !bot.entity || !botReady) return;
   const entities = bot.entities || {};
   const now = Date.now();
-  // Hostile list follows patterns used in attack() and threat rendering elsewhere in server.js
-  const HOSTILES = ['zombie', 'skeleton', 'creeper', 'spider', 'slime', 'magma_cube', 'witch', 'enderman', 'drowned', 'phantom', 'blaze', 'ghast', 'wither_skeleton', 'piglin_brute', 'cave_spider'];
+  // Hostile list from combat-data.js — single source of truth
   for (const [id, entity] of Object.entries(entities)) {
     if (entity === bot.entity) continue;
-    // Hostile mobs can have type 'mob' or 'hostile' depending on Minecraft version
-    if (entity.type !== 'mob' && entity.type !== 'hostile') {
-      if (entity.type && !['object', 'player', 'other', 'animal', 'ambient', 'passive'].includes(entity.type)) {
-        console.error(`[runner-events] unknown entity type: ${entity.type} name=${entity.name} mobType=${entity.mobType}`);
-      }
-      continue;
-    }
     const name = (entity.name || entity.mobType || entity.displayName || '').toLowerCase();
     if (!name) continue;
-    const isHostile = HOSTILES.some(h => name.includes(h));
+    const isHostile = HOSTILE_NAMES.some(h => name.includes(h));
     if (!isHostile) continue;
     if (!entity.position) continue;
     const dist = bot.entity.position.distanceTo(entity.position);
@@ -668,7 +661,7 @@ async function createBotImpl() {
         priority: 'foodPoints',
         minHunger: 18,
         minHealth: 19,
-        bannedFood: ['rotten_flesh', 'pufferfish', 'chorus_fruit', 'poisonous_potato', 'spider_eye'],
+        bannedFood: BANNED_FOOD,
         returnToLastItem: true,
       };
 
@@ -1925,9 +1918,8 @@ function generateLookAround() {
   // Nearby threats
   const threats = Object.values(b.entities)
     .filter(e => {
-      if (e === b.entity || (e.type !== 'mob' && e.type !== 'hostile')) return false;
-      const hostile = ['zombie', 'skeleton', 'creeper', 'spider', 'slime', 'magma_cube', 'witch', 'enderman', 'drowned', 'phantom'];
-      return hostile.some(h => (e.name || '').includes(h)) && e.position.distanceTo(pos) < 20;
+      if (e === b.entity) return false;
+      return HOSTILE_NAMES.some(h => (e.name || '').includes(h)) && e.position.distanceTo(pos) < 20;
     })
     .sort((a, c) => a.position.distanceTo(pos) - c.position.distanceTo(pos));
   
@@ -2405,16 +2397,10 @@ async collect({ block, count = 1 }) {
     const b = ensureBot();
     await reactionDelay();
 
-    // Auto-equip best weapon
-    const weapons = ['netherite_sword', 'diamond_sword', 'iron_sword', 'stone_sword', 'wooden_sword',
-                     'netherite_axe', 'diamond_axe', 'iron_axe', 'stone_axe', 'wooden_axe'];
-    for (const w of weapons) {
-      const item = b.inventory.items().find(i => i.name === w);
-      if (item) { await b.equip(item, 'hand'); break; }
-    }
+    // Auto-equip best weapon (single source: combat-data.js)
+    await equipBestWeapon(b);
 
-    const hostiles = ['zombie', 'skeleton', 'creeper', 'spider', 'slime', 'magma_cube', 'enderman', 'witch', 'drowned', 'phantom', 'blaze', 'ghast', 'wither_skeleton', 'piglin_brute', 'cave_spider'];
-
+    // Hostile detection via combat-data.js
     // Fair play: only attack visible entities
     const rawEnts = Object.values(b.entities).filter(e => e !== b.entity);
     const visible = filterEntitiesFairPlay(rawEnts);
@@ -2422,7 +2408,7 @@ async collect({ block, count = 1 }) {
     if (target) {
       entity = visible.find(e => (e.name || '').toLowerCase().includes(target.toLowerCase()));
     } else {
-      entity = visible.find(e => hostiles.includes((e.name || '').toLowerCase()));
+      entity = visible.find(e => HOSTILE_NAMES.includes((e.name || '').toLowerCase()));
     }
     if (!entity) {
       const hint = nearbyEntitiesHint(b);
@@ -2844,18 +2830,11 @@ async collect({ block, count = 1 }) {
   async fight({ target, retreat_health = 6, duration = 30 }) {
     const b = ensureBot();
 
-    // Auto-equip best weapon
-    const weapons = ['netherite_sword','diamond_sword','iron_sword','stone_sword','wooden_sword',
-                     'netherite_axe','diamond_axe','iron_axe','stone_axe','wooden_axe'];
-    for (const w of weapons) {
-      const item = b.inventory.items().find(i => i.name === w);
-      if (item) { await b.equip(item, 'hand'); break; }
-    }
+    // Auto-equip best weapon (single source: combat-data.js)
+    await equipBestWeapon(b);
 
     // Find target entity
-    const hostiles = ['zombie','skeleton','spider','slime','magma_cube','creeper','enderman','witch',
-                      'drowned','husk','stray','phantom','pillager','vindicator','blaze',
-                      'wither_skeleton','ghast','piglin_brute','hoglin'];
+    const hostiles = HOSTILE_NAMES;
     // Fair play: only fight visible entities
     const rawEnts = Object.values(b.entities).filter(e => e !== b.entity);
     const visible = filterEntitiesFairPlay(rawEnts);
@@ -2908,7 +2887,7 @@ async collect({ block, count = 1 }) {
     const b = ensureBot();
     await reactionDelay();
 
-    const hostiles = ['zombie','skeleton','spider','slime','magma_cube','creeper','enderman','witch','drowned','husk','stray','phantom','blaze','wither_skeleton','player'];
+    const hostiles = HOSTILE_NAMES;
 
     // Find the fleeing-from entity (for micro-step reactive) or coords fallback or nearest
     const rawEnts = Object.values(b.entities).filter(e => e !== b.entity);
@@ -3168,7 +3147,7 @@ async collect({ block, count = 1 }) {
         (e.username || '').toLowerCase().includes(target.toLowerCase())
       );
     } else {
-      const hostiles = ['zombie','skeleton','spider','slime','magma_cube','creeper','enderman','witch','drowned','blaze','ghast','wither_skeleton','player'];
+      const hostiles = HOSTILE_NAMES;
       const rawEnts = Object.values(b.entities).filter(e => 
         e !== b.entity && hostiles.some(h => (e.name || '').includes(h)));
       const visible = filterEntitiesFairPlay(rawEnts);
@@ -3201,13 +3180,8 @@ async collect({ block, count = 1 }) {
     const b = ensureBot();
     await reactionDelay();
     
-    // Auto-equip best weapon
-    const weapons = ['netherite_sword','diamond_sword','iron_sword','stone_sword','wooden_sword',
-                     'netherite_axe','diamond_axe','iron_axe','stone_axe'];
-    for (const w of weapons) {
-      const item = b.inventory.items().find(i => i.name === w);
-      if (item) { await b.equip(item, 'hand'); break; }
-    }
+    // Auto-equip best weapon (single source: combat-data.js)
+    await equipBestWeapon(b);
     
     const rawEnts = Object.values(b.entities).filter(e => e !== b.entity);
     const visible = filterEntitiesFairPlay(rawEnts);
@@ -3233,12 +3207,8 @@ async collect({ block, count = 1 }) {
     const b = ensureBot();
     await reactionDelay();
     
-    // Equip best weapon
-    const weapons = ['netherite_sword','diamond_sword','iron_sword','stone_sword','wooden_sword','netherite_axe','diamond_axe','iron_axe'];
-    for (const w of weapons) {
-      const item = b.inventory.items().find(i => i.name === w);
-      if (item) { await b.equip(item, 'hand'); break; }
-    }
+    // Auto-equip best weapon (single source: combat-data.js)
+    await equipBestWeapon(b);
     
     const rawEnts = Object.values(b.entities).filter(e => e !== b.entity);
     const visible = filterEntitiesFairPlay(rawEnts);
@@ -3267,12 +3237,8 @@ async collect({ block, count = 1 }) {
     const b = ensureBot();
     await reactionDelay();
     
-    // Equip best weapon
-    const weapons = ['netherite_sword','diamond_sword','iron_sword','stone_sword','wooden_sword'];
-    for (const w of weapons) {
-      const item = b.inventory.items().find(i => i.name === w);
-      if (item) { await b.equip(item, 'hand'); break; }
-    }
+    // Auto-equip best weapon (single source: combat-data.js)
+    await equipBestWeapon(b);
     
     const rawEnts = Object.values(b.entities).filter(e => e !== b.entity);
     const visible = filterEntitiesFairPlay(rawEnts);
