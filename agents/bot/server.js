@@ -696,7 +696,7 @@ async function createBotImpl() {
           // checkHazardEdges() can be added here (uses hazard_edge debounce)
         } catch (e) {
           // Never let a tick handler crash the bot's physics loop
-          if (process.env.BOT_VERBOSE) console.error('[runner-events] physicsTick handler error:', e.message);
+          console.error('[runner-events] physicsTick handler error:', e.message || e, String(e));
         }
       });
 
