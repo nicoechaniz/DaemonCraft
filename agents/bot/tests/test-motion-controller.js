@@ -19,34 +19,56 @@ const test = async (name, fn) => {
   }
 };
 
-const makeFakeBot = () => ({
-  entity: {
-    position: { x: 100, y: 64, z: 100, offset: (dx, dy, dz) => ({ x: 100+dx, y: 64+dy, z: 100+dz }) },
-    yaw: 0,
-    pitch: 0,
-    onGround: true,
-  },
-  pathfinder: {
-    _goal: null,
-    setGoal: function(g) { this._goal = g; },
-    getGoal: function() { return this._goal; },
-    stop: function() { this._goal = null; },
-    isMoving: function() { return false; },
-    goto: function(g) { this._goal = g; return new Promise(() => {}); /* never settles for test */ },
-  },
-  controls: { forward: false, back: false, left: false, right: false, jump: false, sneak: false },
-  setControlState: function(k, v) { this.controls[k] = v; },
-  clearControlStates: function() { Object.keys(this.controls).forEach(k => this.controls[k] = false); },
-  look: async function(yaw, pitch) { this.entity.yaw = yaw; return Promise.resolve(); },
-  blockAt: function() { return { name: 'air', boundingBox: 'empty' }; },
-  canDigBlock: function() { return false; },
-  dig: async function() { return Promise.resolve(); },
-  stopDigging: function() {},
-  emit: function() {},
-  on: function() {},
-  once: function() {},
-  removeAllListeners: function() {},
-});
+const makeFakeBot = () => {
+  const listeners = {};
+  const addListener = (evt, fn, once = false) => {
+    if (!listeners[evt]) listeners[evt] = [];
+    listeners[evt].push({ fn, once });
+  };
+  const removeListener = (evt, fn) => {
+    if (!listeners[evt]) return;
+    listeners[evt] = listeners[evt].filter((l) => l.fn !== fn);
+  };
+  const emit = (evt, ...args) => {
+    const list = listeners[evt] || [];
+    // filter to keep non-once, call all
+    listeners[evt] = list.filter((l) => {
+      try { l.fn(...args); } catch {}
+      return !l.once;
+    });
+  };
+  const removeAll = () => { Object.keys(listeners).forEach(k => delete listeners[k]); };
+
+  return {
+    entity: {
+      position: { x: 100, y: 64, z: 100, offset: (dx, dy, dz) => ({ x: 100+dx, y: 64+dy, z: 100+dz }) },
+      yaw: 0,
+      pitch: 0,
+      onGround: true,
+    },
+    pathfinder: {
+      _goal: null,
+      setGoal: function(g) { this._goal = g; },
+      getGoal: function() { return this._goal; },
+      stop: function() { this._goal = null; },
+      isMoving: function() { return false; },
+      goto: function(g) { this._goal = g; return new Promise(() => {}); /* never settles for test */ },
+    },
+    controls: { forward: false, back: false, left: false, right: false, jump: false, sneak: false },
+    setControlState: function(k, v) { this.controls[k] = v; },
+    clearControlStates: function() { Object.keys(this.controls).forEach(k => this.controls[k] = false); },
+    look: async function(yaw, pitch) { this.entity.yaw = yaw; return Promise.resolve(); },
+    blockAt: function() { return { name: 'air', boundingBox: 'empty' }; },
+    canDigBlock: function() { return false; },
+    dig: async function() { return Promise.resolve(); },
+    stopDigging: function() {},
+    emit,
+    on: (e, f) => addListener(e, f, false),
+    once: (e, f) => addListener(e, f, true),
+    removeListener: (e, f) => removeListener(e, f),
+    removeAllListeners: removeAll,
+  };
+};
 
 console.log('Running Phase 0 MotionController tests...\n');
 
@@ -58,8 +80,7 @@ await test('dispose clears interval', () => {
   if (!mc._fastStuckInterval) throw new Error('expected _fastStuckInterval after ctor');
   mc.dispose();
   if (mc._fastStuckInterval !== null) throw new Error('_fastStuckInterval not cleared');
-  if (mc._active !== false) throw new Error('_active not false');
-  if (mc._recovering !== false) throw new Error('_recovering not false');
+  // legacy _active/_recovering removed (I2)
 });
 
 // Test 2: _clearControls clears all controls
@@ -198,9 +219,7 @@ await test('dispose clears session and interval', () => {
   mc.dispose();
   if (mc._fastStuckInterval !== null) throw new Error('interval not cleared');
   if (mc._session !== null) throw new Error('session not cleared');
-  // Legacy flags still cleared for compat
-  if (mc._active !== false) throw new Error('_active not false');
-  if (mc._recovering !== false) throw new Error('_recovering not false');
+  // legacy _active/_recovering/_targetGoal removed (I2)
 });
 
 // --- Phase 2 tests: Recovery FSM (deterministic maneuvers) ---
@@ -427,7 +446,101 @@ await test('BodyMutex emergencyStop calls motion.requestEmergencyStop', async ()
   // no need to dispose mc, none created
 });
 
-console.log(`\nAll Phase 0 + Phase 1 + Phase 2 + Phase 3 tests complete. Failures: ${failed}`);
+// --- B1/B2/B3 verification tests (must not regress the 19 prior tests) ---
+
+await test('goto survives recovery setGoal(null)', async () => {
+  const fake = makeFakeBot();
+  const mc = new MotionController(fake);
+  const p = mc.goto(105, 64, 105, 8000);
+  // allow session/ listener setup
+  await new Promise(r => setTimeout(r, 5));
+  // simulate recovery's pause (which does setGoal(null) — must NOT break the manual listener)
+  await mc._pausePathfinder();
+  // now simulate eventual arrival after _resumeGoal re-sets it
+  fake.emit('goal_reached');
+  const res = await p;
+  if (!res || !res.ok) throw new Error('goto promise did not resolve ok after recovery pause');
+  if (typeof res.result !== 'string' || !res.result.includes('Arrived at')) {
+    throw new Error('unexpected result: ' + JSON.stringify(res));
+  }
+  if (mc._session !== null) throw new Error('session should be cleared on reached');
+  mc.dispose();
+});
+
+await test('stale guard aborts mid-recovery after stop', async () => {
+  const fake = makeFakeBot();
+  const mc = new MotionController(fake);
+  let clears = 0;
+  const origClear = mc._clearControls.bind(mc);
+  mc._clearControls = () => { clears++; return origClear(); };
+  let setsAfter = 0;
+  const origSetGoal = fake.pathfinder.setGoal.bind(fake.pathfinder);
+  let stopped = false;
+  fake.pathfinder.setGoal = (g) => {
+    if (stopped && g != null) setsAfter++;  // only count resume-style (non-null) sets after stop
+    return origSetGoal(g);
+  };
+
+  const desc = makeGoalDescriptor('block', 120, 64, 120);
+  const session = createSession('stale-guard', desc);
+  session.state = SESSION_STATE.STUCK_DETECTED;
+  mc._session = session;
+  mc._sessionGeneration++;
+
+  const hp = mc._handleStuck(session);
+  // let it enter first await sleep in pause
+  await new Promise(r => setTimeout(r, 20));
+  stopped = true;
+  await mc.stop();
+  await hp;
+
+  if (clears === 0) throw new Error('expected _clearControls called by stale guard');
+  if (setsAfter > 0) throw new Error('setGoal should not fire after stop (stale guard): ' + setsAfter);
+  mc.dispose();
+});
+
+await test('cancelRequested consumed in finally', async () => {
+  const fake = makeFakeBot();
+  const mc = new MotionController(fake);
+  const desc = makeGoalDescriptor('block', 99, 64, 99);
+  const session = createSession('cancel-fin', desc);
+  session.state = SESSION_STATE.STUCK_DETECTED;
+  mc._session = session;
+  mc._sessionGeneration++;
+
+  // start recovery (will run FSM)
+  const hp = mc._handleStuck(session);
+  // set flag mid-recovery (before it finishes its sleeps)
+  session.cancelRequested = true;
+  await hp;
+
+  if (session.state !== SESSION_STATE.CANCELLED) throw new Error('expected CANCELLED, got ' + session.state);
+  if (!session.hardCancelled) throw new Error('hardCancelled should be set by consume');
+  if (mc._activeRecovery) throw new Error('_activeRecovery left true');
+  mc.dispose();
+});
+
+await test('follow skips recovery', async () => {
+  const fake = makeFakeBot();
+  const mc = new MotionController(fake);
+  let recoveryInvoked = false;
+  const orig = mc._doStepRecoveryFSM.bind(mc);
+  mc._doStepRecoveryFSM = async (s, g) => { recoveryInvoked = true; return orig(s, g); };
+
+  const desc = makeGoalDescriptor('follow', 0, 0, 0, { username: 'bar' }, 2);
+  const session = createSession('foll-skip', desc);
+  session.state = SESSION_STATE.STUCK_DETECTED;
+  mc._session = session;
+  mc._sessionGeneration++;
+
+  await mc._handleStuck(session);
+
+  if (recoveryInvoked) throw new Error('recovery FSM must not be invoked for follow sessions (I1)');
+  if (mc._activeRecovery) throw new Error('_activeRecovery must not be set for follow');
+  mc.dispose();
+});
+
+console.log(`\nAll Phase 0 + Phase 1 + Phase 2 + Phase 3 + B1B2B3 tests complete (23 total). Failures: ${failed}`);
 if (failed > 0) {
   process.exit(1);
 }

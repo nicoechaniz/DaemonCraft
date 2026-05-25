@@ -70,12 +70,8 @@ export class MotionController {
     this._sessionGeneration = 0; // monotonic counter
     this._activeRecovery = false;
     this._recoverySpinDir = 1; // alternates per recovery attempt (+1 / -1)
+    this._recoveryPromise = null;
     
-    bot.on('path_reset', (reason) => {
-      if (reason === 'stuck' && this._active) {
-        this._log(`path_reset: stuck (fast stuck handles recovery)`);
-      }
-    });
     bot.on('goal_reached', () => {
       this._stuckCount = 0;
       this._sameSpotCount = 0;
@@ -126,6 +122,10 @@ export class MotionController {
   _resetFastStuckWindow() {
     this._lastCheckPos = null;
     this._stuckCheckT0 = 0;
+  }
+
+  _isSessionValid(session, generation) {
+    return this._sessionGeneration === generation && !session.hardCancelled;
   }
 
   get isActive() { return this._session !== null && this._session.state !== SESSION_STATE.IDLE; }
@@ -186,26 +186,26 @@ export class MotionController {
     this._resetFastStuckWindow();
 
     const goal = new goals.GoalBlock(Math.floor(x), Math.floor(y), Math.floor(z));
-    const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), timeoutMs));
-    try {
-      await Promise.race([this.bot.pathfinder.goto(goal), timeout]);
-      session.state = SESSION_STATE.COMPLETE;
-      return { ok: true, result: `Arrived at ${Math.round(x)}, ${Math.round(y)}, ${Math.round(z)}` };
-    } catch (e) {
-      const p = this.bot.entity.position;
-      if (e.message === 'timeout') {
+    this.bot.pathfinder.setGoal(goal);
+    return new Promise((resolve) => {
+      let timer;
+      const onReached = () => {
+        if (timer) clearTimeout(timer);
+        this.bot.removeListener('goal_reached', onReached);
+        session.state = SESSION_STATE.COMPLETE;
+        this._session = null;
+        resolve({ ok: true, result: 'Arrived at ' + Math.round(x) + ', ' + Math.round(y) + ', ' + Math.round(z) });
+      };
+      const onTimeout = () => {
+        this.bot.removeListener('goal_reached', onReached);
+        const p = this.bot.entity.position;
         session.state = SESSION_STATE.FAILED;
-        return { ok: true, result: `Walked toward ${Math.round(x)},${Math.round(y)},${Math.round(z)}, now at ${p.x.toFixed(1)},${p.y.toFixed(1)},${p.z.toFixed(1)}. Did not reach destination within timeout.` };
-      }
-      if (session.hardCancelled) {
-        session.state = SESSION_STATE.CANCELLED;
-        return { ok: true, result: `Navigation cancelled.` };
-      }
-      session.state = SESSION_STATE.FAILED;
-      return { ok: true, result: `Navigation failed: ${e.message}.` };
-    } finally {
-      this._session = null;
-    }
+        this._session = null;
+        resolve({ ok: true, result: 'Walked toward ' + Math.round(x) + ',' + Math.round(y) + ',' + Math.round(z) + ', now at ' + p.x.toFixed(1) + ',' + p.y.toFixed(1) + ',' + p.z.toFixed(1) + '. Did not reach destination within timeout.' });
+      };
+      timer = setTimeout(onTimeout, timeoutMs);
+      this.bot.once('goal_reached', onReached);
+    });
   }
 
   async gotoNear(x, y, z, range = 2) {
@@ -220,26 +220,26 @@ export class MotionController {
     this._resetFastStuckWindow();
 
     const goal = new goals.GoalNear(Math.floor(x), Math.floor(y), Math.floor(z), range);
-    const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 15000));
-    try {
-      await Promise.race([this.bot.pathfinder.goto(goal), timeout]);
-      session.state = SESSION_STATE.COMPLETE;
-      return { ok: true, result: `Arrived near ${Math.round(x)}, ${Math.round(y)}, ${Math.round(z)}` };
-    } catch (e) {
-      const p = this.bot.entity.position;
-      if (e.message === 'timeout') {
+    this.bot.pathfinder.setGoal(goal);
+    return new Promise((resolve) => {
+      let timer;
+      const onReached = () => {
+        if (timer) clearTimeout(timer);
+        this.bot.removeListener('goal_reached', onReached);
+        session.state = SESSION_STATE.COMPLETE;
+        this._session = null;
+        resolve({ ok: true, result: 'Arrived near ' + Math.round(x) + ', ' + Math.round(y) + ', ' + Math.round(z) });
+      };
+      const onTimeout = () => {
+        this.bot.removeListener('goal_reached', onReached);
+        const p = this.bot.entity.position;
         session.state = SESSION_STATE.FAILED;
-        return { ok: true, result: `Moved toward ${Math.round(x)},${Math.round(y)},${Math.round(z)}, now at ${p.x.toFixed(1)},${p.y.toFixed(1)},${p.z.toFixed(1)}. Did not reach destination within timeout.` };
-      }
-      if (session.hardCancelled) {
-        session.state = SESSION_STATE.CANCELLED;
-        return { ok: true, result: `Navigation cancelled.` };
-      }
-      session.state = SESSION_STATE.FAILED;
-      return { ok: true, result: `Navigation failed: ${e.message}.` };
-    } finally {
-      this._session = null;
-    }
+        this._session = null;
+        resolve({ ok: true, result: 'Moved toward ' + Math.round(x) + ',' + Math.round(y) + ',' + Math.round(z) + ', now at ' + p.x.toFixed(1) + ',' + p.y.toFixed(1) + ',' + p.z.toFixed(1) + '. Did not reach destination within timeout.' });
+      };
+      timer = setTimeout(onTimeout, 15000);
+      this.bot.once('goal_reached', onReached);
+    });
   }
 
   async follow(entity, distance = 2) {
@@ -259,6 +259,11 @@ export class MotionController {
   }
 
   async stop() {
+    if (this._activeRecovery) {
+      if (this._session) this._session.hardCancelled = true;
+      await new Promise(function(r) { return setTimeout(r, 100); });
+    }
+
     const prevSession = this._session;
     this._session = null;
     this._sessionGeneration++;
@@ -269,10 +274,6 @@ export class MotionController {
       prevSession.state = SESSION_STATE.CANCELLED;
     }
 
-    // Legacy flags for compat with untouched recovery methods and Phase 0 tests
-    this._active = false;
-    this._recovering = false;
-    this._targetGoal = null;
     this._stuckCount = 0;
     this._sameSpotCount = 0;
     this._activeRecovery = false;
@@ -312,6 +313,7 @@ export class MotionController {
       this._session.state = SESSION_STATE.CANCELLED;
     }
     this._activeRecovery = false;
+    this._recoveryPromise = null;
     try { this.bot.pathfinder.setGoal(null); } catch {}
     this._clearControls();
     this._session = null;
@@ -408,28 +410,31 @@ export class MotionController {
     try {
       // Stage: PAUSING_PATHFINDER
       await this._pausePathfinder();
+      if (!this._isSessionValid(session, generation)) { this._clearControls(); return; }
 
       // Stage: BACKSTEP (crouched 260ms)
       this.bot.setControlState('sneak', true);
       this.bot.setControlState('back', true);
       await new Promise(r => setTimeout(r, 260));
+      if (!this._isSessionValid(session, generation)) { this._clearControls(); return; }
       this._clearControls();
 
-      // Stage: ROTATING — prefer nearest body block, else alternate ±90° using recoverySpinDir
+      // Stage: ROTATING — prefer nearest body block, else alternate ±60° using recoverySpinDir
       const yaw = this.bot.entity.yaw;
       const bodyBlock = this._findNearestBodyBlock();
       let targetYaw;
       if (bodyBlock) {
         // Rotate away: use spin dir (will flip after)
-        targetYaw = yaw + (this._recoverySpinDir * (Math.PI / 2));
+        targetYaw = yaw + (this._recoverySpinDir * (Math.PI / 3));
       } else {
         // Alternate per attempt
         const alt = (session.recoveryAttempt % 2 === 0) ? 1 : -1;
-        targetYaw = yaw + alt * (Math.PI / 2);
+        targetYaw = yaw + alt * (Math.PI / 3);
       }
       // Round to nearest 22.5° (PI/8)
       targetYaw = Math.round(targetYaw / (Math.PI / 8)) * (Math.PI / 8);
       await this.bot.look(targetYaw, 0, false);
+      if (!this._isSessionValid(session, generation)) { this._clearControls(); return; }
 
       // Flip spin dir for next attempt
       this._recoverySpinDir = -this._recoverySpinDir;
@@ -439,8 +444,10 @@ export class MotionController {
       this.bot.setControlState('jump', true);
       this.bot.setControlState('forward', true);
       await new Promise(r => setTimeout(r, 600));
+      if (!this._isSessionValid(session, generation)) { this._clearControls(); return; }
       this._clearControls();
       await new Promise(r => setTimeout(r, 200)); // physics settle
+      if (!this._isSessionValid(session, generation)) { this._clearControls(); return; }
 
       // Stage: MEASURING
       const postJump = this.bot.entity.position;
@@ -476,6 +483,7 @@ export class MotionController {
 
     try {
       await this._pausePathfinder();
+      if (!this._isSessionValid(session, generation)) { this._clearControls(); return; }
 
       // Compute obstacle world normal from blockedDir + current yaw
       const yaw = this.bot.entity.yaw;
@@ -499,7 +507,9 @@ export class MotionController {
         targetYaw = yaw - 0.5; // turn left
       }
       await this.bot.look(targetYaw, 0, false);
+      if (!this._isSessionValid(session, generation)) { this._clearControls(); return; }
       await new Promise(r => setTimeout(r, 150)); // settle
+      if (!this._isSessionValid(session, generation)) { this._clearControls(); return; }
 
       // Stage: MEASURING pre-strafe + reclassify
       const preStrafe = { x: this.bot.entity.position.x, y: this.bot.entity.position.y, z: this.bot.entity.position.z };
@@ -520,8 +530,10 @@ export class MotionController {
         this.bot.setControlState('left', true);
       }
       await new Promise(r => setTimeout(r, LATERAL_STRAFE_MS));
+      if (!this._isSessionValid(session, generation)) { this._clearControls(); return; }
       this._clearControls();
       await new Promise(r => setTimeout(r, 200));
+      if (!this._isSessionValid(session, generation)) { this._clearControls(); return; }
 
       // Stage: separation measurement
       const postStrafe = this.bot.entity.position;
@@ -559,6 +571,7 @@ export class MotionController {
 
     try {
       await this._pausePathfinder();
+      if (!this._isSessionValid(session, generation)) { this._clearControls(); return; }
 
       // Find block at bot face (+1.5 height)
       const b = this.bot;
@@ -596,33 +609,48 @@ export class MotionController {
   // Phase 2: Recovery entry point — dispatches to deterministic FSM based on _classifyBlocked
   async _handleStuck(session) {
     if (!session || session.state !== SESSION_STATE.STUCK_DETECTED) return;
+    if (session.hardCancelled || session.cancelRequested) return;
+    if (session.goalDescriptor && session.goalDescriptor.type === 'follow') {
+      this._log('follow session, skipping recovery');
+      return;
+    }
     if (this._activeRecovery) return; // already recovering
     this._activeRecovery = true;
     const generation = this._sessionGeneration;
 
-    try {
-      session.state = SESSION_STATE.RECOVERY_ATOMIC;
-      session.recoveryAttempt++;
+    this._recoveryPromise = Promise.resolve().then(async () => {
+      try {
+        session.state = SESSION_STATE.RECOVERY_ATOMIC;
+        session.recoveryAttempt++;
 
-      const blocked = this._classifyBlocked();
-      this._log(`recovery attempt=${session.recoveryAttempt} direction=${blocked}`);
+        const blocked = this._classifyBlocked();
+        this._log(`recovery attempt=${session.recoveryAttempt} direction=${blocked}`);
 
-      if (blocked === 'step' || blocked === 'unknown') {
-        await this._doStepRecoveryFSM(session, generation);
-      } else if (blocked === 'left' || blocked === 'right' || blocked === 'forward-left' || blocked === 'forward-right') {
-        await this._doLateralRecoveryFSM(session, generation, blocked);
-      } else if (blocked === 'forward') {
-        await this._doMineRecoveryFSM(session, generation);
-      } else {
-        await this._doStepRecoveryFSM(session, generation); // fallback
+        if (blocked === 'step' || blocked === 'unknown') {
+          await this._doStepRecoveryFSM(session, generation);
+        } else if (blocked === 'left' || blocked === 'right' || blocked === 'forward-left' || blocked === 'forward-right') {
+          await this._doLateralRecoveryFSM(session, generation, blocked);
+        } else if (blocked === 'forward') {
+          await this._doMineRecoveryFSM(session, generation);
+        } else {
+          await this._doStepRecoveryFSM(session, generation); // fallback
+        }
+      } catch (e) {
+        this._log(`recovery error: ${e.message}`);
+        session.state = SESSION_STATE.FAILED;
+      } finally {
+        if (session && session.cancelRequested && !session.hardCancelled) {
+          session.hardCancelled = true;
+          session.state = SESSION_STATE.CANCELLED;
+          try { this.bot.pathfinder.setGoal(null); } catch (e) {}
+          this._clearControls();
+        }
+        this._activeRecovery = false;
+        this._clearControls();
+        this._recoveryPromise = null;
       }
-    } catch (e) {
-      this._log(`recovery error: ${e.message}`);
-      session.state = SESSION_STATE.FAILED;
-    } finally {
-      this._activeRecovery = false;
-      this._clearControls();
-    }
+    });
+    await this._recoveryPromise;
   }
 
   dispose() {
@@ -630,10 +658,14 @@ export class MotionController {
       clearInterval(this._fastStuckInterval);
       this._fastStuckInterval = null;
     }
+    if (this._activeRecovery) {
+      if (this._session) this._session.hardCancelled = true;
+      // Schedule short yield for in-flight recovery guards to observe hardCancelled (dispose API remains sync)
+      void new Promise(function(r) { return setTimeout(r, 100); });
+    }
     this._session = null;
     this._activeRecovery = false;
     this._recoverySpinDir = 1;
-    this._active = false;
-    this._recovering = false;
+    this._recoveryPromise = null;
   }
 }

@@ -4639,8 +4639,8 @@ const httpServer = http.createServer(async (req, res) => {
       // Unregistered actions default to preemptible (no explicit claim here).
       let mutexClaimed = false;
       const actionDef = ACTION_REGISTRY[actionName];
-      if (actionDef && actionDef.maxMs && bodyMutex) {
-        // bodyCategory equiv 'interaction' for short atomic (maxMs present)
+      if (actionDef && actionDef.tag === 'atomic' && bodyMutex) {
+        // atomic actions claim via BodyMutex (preemptible ones do not)
         const claimResult = await bodyMutex.claimCritical('action:' + actionName, actionName, actionDef.maxMs);
         if (!claimResult.allowed) {
           return respond(res, 423, { ok: false, error: claimResult.reason || 'body busy' });
