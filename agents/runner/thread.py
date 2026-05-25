@@ -93,8 +93,9 @@ class RunnerThread(threading.Thread):
         if etype == 'entity_near':
             dist = event.get('distance', 999)
             entity_type = event.get('entityType', 'hostile')
-            if p['combat']['threshold'] < 0.5 or dist < 3:
-                # FLEE: use real 'flee' action (moves away from entityType using from param)
+            # Flee only if personality is cowardly (threshold < 0.5) or health critically low
+            should_flee = p['combat']['threshold'] < 0.5
+            if should_flee:
                 return {'name': 'flee', 'params': {'from': entity_type, 'distance': 8}}
             else:
                 return {'name': 'attack', 'params': {'target': entity_type}}
