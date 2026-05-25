@@ -1,5 +1,89 @@
 # DaemonCraft Project Memory
 
+## Session State — 2026-05-25 (MotionController Refactor)
+
+### Branch: feat/motion-refactor (base: b09a1e7 on feat/reactive-runner-phase1)
+
+### Architecture after refactor
+
+**MotionController** — single owner of all pathfinding/movement state:
+- MotionSession replaces `_active`/`_recovering`/`_targetGoal` booleans
+- SESSION_STATE enum: idle → navigating → stuck_detected → recovery_atomic → replanning → complete/cancelled/failed
+- Goal descriptors preserve block/near/follow types; GoalNear no longer degrades to GoalBlock
+- goto()/gotoNear() use manual setGoal + `goal_reached` listener (not pathfinder.goto which rejected on goal change)
+- `_pendingGotoCleanup` hook resolves promises immediately on external cancel (no 15s hang)
+- Fast-stuck detection uses session state (`s.state`) instead of booleans
+- Follow sessions skip recovery (cannot resume GoalFollow without live entity ref)
+
+**Recovery FSM** — deterministic, atomic maneuvers per PLAN-motion-refactor.md:
+- Step recovery: `_doStepRecoveryFSM` — pause → sneak back 260ms → deliberate Y rotation (PI/3) → jump forward 600ms → measure → replan original goal
+- Lateral recovery: `_doLateralRecoveryFSM` — pause → compute obstacle world normal → rotate away (±0.5 rad) → measure in new frame → strafe away → verify → replan or fallback to step
+- Mine recovery: `_doMineRecoveryFSM` — pause → mine block at face → fallback to step
+- `_classifyBlocked`: Tier 0 step check (feet solid + head air) BEFORE body-level Tier 1
+- Generation guards (`_isSessionValid`) after EVERY await sleep/look in all FSMs
+- `stop()` yields 100ms when `_activeRecovery` is true
+
+**BodyMutex** → routes through MotionController:
+- `_cancelCurrent()` calls `motion.requestMutexCancel()` instead of raw `pathfinder.stop()`
+- `emergencyStop()` calls `motion.requestEmergencyStop()`
+- Cancel defers during RECOVERY_ATOMIC; emergency stop bypasses
+- `cancelRequested` consumed in `_handleStuck` finally
+
+**Combat system:**
+- `attack()` auto-equips best weapon via `equipBestWeapon()` from combat-data.js
+- `flee()` uses micro-steps: backstep (<3m) | strafe (3-5m) | clear (>5m) — replaces gotoNear(8 blocks)
+- `_has_weapon()` in runner checks inventory (not just held item)
+- Fallback: when target not in hostile list → nearest non-player entity (defense against unknown attackers)
+- `fight()` auto-equips best weapon before sustained combat loop
+
+**`agents/bot/lib/combat-data.js`** — SINGLE SOURCE OF TRUTH:
+- `HOSTILE_NAMES`: 37 hostile entities (includes vindicator, evoker, pillager, etc.)
+- `WEAPONS`: swords + axes in damage order + trident/mace
+- `BANNED_FOOD`: rotten_flesh, pufferfish, chorus_fruit, poisonous_potato, spider_eye
+- `equipBestWeapon(bot)`, `isHostileName(name)`, `hasWeaponInInventory(bot)` helpers
+- All server.js code imports from here; zero ad-hoc lists remain
+
+**Auto-eat:**
+- `minHunger: 18` (eat when below regen threshold to keep saturation high for health recovery)
+- `minHealth: 19` (prioritize high-saturation food when any health missing)
+- `returnToLastItem: true` (re-equip weapon after eating)
+- Banned foods from `BANNED_FOOD`
+
+### Files
+
+| File | Changes |
+|------|---------|
+| `agents/bot/lib/motion-controller.js` | Major: MotionSession, Recovery FSM, BodyMutex routing, N1 cleanup hook |
+| `agents/bot/lib/combat-data.js` | NEW: centralized hostile/weapon/armor/food lists |
+| `agents/bot/lib/mutex.js` | Light: routes through MotionController |
+| `agents/bot/server.js` | attack auto-equip, micro-step flee, fallback defense, auto-eat tuning, combat-data imports |
+| `agents/runner/thread.py` | _has_weapon checks inventory, flee_step counter, _food_cache |
+| `agents/bot/tests/test-motion-controller.js` | 23 tests covering all phases + B1-B3 + follow skip + stale guards + cancel consume |
+| `PLAN-motion-refactor.md` | Implementation plan document |
+
+### Commits on feat/motion-refactor (from b09a1e7)
+```
+1ca0e81 fix: attack/flee fallback to nearest non-player entity
+10b1687 fix: N1 — goto promise resolves immediately on external cancel
+c9ed9af refactor: centralize hostile/weapon/armor/food lists in combat-data.js
+ec11df0 feat: micro-step reactive flee — backstep/stafe/clear per tick
+9da40eb fix: auto-eat minHunger=18 minHealth=19
+91f3621 fix: auto-eat base config
+c446a41 fix: auto-equip best weapon in attack(), check inventory not holding
+2951e70 fix: B1+B2+B3 — atomic recovery, manual goto with listener, stale guards, cancel consumed
+928f2d3 docs: motion-controller refactor implementation plan
+634d3fe Phase 3: BodyMutex routes through MotionController
+bcd9388 Phase 2: Recovery FSM — deterministic step/lateral/mine recovery
+13050fb Phase 1: MotionSession + goal descriptor — single session owner
+139cf14 Phase 0: scaffolding — dispose, control helpers, try/finally, tests
+```
+
+### PENDING
+- Live verification: step/lateral stuck recovery with real terrain
+- Claude re-review after N1 fix (found NO-GO then, needs re-check)
+- Full ACTION_REGISTRY integration (currently light: only tag==='atomic' check)
+- Robot tests: test-flee-microstep.js untracked (Grok created, needs review + commit)
+
 ## Architecture — Session & Controller Model (2026-05-25)
 
 ### Controller Lease (bot server)
