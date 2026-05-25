@@ -2401,12 +2401,20 @@ async collect({ block, count = 1 }) {
     await equipBestWeapon(b);
 
     // Hostile detection via combat-data.js
-    // Fair play: only attack visible entities
     const rawEnts = Object.values(b.entities).filter(e => e !== b.entity);
     const visible = filterEntitiesFairPlay(rawEnts);
     let entity;
     if (target) {
+      // If caller provides a target name (from runner's entity_near or taking_damage),
+      // search by name match FIRST, then fall back to nearest non-player entity.
+      // If something is hitting us, it's hostile by definition.
       entity = visible.find(e => (e.name || '').toLowerCase().includes(target.toLowerCase()));
+      if (!entity) {
+        // Fallback: nearest non-player entity within 8m (the one that hit us)
+        entity = visible
+          .filter(e => e.position && b.entity.position.distanceTo(e.position) < 8)
+          .sort((a, c) => b.entity.position.distanceTo(a.position) - b.entity.position.distanceTo(c.position))[0];
+      }
     } else {
       entity = visible.find(e => HOSTILE_NAMES.includes((e.name || '').toLowerCase()));
     }
@@ -2905,12 +2913,19 @@ async collect({ block, count = 1 }) {
           z: parseFloat(coordMatch[3])
         };
       } else {
+        // Search by name match first, then fall back to nearest non-player entity
         entity = visible.find(e =>
           (e.name || '').toLowerCase().includes(fromStr) ||
           (e.username || '').toLowerCase().includes(fromStr) ||
           (e.mobType || '').toLowerCase().includes(fromStr) ||
           (e.displayName || '').toLowerCase().includes(fromStr)
         );
+        if (!entity) {
+          // Fallback: nearest non-player entity within 10m (the one hitting us)
+          entity = visible
+            .filter(e => e.position && b.entity.position.distanceTo(e.position) < 10)
+            .sort((a, c) => b.entity.position.distanceTo(a.position) - b.entity.position.distanceTo(c.position))[0];
+        }
       }
     }
 
