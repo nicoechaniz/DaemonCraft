@@ -46,8 +46,16 @@ class RunnerThread(threading.Thread):
     def push_event(self, event):
         self.event_queue.put(event)
 
-    def _post(self, path, data, timeout=30):
+    def _post(self, path, data, timeout=5):
+        """POST and return JSON response. For mutex ops that need the result."""
         return requests.post(f'{self.bot_api}{path}', json=data, timeout=timeout).json()
+
+    def _post_fire(self, path, data):
+        """Fire-and-forget POST for actions that may take a while."""
+        try:
+            requests.post(f'{self.bot_api}{path}', json=data, timeout=3)
+        except:
+            pass
 
     def _get(self, path):
         return requests.get(f'{self.bot_api}{path}', timeout=5).json()
@@ -174,16 +182,16 @@ class RunnerThread(threading.Thread):
                 self._flee_positions[entity_type] = (pos_before.get('x'), pos_before.get('y'), pos_before.get('z'))
             except:
                 pass
-            self._post('/action/flee', params)
+            self._post_fire('/action/flee', params)
 
         elif name == 'attack':
-            self._post('/action/attack', params, timeout=15)
+            self._post_fire('/action/attack', params)
 
         elif name == 'eat':
-            self._post('/action/eat', params, timeout=10)
+            self._post_fire('/action/eat', params)
 
         else:
-            self._post(f'/action/{name}', params)
+            self._post_fire(f'/action/{name}', params)
 
     def _check_flee_result(self, entity_type):
         """After a flee action, check if we actually moved. If not, increment fail counter."""
