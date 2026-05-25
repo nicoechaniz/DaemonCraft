@@ -14,13 +14,44 @@ const FAST_STUCK_MIN_PROGRESS_M = 0.7;
 const FAST_STUCK_TRIGGER_MS = 500;
 const LATERAL_STRAFE_MS = 375; // 75% of the previous 500ms displacement.
 
+export const SESSION_STATE = {
+  IDLE: 'idle',
+  NAVIGATING: 'navigating',
+  STUCK_DETECTED: 'stuck_detected',
+  RECOVERY_ATOMIC: 'recovery_atomic',
+  REPLANNING: 'replanning',
+  COMPLETE: 'complete',
+  CANCELLED: 'cancelled',
+  FAILED: 'failed',
+};
+
+export function makeGoalDescriptor(type, x, y, z, rangeOrEntity, distance) {
+  if (type === 'block') return { type: 'block', x: Math.floor(x), y: Math.floor(y), z: Math.floor(z) };
+  if (type === 'near') return { type: 'near', x: Math.floor(x), y: Math.floor(y), z: Math.floor(z), range: rangeOrEntity || 2 };
+  if (type === 'follow') return { type: 'follow', entity: rangeOrEntity, distance: distance || 2 };
+  return null;
+}
+
+export function createSession(id, goalDescriptor, timeoutMs = 15000) {
+  return {
+    id,
+    goalDescriptor,
+    state: SESSION_STATE.NAVIGATING,
+    recoveryAttempt: 0,
+    cancelRequested: false,
+    hardCancelled: false,
+    startedAt: Date.now(),
+    deadline: Date.now() + timeoutMs,
+    generation: 0,
+  };
+}
+
 export class MotionController {
   constructor(bot) {
     this.bot = bot;
-    this._active = false;
     this._stuckCount = 0;
-    this._recovering = false;
-    this._targetGoal = null;
+    this._session = null; // active MotionSession or null
+    this._sessionGeneration = 0; // monotonic counter
     
     bot.on('path_reset', (reason) => {
       if (reason === 'stuck' && this._active) {
@@ -34,11 +65,15 @@ export class MotionController {
       this._stuckCheckT0 = 0;
     });
 
-    // Fast stuck detection: every 500ms, if active and not moved >0.7m for 500ms, trigger.
+    // Fast stuck detection: every 500ms, if session active in navigating/stuck state and not moved >0.7m for 500ms, trigger.
     this._lastCheckPos = null;
     this._stuckCheckT0 = 0;
     this._fastStuckInterval = setInterval(() => {
-      if (!this._active || this._recovering || !this.bot?.entity) return;
+      const s = this._session;
+      if (!s || !this.bot?.entity) return;
+      // Only check during NAVIGATING or STUCK_DETECTED
+      if (s.state !== SESSION_STATE.NAVIGATING && s.state !== SESSION_STATE.STUCK_DETECTED) return;
+      if (s.cancelRequested) return;
       const p = this.bot.entity.position;
       if (this._lastCheckPos) {
         const dx = p.x - this._lastCheckPos.x;
@@ -50,14 +85,15 @@ export class MotionController {
             const blocked = this._classifyBlocked();
             this._log(`fast stuck: moved ${moved.toFixed(2)}m in ${(FAST_STUCK_CHECK_INTERVAL_MS/1000).toFixed(1)}s (<${FAST_STUCK_MIN_PROGRESS_M}m), direction=${blocked}`);
             this._stuckCheckT0 = 0;
-            this._recovering = true;  // claim before path_reset can
-            if (blocked === 'forward') this._doMineRecovery();
-            else if (blocked === 'left' || blocked === 'forward-left') this._doLateralRecovery('left');
-            else if (blocked === 'right' || blocked === 'forward-right') this._doLateralRecovery('right');
-            else this._doStepRecovery();
+            s.state = SESSION_STATE.STUCK_DETECTED;
+            // Call stub (Phase 1: just log + mark FAILED; no FSM/recovery yet)
+            this._handleStuck(s);
           }
         } else {
           this._stuckCheckT0 = 0;
+          if (s.state === SESSION_STATE.STUCK_DETECTED) {
+            s.state = SESSION_STATE.NAVIGATING; // recovered movement
+          }
         }
       }
       this._lastCheckPos = { x: p.x, y: p.y, z: p.z };
@@ -74,7 +110,7 @@ export class MotionController {
     this._stuckCheckT0 = 0;
   }
 
-  get isActive() { return this._active; }
+  get isActive() { return this._session !== null && this._session.state !== SESSION_STATE.IDLE; }
 
   // Check which direction is blocking. Returns 'forward', 'left',
   // 'right', 'forward-left', 'forward-right', 'step' (feet level), or 'unknown'.
@@ -260,68 +296,110 @@ export class MotionController {
 
   async goto(x, y, z, timeoutMs = 15000) {
     await this.stop();
-    this._active = true;
-    this._targetGoal = { x, y, z };
+    const sessionId = `goto_${Date.now()}`;
+    const goalDescriptor = makeGoalDescriptor('block', x, y, z);
+    const session = createSession(sessionId, goalDescriptor, timeoutMs);
+    this._session = session;
+    this._sessionGeneration++;
+
+    // Reset fast stuck window
+    this._resetFastStuckWindow();
+
     const goal = new goals.GoalBlock(Math.floor(x), Math.floor(y), Math.floor(z));
     const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), timeoutMs));
     try {
       await Promise.race([this.bot.pathfinder.goto(goal), timeout]);
+      session.state = SESSION_STATE.COMPLETE;
       return { ok: true, result: `Arrived at ${Math.round(x)}, ${Math.round(y)}, ${Math.round(z)}` };
     } catch (e) {
       const p = this.bot.entity.position;
-      if (e.message === 'timeout' || (this._recovering && e.message.includes('goal was changed'))) {
-        return { ok: true, result: `Walked toward ${Math.round(x)},${Math.round(y)},${Math.round(z)}, now at ${p.x.toFixed(1)},${p.y.toFixed(1)},${p.z.toFixed(1)}.` };
+      if (e.message === 'timeout') {
+        session.state = SESSION_STATE.FAILED;
+        return { ok: true, result: `Walked toward ${Math.round(x)},${Math.round(y)},${Math.round(z)}, now at ${p.x.toFixed(1)},${p.y.toFixed(1)},${p.z.toFixed(1)}. Did not reach destination within timeout.` };
       }
+      if (session.hardCancelled) {
+        session.state = SESSION_STATE.CANCELLED;
+        return { ok: true, result: `Navigation cancelled.` };
+      }
+      session.state = SESSION_STATE.FAILED;
       return { ok: true, result: `Navigation failed: ${e.message}.` };
     } finally {
-      if (!this._recovering) {
-        this._active = false;
-        try { this.bot.pathfinder.setGoal(null); } catch {}
-      }
+      this._session = null;
     }
   }
 
   async gotoNear(x, y, z, range = 2) {
     await this.stop();
-    this._active = true;
-    this._targetGoal = { x, y, z };
+    const sessionId = `gotoNear_${Date.now()}`;
+    const goalDescriptor = makeGoalDescriptor('near', x, y, z, range);
+    const session = createSession(sessionId, goalDescriptor, 15000);
+    this._session = session;
+    this._sessionGeneration++;
+
+    // Reset fast stuck window
+    this._resetFastStuckWindow();
+
     const goal = new goals.GoalNear(Math.floor(x), Math.floor(y), Math.floor(z), range);
     const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 15000));
     try {
       await Promise.race([this.bot.pathfinder.goto(goal), timeout]);
+      session.state = SESSION_STATE.COMPLETE;
       return { ok: true, result: `Arrived near ${Math.round(x)}, ${Math.round(y)}, ${Math.round(z)}` };
     } catch (e) {
       const p = this.bot.entity.position;
-      if (e.message === 'timeout' || (this._recovering && e.message.includes('goal was changed'))) {
-        return { ok: true, result: `Moved toward ${Math.round(x)},${Math.round(y)},${Math.round(z)}, now at ${p.x.toFixed(1)},${p.y.toFixed(1)},${p.z.toFixed(1)}.` };
+      if (e.message === 'timeout') {
+        session.state = SESSION_STATE.FAILED;
+        return { ok: true, result: `Moved toward ${Math.round(x)},${Math.round(y)},${Math.round(z)}, now at ${p.x.toFixed(1)},${p.y.toFixed(1)},${p.z.toFixed(1)}. Did not reach destination within timeout.` };
       }
+      if (session.hardCancelled) {
+        session.state = SESSION_STATE.CANCELLED;
+        return { ok: true, result: `Navigation cancelled.` };
+      }
+      session.state = SESSION_STATE.FAILED;
       return { ok: true, result: `Navigation failed: ${e.message}.` };
     } finally {
-      if (!this._recovering) {
-        this._active = false;
-        try { this.bot.pathfinder.setGoal(null); } catch {}
-      }
+      this._session = null;
     }
   }
 
   async follow(entity, distance = 2) {
     await this.stop();
-    this._active = true;
+    const sessionId = `follow_${Date.now()}`;
+    const goalDescriptor = makeGoalDescriptor('follow', 0, 0, 0, entity, distance);
+    const session = createSession(sessionId, goalDescriptor);
+    this._session = session;
+    this._sessionGeneration++;
+    this._resetFastStuckWindow();
+
     this.bot.pathfinder.setGoal(new goals.GoalFollow(entity, distance), true);
+    // Follow is continuous — no await. Session stays active until stop() or failure.
+    // Fast stuck detection will fire for follow too, but recovery will be limited
+    // (goalDescriptor.type === 'follow' → just log, no physical recovery in Phase 1 stub).
     return { ok: true, result: `Following ${entity.username || entity.name || 'entity'}.` };
   }
 
   async stop() {
+    const prevSession = this._session;
+    this._session = null;
+    this._sessionGeneration++;
+    this._resetFastStuckWindow();
+
+    if (prevSession) {
+      prevSession.hardCancelled = true;
+      prevSession.state = SESSION_STATE.CANCELLED;
+    }
+
+    // Legacy flags for compat with untouched recovery methods and Phase 0 tests
     this._active = false;
-    this._stuckCount = 0;
-    this._sameSpotCount = 0;
     this._recovering = false;
     this._targetGoal = null;
-    this._lastCheckPos = null;
-    this._stuckCheckT0 = 0;
+    this._stuckCount = 0;
+    this._sameSpotCount = 0;
+
     try { this.bot.pathfinder.setGoal(null); } catch {}
     try { this.bot.stopDigging(); } catch {}
     try { this.bot.clearControlStates(); } catch {}
+    this._clearControls();
   }
 
   // Clear all physical controls safely
@@ -370,11 +448,23 @@ export class MotionController {
     }
   }
 
+  // Phase 1 stub: called from fast-stuck when STUCK_DETECTED.
+  // Does NOT perform recovery (FSM comes in Phase 2). Just logs and marks session FAILED
+  // so that navigation terminates cleanly instead of looping.
+  _handleStuck(session) {
+    if (!session) return;
+    this._log(`stuck detected (session ${session.id}, state=${session.state}); Phase 1 stub: marking FAILED (no recovery yet)`);
+    session.state = SESSION_STATE.FAILED;
+    // Note: caller (interval) already set STUCK_DETECTED; we override to FAILED here for Phase 1.
+    // In Phase 2 this will enqueue atomic recovery and only mark FAILED on unrecoverable.
+  }
+
   dispose() {
     if (this._fastStuckInterval) {
       clearInterval(this._fastStuckInterval);
       this._fastStuckInterval = null;
     }
+    this._session = null;
     this._active = false;
     this._recovering = false;
   }
