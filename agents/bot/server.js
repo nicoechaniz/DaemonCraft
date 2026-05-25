@@ -661,13 +661,13 @@ async function createBotImpl() {
         log('Auto-disguised as Allay');
       }, 3000);
 
-      // Configure auto-eat: stay topped up for combat regen, don't waste food.
-      // Minecraft natural regen requires hunger >= 18 (9 shanks).
-      // Cooked beef gives 8 hunger (4 shanks) → eat at 17 to avoid overflow waste.
+      // Configure auto-eat: eat to recover health. Minecraft regen needs hunger>=18 + saturation>0.
+      // Eat when hunger drops below 18 to keep saturation high and health regenerating.
+      // If health is below 19, prioritize high-saturation food for faster healing.
       bot.autoEat.options = {
         priority: 'foodPoints',
-        minHunger: 17,
-        minHealth: 14,
+        minHunger: 18,
+        minHealth: 19,
         bannedFood: ['rotten_flesh', 'pufferfish', 'chorus_fruit', 'poisonous_potato', 'spider_eye'],
         returnToLastItem: true,
       };
