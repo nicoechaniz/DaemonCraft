@@ -1,5 +1,39 @@
 # DaemonCraft Project Memory
 
+## Architecture — Session & Controller Model (2026-05-25)
+
+### Controller Lease (bot server)
+- Bot server hosts `POST/GET /controller/lease` with `{owner, ttl}` (TTL-based)
+- `owner: "human:cli"|"human:telegram"|"autonomous"`
+- Agent loop claims `"autonomous"` when no human lease active (every 30s)
+- Gateway reads lease: if `"human:*"` active → skip agent turns (chat + heartbeats)
+
+### Session Separation (DO NOT CROSS)
+- **CLI session**: direct AIAgent connection, bypasses gateway entirely
+- **Gateway daemoncraft session**: separate, for autonomous operation
+- **They do NOT inject into each other**. Gateway CANNOT forward to CLI.
+- Bridge between them: **event queue** + **context stream** files
+
+### Event Queue Bridge (`compaii-events.jsonl`)
+- Gateway writes skipped chat messages here when CLI controls the bot
+- Agent loop reads events each tick, includes them in context stream
+- CLI reads stream to see what happened in Minecraft chat
+
+### Context Stream (`compaii-stream.json`)
+- Agent loop writes enriched state every idle heartbeat tick
+- CLI reads for bot state (health, position, nearby, chat, actions)
+- Atomic write (tmp → rename)
+
+### /combat Endpoint (enriched)
+- Hostile positions (not just distance), actionHistory with timestamps, runner mutex state
+- Single-call agent feedback loop
+
+### Key Rules
+- Gateway NEVER injects into CLI session
+- CLI reads bot state via `/combat`, `/status`, or stream file
+- Controller Lease is the single arbiter of who spawns agent turns
+- `runner/thread.py` get_status() tracks reflex history (not used for session arbitration)
+
 ## Current Snapshot — 2026-05-16 (lab/default gateway/Gemma-Andy)
 
 ### Decision Architecture — What to use when (from benchmark session)
