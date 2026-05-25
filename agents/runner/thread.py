@@ -98,8 +98,8 @@ class RunnerThread(threading.Thread):
             if should_flee:
                 return {'name': 'flee', 'params': {'from': entity_type, 'distance': 8}}
             else:
-                # Follow the hostile to track it continuously, then attack
-                return {'name': 'follow', 'params': {'player': entity_type}}
+                # Follow to track + attack loop: follow first, then attack
+                return {'name': 'follow', 'params': {'player': entity_type}, 'also_attack': entity_type}
         elif etype in ('health_low', 'hunger_low'):
             return {'name': 'eat', 'params': {}}
         elif etype == 'voice_command' and event.get('intent') == 'emergency_stop':
@@ -111,5 +111,11 @@ class RunnerThread(threading.Thread):
         params = action.get('params', {})
         if name == 'stop':
             self._post('/action/stop', {'requester': 'runner'})
+        elif name == 'follow' and action.get('also_attack'):
+            # Follow the entity first, then attack it
+            self._post('/action/follow', params)
+            import time
+            time.sleep(0.4)  # let follow start tracking
+            self._post('/action/attack', {'target': action['also_attack']}, timeout=15)
         else:
             self._post(f'/action/{name}', params)
