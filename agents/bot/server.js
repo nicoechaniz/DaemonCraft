@@ -3716,6 +3716,34 @@ const httpServer = http.createServer(async (req, res) => {
         return respond(res, 200, { ok: true, data: { events } });
       }
 
+      // ── Agent feedback: single endpoint with full combat picture ──
+      if (path === '/combat') {
+        const mutex = bodyMutex ? bodyMutex.getStatus() : null;
+        const nearbyHostiles = [];
+        if (bot && bot.entities) {
+          for (const [id, e] of Object.entries(bot.entities)) {
+            if (e === bot.entity) continue;
+            if (e.type !== 'mob' && e.type !== 'hostile') continue;
+            const name = (e.name || e.mobType || e.displayName || '').toLowerCase();
+            const H = ['zombie','skeleton','creeper','spider','witch','enderman','drowned','phantom'];
+            if (H.some(h => name.includes(h))) {
+              nearbyHostiles.push({
+                type: name,
+                distance: bot.entity.position.distanceTo(e.position).toFixed(1),
+              });
+            }
+          }
+        }
+        return respond(res, 200, { ok: true, data: {
+          health: bot?.health,
+          food: bot?.food,
+          holding: bot?.heldItem?.name || 'empty',
+          mutex: mutex ? { mode: mutex.mode, owner: mutex.owner } : null,
+          hostiles: nearbyHostiles,
+          lastActions: actionHistory.slice(-3).map(a => a.action),
+        }});
+      }
+
       if (path === '/inventory') {
         return respond(res, 200, { ok: true, data: getInventory() });
       }
