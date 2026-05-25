@@ -298,12 +298,12 @@ function checkEntityProximity() {
   const entities = bot.entities || {};
   const now = Date.now();
   // Hostile list follows patterns used in attack() and threat rendering elsewhere in server.js
-  const HOSTILES = ['zombie', 'skeleton', 'creeper', 'spider', 'witch', 'enderman', 'drowned', 'phantom', 'blaze', 'ghast', 'wither_skeleton', 'piglin_brute', 'cave_spider'];
+  const HOSTILES = ['zombie', 'skeleton', 'creeper', 'spider', 'slime', 'magma_cube', 'witch', 'enderman', 'drowned', 'phantom', 'blaze', 'ghast', 'wither_skeleton', 'piglin_brute', 'cave_spider'];
   for (const [id, entity] of Object.entries(entities)) {
     if (entity === bot.entity) continue;
     // Hostile mobs can have type 'mob' or 'hostile' depending on Minecraft version
     if (entity.type !== 'mob' && entity.type !== 'hostile') {
-      if (entity.type && entity.type !== 'object' && entity.type !== 'player' && entity.type !== 'other') {
+      if (entity.type && !['object', 'player', 'other', 'animal', 'ambient', 'passive'].includes(entity.type)) {
         console.error(`[runner-events] unknown entity type: ${entity.type} name=${entity.name} mobType=${entity.mobType}`);
       }
       continue;
@@ -327,6 +327,7 @@ function checkEntityProximity() {
     const last = eventDebounce.entity_near[key] || 0;
     if (now - last > 1000) {
       eventDebounce.entity_near[key] = now;
+      console.error(`[runner-events] entity_near ${key} ${dist.toFixed(1)}m`);
       bot.emit('runner_event', {
         type: 'entity_near',
         entityType: key,
@@ -348,6 +349,7 @@ function checkHealthEdges() {
   if (health < lastHealth && now - eventDebounce.health_edge > 500) {
     eventDebounce.health_edge = now;
     eventDebounce._lastHealth = health;
+    console.error(`[runner-events] taking_damage health=${health}`);
     bot.emit('runner_event', {
       type: 'taking_damage',
       health,
@@ -1915,8 +1917,8 @@ function generateLookAround() {
   // Nearby threats
   const threats = Object.values(b.entities)
     .filter(e => {
-      if (e === b.entity || e.type !== 'mob') return false;
-      const hostile = ['zombie', 'skeleton', 'creeper', 'spider', 'witch', 'enderman', 'drowned', 'phantom'];
+      if (e === b.entity || (e.type !== 'mob' && e.type !== 'hostile')) return false;
+      const hostile = ['zombie', 'skeleton', 'creeper', 'spider', 'slime', 'magma_cube', 'witch', 'enderman', 'drowned', 'phantom'];
       return hostile.some(h => (e.name || '').includes(h)) && e.position.distanceTo(pos) < 20;
     })
     .sort((a, c) => a.position.distanceTo(pos) - c.position.distanceTo(pos));
@@ -2394,7 +2396,7 @@ async collect({ block, count = 1 }) {
   async attack({ target }) {
     const b = ensureBot();
     await reactionDelay();
-    const hostiles = ['zombie', 'skeleton', 'creeper', 'spider', 'enderman', 'witch', 'drowned', 'phantom', 'blaze', 'ghast', 'wither_skeleton', 'piglin_brute', 'cave_spider'];
+    const hostiles = ['zombie', 'skeleton', 'creeper', 'spider', 'slime', 'magma_cube', 'enderman', 'witch', 'drowned', 'phantom', 'blaze', 'ghast', 'wither_skeleton', 'piglin_brute', 'cave_spider'];
 
     // Fair play: only attack visible entities
     const rawEnts = Object.values(b.entities).filter(e => e !== b.entity);
@@ -2834,7 +2836,7 @@ async collect({ block, count = 1 }) {
     }
 
     // Find target entity
-    const hostiles = ['zombie','skeleton','spider','creeper','enderman','witch',
+    const hostiles = ['zombie','skeleton','spider','slime','magma_cube','creeper','enderman','witch',
                       'drowned','husk','stray','phantom','pillager','vindicator','blaze',
                       'wither_skeleton','ghast','piglin_brute','hoglin'];
     // Fair play: only fight visible entities
@@ -2887,7 +2889,7 @@ async collect({ block, count = 1 }) {
 
   async flee({ distance = 16, from }) {
     const b = ensureBot();
-    const hostiles = ['zombie','skeleton','spider','creeper','enderman','witch','drowned','husk','stray','phantom','blaze','wither_skeleton','player'];
+    const hostiles = ['zombie','skeleton','spider','slime','magma_cube','creeper','enderman','witch','drowned','husk','stray','phantom','blaze','wither_skeleton','player'];
 
     // Determine flee direction: from coordinates ("x,y,z"), entity name, or nearest hostile
     let fleeFromX, fleeFromZ;
@@ -3093,7 +3095,7 @@ async collect({ block, count = 1 }) {
         (e.username || '').toLowerCase().includes(target.toLowerCase())
       );
     } else {
-      const hostiles = ['zombie','skeleton','spider','creeper','enderman','witch','drowned','blaze','ghast','wither_skeleton','player'];
+      const hostiles = ['zombie','skeleton','spider','slime','magma_cube','creeper','enderman','witch','drowned','blaze','ghast','wither_skeleton','player'];
       const rawEnts = Object.values(b.entities).filter(e => 
         e !== b.entity && hostiles.some(h => (e.name || '').includes(h)));
       const visible = filterEntitiesFairPlay(rawEnts);
@@ -3138,7 +3140,7 @@ async collect({ block, count = 1 }) {
     const visible = filterEntitiesFairPlay(rawEnts);
     const entity = target
       ? visible.find(e => (e.name || '').toLowerCase().includes(target.toLowerCase()) || (e.username || '').toLowerCase().includes(target.toLowerCase()))
-      : visible.filter(e => ['zombie','skeleton','spider','creeper','player'].some(h => (e.name || '').includes(h)))
+      : visible.filter(e => ['zombie','skeleton','spider','slime','magma_cube','creeper','player'].some(h => (e.name || '').includes(h)))
                .sort((a, c) => a.position.distanceTo(b.entity.position) - c.position.distanceTo(b.entity.position))[0];
     if (!entity) throw new Error(`No ${target || 'target'} visible.`);
     
@@ -3744,7 +3746,7 @@ const httpServer = http.createServer(async (req, res) => {
             if (e === bot.entity) continue;
             if (e.type !== 'mob' && e.type !== 'hostile') continue;
             const name = (e.name || e.mobType || e.displayName || '').toLowerCase();
-            const H = ['zombie','skeleton','creeper','spider','witch','enderman','drowned','phantom'];
+            const H = ['zombie','skeleton','creeper','spider','slime','magma_cube','witch','enderman','drowned','phantom'];
             if (H.some(h => name.includes(h))) {
               nearbyHostiles.push({
                 type: name,

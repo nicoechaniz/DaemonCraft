@@ -9,6 +9,11 @@
 import pathfinderPkg from 'mineflayer-pathfinder';
 const { goals } = pathfinderPkg;
 
+const FAST_STUCK_CHECK_INTERVAL_MS = 500;
+const FAST_STUCK_MIN_PROGRESS_M = 0.7;
+const FAST_STUCK_TRIGGER_MS = 500;
+const LATERAL_STRAFE_MS = 375; // 75% of the previous 500ms displacement.
+
 export class MotionController {
   constructor(bot) {
     this.bot = bot;
@@ -29,7 +34,7 @@ export class MotionController {
       this._stuckCheckT0 = 0;
     });
 
-    // Fast stuck detection: every 500ms, if active and not moved >0.3m in 2s, trigger
+    // Fast stuck detection: every 500ms, if active and not moved >0.7m for 500ms, trigger.
     this._lastCheckPos = null;
     this._stuckCheckT0 = 0;
     this._fastStuckInterval = setInterval(() => {
@@ -39,13 +44,13 @@ export class MotionController {
         const dx = p.x - this._lastCheckPos.x;
         const dz = p.z - this._lastCheckPos.z;
         const moved = Math.sqrt(dx*dx + dz*dz);
-        if (moved < 0.3) {
+        if (moved < FAST_STUCK_MIN_PROGRESS_M) {
           if (this._stuckCheckT0 === 0) this._stuckCheckT0 = Date.now();
-          if (Date.now() - this._stuckCheckT0 > 200) {
-            this._log(`fast stuck: no movement for ${((Date.now()-this._stuckCheckT0)/1000).toFixed(1)}s, direction=${this._classifyBlocked()}`);
+          if (Date.now() - this._stuckCheckT0 >= FAST_STUCK_TRIGGER_MS) {
+            const blocked = this._classifyBlocked();
+            this._log(`fast stuck: moved ${moved.toFixed(2)}m in ${(FAST_STUCK_CHECK_INTERVAL_MS/1000).toFixed(1)}s (<${FAST_STUCK_MIN_PROGRESS_M}m), direction=${blocked}`);
             this._stuckCheckT0 = 0;
             this._recovering = true;  // claim before path_reset can
-            const blocked = this._classifyBlocked();
             if (blocked === 'forward') this._doMineRecovery();
             else if (blocked === 'left' || blocked === 'forward-left') this._doLateralRecovery('left');
             else if (blocked === 'right' || blocked === 'forward-right') this._doLateralRecovery('right');
@@ -56,12 +61,17 @@ export class MotionController {
         }
       }
       this._lastCheckPos = { x: p.x, y: p.y, z: p.z };
-    }, 200);
+    }, FAST_STUCK_CHECK_INTERVAL_MS);
   }
 
   _log(msg) {
     const ts = new Date().toISOString().slice(11, 23);
     console.error(`[${ts}] [motion] ${msg}`);
+  }
+
+  _resetFastStuckWindow() {
+    this._lastCheckPos = null;
+    this._stuckCheckT0 = 0;
   }
 
   get isActive() { return this._active; }
@@ -142,6 +152,7 @@ export class MotionController {
     this._stuckCount = 0;
     this._sameSpotCount = 0;
     this._active = true;
+    this._resetFastStuckWindow();
     b.pathfinder.setGoal(new goals.GoalBlock(Math.floor(g.x), Math.floor(g.y), Math.floor(g.z)));
     this._log('recovery: done (mined), pathfinder resumed');
     this._recovering = false;
@@ -171,6 +182,7 @@ export class MotionController {
     this._stuckCount = 0;
     this._sameSpotCount = 0;
     this._active = true;
+    this._resetFastStuckWindow();
     b.pathfinder.setGoal(new goals.GoalBlock(Math.floor(g.x), Math.floor(g.y), Math.floor(g.z)));
     this._log('recovery: done (step), pathfinder resumed');
     this._recovering = false;
@@ -200,7 +212,7 @@ export class MotionController {
     const yawAdjust = blockedSide === 'left' ? -0.3 : 0.3;  // turn slightly away
     await b.look(b.entity.yaw + yawAdjust, 0, false);
 
-    this._log(`recovery lateral: crouch strafe ${strafeDir > 0 ? 'right' : 'left'} + forward`);
+    this._log(`recovery lateral: crouch strafe ${strafeDir > 0 ? 'right' : 'left'} + forward (${LATERAL_STRAFE_MS}ms)`);
     b.setControlState('sneak', true);
     if (strafeDir > 0) {
       b.setControlState('right', true);
@@ -208,7 +220,7 @@ export class MotionController {
       b.setControlState('left', true);
     }
     b.setControlState('forward', true);
-    await new Promise(r => setTimeout(r, 500));
+    await new Promise(r => setTimeout(r, LATERAL_STRAFE_MS));
     b.setControlState('forward', false);
     if (strafeDir > 0) {
       b.setControlState('right', false);
@@ -221,6 +233,7 @@ export class MotionController {
     this._stuckCount = 0;
     this._sameSpotCount = 0;
     this._active = true;
+    this._resetFastStuckWindow();
     b.pathfinder.setGoal(new goals.GoalBlock(Math.floor(g.x), Math.floor(g.y), Math.floor(g.z)));
     this._log('recovery: done (lateral), pathfinder resumed');
     this._recovering = false;

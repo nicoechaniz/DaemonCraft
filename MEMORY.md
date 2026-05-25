@@ -72,7 +72,7 @@ Bot config lives at: `agents/bot/config-compaii.json` (separate from Minecraft s
 - Mode changes via: POST /controller/mode {"mode":"lab"|"autonomous"}
 
 ### PENDING / KNOWN ISSUES
-- **keepInventory**: server.properties set correctly but needs container restart to apply. Test pending.
+- **keep_inventory gamerule**: runtime verified/set with `docker exec daemoncraft-minecraft rcon-cli "gamerule keep_inventory true"`. Old `keepInventory=true` in `server/data/server.properties` is camelCase and not sufficient evidence; use snake_case command as source of truth.
 - **controllerMode persistence**: not loading from config-compaii.json (unifiedConfig ordering issue). Hardcoded for now.
 - **Flee direction**: needs iterative goto like attack (re-evaluate each tick instead of single gotoNear)
 - **Lateral recovery effectiveness**: being tested with spiders/drowned
@@ -90,6 +90,7 @@ Bot config lives at: `agents/bot/config-compaii.json` (separate from Minecraft s
 - server.properties lives at: server/data/server.properties (NOT server/server.properties)
 - Container restart: docker restart daemoncraft-minecraft
 - RCON: docker exec daemoncraft-minecraft rcon-cli "<command>"
+- Current Purpur gamerule names are snake_case: use `gamerule keep_inventory true`, NOT old camelCase `keepInventory`. Persist startup runtime rules in `server/data/purpur.yml` `settings.startup-commands`; current persisted commands: `gamerule keep_inventory true` and `difficulty easy`.
 
 ## Current Snapshot — 2026-05-16 (lab/default gateway/Gemma-Andy)
 
