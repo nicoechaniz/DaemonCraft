@@ -2400,6 +2400,15 @@ async collect({ block, count = 1 }) {
   async attack({ target }) {
     const b = ensureBot();
     await reactionDelay();
+
+    // Auto-equip best weapon
+    const weapons = ['netherite_sword', 'diamond_sword', 'iron_sword', 'stone_sword', 'wooden_sword',
+                     'netherite_axe', 'diamond_axe', 'iron_axe', 'stone_axe', 'wooden_axe'];
+    for (const w of weapons) {
+      const item = b.inventory.items().find(i => i.name === w);
+      if (item) { await b.equip(item, 'hand'); break; }
+    }
+
     const hostiles = ['zombie', 'skeleton', 'creeper', 'spider', 'slime', 'magma_cube', 'enderman', 'witch', 'drowned', 'phantom', 'blaze', 'ghast', 'wither_skeleton', 'piglin_brute', 'cave_spider'];
 
     // Fair play: only attack visible entities

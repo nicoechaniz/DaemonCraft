@@ -78,16 +78,18 @@ class RunnerThread(threading.Thread):
         return requests.get(f'{self.bot_api}{path}', timeout=5).json()
 
     def _has_weapon(self):
-        """Check if bot holds a weapon. Cached for 3s to avoid /status timeout during combat."""
+        """Check if bot has a weapon in inventory (attack auto-equips best). Cached for 3s."""
         now = time.time()
         cache_age = now - self._weapon_cache[0]
         if cache_age < 3.0:
             return self._weapon_cache[1]
         try:
             st = self._get('/status')
-            holding = st.get('data', {}).get('holding', {})
-            name = holding.get('name', '')
-            has = any(w in name for w in ['sword', 'axe', 'trident', 'mace'])
+            inv = st.get('data', {}).get('inventory', [])
+            has = any(
+                any(w in (i.get('name') or '') for w in ['sword', 'axe', 'trident', 'mace'])
+                for i in inv
+            )
         except:
             # /status timeout during combat — reuse last known state
             has = self._weapon_cache[1]
