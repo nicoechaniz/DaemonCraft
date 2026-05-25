@@ -45,6 +45,52 @@ The Docker container `daemoncraft-minecraft` mounts:
 - To check runtime: `docker exec daemoncraft-minecraft cat /data/server.properties`
 
 Bot config lives at: `agents/bot/config-compaii.json` (separate from Minecraft server config)
+
+## Session State — 2026-05-25 (night session, ~4h)
+
+### MotionController Recovery System (IN PROGRESS)
+- **Fast stuck detection**: 200ms interval, triggers recovery if no movement >0.3m in 200ms
+- **Direction classification**: 5 directions (forward, left, right, forward-left, forward-right) × 4 heights (0.4, 0.9, 1.4, 1.9)
+- **path_reset simplified**: only logs, no longer triggers recovery (fast stuck is sole recovery trigger)
+- **Recovery types**:
+  - Forward block → mine recovery (dig block ahead)
+  - Lateral/forward-diagonal → lateral recovery (crouch backstep + turn + crouch strafe away from obstacle)
+  - Step (block at y+1) → step recovery (crouch backstep + jump forward)
+  - Unknown → step recovery (fallback)
+- **Race condition fixed**: goto/gotoNear don't reset _active during recovery
+
+### Runner Combat System (IN PROGRESS)
+- Entity detection: 3m range + line-of-sight check (midpoint block must be air)
+- Anti-flee-chain: after recent flee + hostile >6m → attack; 1 failed flee → attack
+- Weapon cache: 3s TTL to avoid /status timeout during combat
+- TP cleanup: clears runnerEventBuffer + bodyMutex.emergencyStop on teleport
+
+### Controller Mode
+- Lab mode HARDCODED in server.js (config loading from unifiedConfig not working yet)
+- Gateway skips turns when mode=lab (checks /controller/mode endpoint)
+- Chat messages written to event queue (compaii-events.jsonl) as bridge to CLI
+- Mode changes via: POST /controller/mode {"mode":"lab"|"autonomous"}
+
+### PENDING / KNOWN ISSUES
+- **keepInventory**: server.properties set correctly but needs container restart to apply. Test pending.
+- **controllerMode persistence**: not loading from config-compaii.json (unifiedConfig ordering issue). Hardcoded for now.
+- **Flee direction**: needs iterative goto like attack (re-evaluate each tick instead of single gotoNear)
+- **Lateral recovery effectiveness**: being tested with spiders/drowned
+- **inventory drops on death**: suspected keepInventory not applied at runtime
+
+### Key Files Modified
+- agents/bot/lib/motion-controller.js: full recovery system rewrite
+- agents/bot/server.js: controllerMode hardcoded, TP cleanup, entity detection range, auto-equip removed
+- agents/runner/thread.py: flee threshold, anti-flee-chain, reflex tracking
+- agents/agent_loop.py: _build_body_session, wake_body rename, controller mode
+- gateway/platforms/daemoncraft.py (hermes-agent): controller mode check, event queue bridge
+
+### Docker Mount Structure (CRITICAL — DO NOT FORGET)
+- Container mounts: ~/Projects/DaemonCraft/server/data/ → /data/ (rw)
+- server.properties lives at: server/data/server.properties (NOT server/server.properties)
+- Container restart: docker restart daemoncraft-minecraft
+- RCON: docker exec daemoncraft-minecraft rcon-cli "<command>"
+
 ## Current Snapshot — 2026-05-16 (lab/default gateway/Gemma-Andy)
 
 ### Decision Architecture — What to use when (from benchmark session)
