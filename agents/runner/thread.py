@@ -123,7 +123,10 @@ class RunnerThread(threading.Thread):
             # --- Follow timeout: abandon if we've been following >5s ---
             follow_start = self._last_follow.get(entity_type, 0)
             if follow_start and time.time() - follow_start > self._follow_timeout:
-                # Stop following this entity — don't retrigger
+                return None
+
+            # --- Distance gate: don't chase if mob is too far ---
+            if dist > 15:
                 return None
 
             # --- Situational awareness ---
