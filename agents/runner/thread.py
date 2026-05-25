@@ -10,6 +10,10 @@ class RunnerThread(threading.Thread):
         self._flee_failed = {}     # entity_type -> count of failed flees
         self._flee_positions = {}  # entity_type -> position at last flee attempt
         self._last_health = 20     # track health for damage detection
+        self._weapon_cache = (0, False)  # (timestamp, has_weapon)
+        self._active_reflex = None     # current reflex action name or None
+        self._last_reflex_at = 0       # timestamp of last reflex execution
+        self._reflex_history = []      # [{reflex, target, at}] last 5 reflexes — avoid /status timeout during combat
 
     def _load_config(self, path):
         default = {
@@ -46,6 +50,18 @@ class RunnerThread(threading.Thread):
     def push_event(self, event):
         self.event_queue.put(event)
 
+    def get_status(self) -> dict:
+        """Return current runner state for agent heartbeat enrichment."""
+        now = time.time()
+        reflex = None
+        if self._active_reflex and (now - self._last_reflex_at) < 5.0:
+            reflex = self._active_reflex
+        return {
+            'active_reflex': reflex,
+            'reflex_history': self._reflex_history[-5:],
+            'flee_failed': dict(self._flee_failed),
+        }
+
     def _post(self, path, data, timeout=5):
         """POST and return JSON response. For mutex ops that need the result."""
         return requests.post(f'{self.bot_api}{path}', json=data, timeout=timeout).json()
@@ -61,15 +77,21 @@ class RunnerThread(threading.Thread):
         return requests.get(f'{self.bot_api}{path}', timeout=5).json()
 
     def _has_weapon(self):
+        """Check if bot holds a weapon. Cached for 3s to avoid /status timeout during combat."""
+        now = time.time()
+        cache_age = now - self._weapon_cache[0]
+        if cache_age < 3.0:
+            return self._weapon_cache[1]
         try:
             st = self._get('/status')
             holding = st.get('data', {}).get('holding', {})
             name = holding.get('name', '')
-            if any(w in name for w in ['sword', 'axe', 'trident', 'mace']):
-                return True
+            has = any(w in name for w in ['sword', 'axe', 'trident', 'mace'])
         except:
-            pass
-        return False
+            # /status timeout during combat — reuse last known state
+            has = self._weapon_cache[1]
+        self._weapon_cache = (now, has)
+        return has
 
     def _check_damage(self):
         """Idle health watch: if health drops, react even without entity_near event."""
@@ -170,6 +192,17 @@ class RunnerThread(threading.Thread):
     def _execute_action(self, action):
         name = action['name']
         params = action.get('params', {})
+
+        # Track active reflex for heartbeat enrichment
+        self._active_reflex = name
+        self._last_reflex_at = time.time()
+        self._reflex_history.append({
+            'reflex': name,
+            'target': params.get('target') or params.get('from') or '',
+            'at': time.time(),
+        })
+        if len(self._reflex_history) > 10:
+            self._reflex_history = self._reflex_history[-10:]
 
         if name == 'stop':
             self._post('/action/stop', {'requester': 'runner'})

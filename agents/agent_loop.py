@@ -337,7 +337,44 @@ _LAST_HAZARD_ALERT = {}     # hazard_type -> timestamp (cooldown for wake_steve)
 _HAZARD_COOLDOWN_S = 30
 
 
-def wake_steve(reason: str, detail: str = "") -> bool:
+def _build_body_session(status: dict, reason: str = "idle") -> dict:
+    """Build enriched body_session with combat data, runner state, and action history."""
+    task = status.get("task")
+    pos = status.get("position", {})
+
+    # Fetch combat snapshot for runner state + hostile details
+    combat_data = _get_json("/combat").get("data", {})
+
+    # Build action history from bot server (oldest first)
+    action_history = combat_data.get("lastActions") or []
+
+    # Runner state inferred from mutex owner
+    mutex = combat_data.get("mutex") or {}
+    runner_reflex = "IDLE"
+    if mutex.get("owner") == "runner":
+        runner_reflex = f"RUNNER_ACTIVE (mode={mutex.get('mode', '?')})"
+
+    # Nearby hostiles with positions
+    hostiles = combat_data.get("hostiles") or []
+
+    return {
+        "heartbeat_reason": reason,
+        "mode": task.get("status") if task else "idle",
+        "last_action": task.get("action") if task else None,
+        "action_history": action_history,
+        "position": pos,
+        "health": status.get("health"),
+        "food": status.get("food"),
+        "holding": status.get("holding"),
+        "on_ground": status.get("onGround"),
+        "dimension": status.get("dimension"),
+        "is_day": status.get("isDay"),
+        "nearby_hostiles": hostiles,
+        "runner_reflex": runner_reflex,
+    }
+
+
+def wake_body(reason: str, detail: str = "") -> bool:
     """Alert Steve (Hermes agent) by sending an emergency heartbeat with the alert.
     
     Cooldown: same hazard type is not repeated within _HAZARD_COOLDOWN_S seconds.
@@ -354,13 +391,14 @@ def wake_steve(reason: str, detail: str = "") -> bool:
         inventory = fetch_bot_inventory()
         alert = f"ALERT: {reason}. {detail}".strip()
         events = [alert]
-        ok = send_heartbeat_context(status, nearby, inventory, {}, events)
+        body_session = _build_body_session(status, reason=reason)
+        ok = send_heartbeat_context(status, nearby, inventory, {}, events, body_session=body_session)
         if ok:
             _LAST_HAZARD_ALERT[hazard_key] = now
-        _log_event("wake_steve_sent", reason=reason, detail=detail, ok=ok)
+        _log_event("wake_body_sent", reason=reason, detail=detail, ok=ok)
         return ok
     except Exception as e:
-        _log_event("wake_steve_failed", reason=reason, error=str(e))
+        _log_event("wake_body_failed", reason=reason, error=str(e))
         return False
 
 
@@ -702,12 +740,23 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 7):
     start_quest_engine()
 
     turn_count = 0
+    _last_lease_refresh = 0
 
     try:
         while True:
             global _IDLE_HEARTBEAT_COUNT
             turn_count += 1
             now = time.time()
+
+            # ── Controller Lease: claim autonomous if no human has claimed ──
+            if now - _last_lease_refresh > 30:
+                _last_lease_refresh = now
+                try:
+                    lease = _get_json("/controller/lease")
+                    if not lease.get("data"):  # no active lease → claim autonomous
+                        _post_json("/controller/lease", {"owner": "autonomous", "ttl": 120})
+                except Exception:
+                    pass
 
             triggered = chat_event.wait(timeout=interval)
             chat_event.clear()
@@ -723,7 +772,7 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 7):
                 hazard = check_hazards(status)
                 if hazard:
                     print(f"[loop] HAZARD DETECTED: {hazard}", flush=True)
-                    wake_steve("hazard_critical", detail=hazard)
+                    wake_body("hazard_critical", detail=hazard)
                     send_agent_heartbeat(next_turn_in=interval, turn_in_progress=False)
                     continue
             except Exception as e:
@@ -761,16 +810,14 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 7):
                     if triggered:
                         events.append("Chat or quest activity detected")
 
-                    # Compose minimal body_session so Steve knows what the body is doing
-                    task = status.get("task")
-                    body_session = {
-                        "mode": task.get("status") if task else "idle",
-                        "last_action": task.get("action") if task else None,
-                        "position": status.get("position"),
-                        "health": status.get("health"),
-                        "holding": status.get("holding"),
-                        "on_ground": status.get("onGround"),
-                    }
+                    # Determine heartbeat reason and build enriched body_session
+                    reason = "idle"
+                    if triggered:
+                        reason = "chat_or_quest_activity"
+                    if hazard:
+                        reason = hazard
+
+                    body_session = _build_body_session(status, reason=reason)
 
                     ok = send_heartbeat_context(status, nearby, inventory, bot_plan, events, body_session=body_session)
                     if ok:

@@ -276,6 +276,9 @@ let agentLog = []; // { turn, time, prompt, response, tool_calls, error }
 const MAX_AGENT_LOG = 50;
 let agentHeartbeat = { nextTurnIn: null, turnInProgress: false }; // countdown for dashboard
 
+// Controller Lease — single-controller arbitration (TTL-based, bot-server-hosted)
+let controllerLease = { owner: null, since: 0, ttl: 0 };
+
 // ═══════════════════════════════════════════════════════════════════
 // Phase 1 Reactive Runner — event producers (debounced edge detectors)
 // Emits 'runner_event' on bot; accumulated into runnerEventBuffer for /events
@@ -3721,7 +3724,7 @@ const httpServer = http.createServer(async (req, res) => {
         return respond(res, 200, { ok: true, data: { events } });
       }
 
-      // ── Agent feedback: single endpoint with full combat picture ──
+      // ── Agent feedback: single endpoint with full combat/body picture ──
       if (path === '/combat') {
         const mutex = bodyMutex ? bodyMutex.getStatus() : null;
         const nearbyHostiles = [];
@@ -3735,6 +3738,11 @@ const httpServer = http.createServer(async (req, res) => {
               nearbyHostiles.push({
                 type: name,
                 distance: bot.entity.position.distanceTo(e.position).toFixed(1),
+                position: {
+                  x: Math.round(e.position.x),
+                  y: Math.round(e.position.y),
+                  z: Math.round(e.position.z),
+                },
               });
             }
           }
@@ -3743,9 +3751,24 @@ const httpServer = http.createServer(async (req, res) => {
           health: bot?.health,
           food: bot?.food,
           holding: bot?.heldItem?.name || 'empty',
+          position: bot?.entity ? {
+            x: Math.round(bot.entity.position.x),
+            y: Math.round(bot.entity.position.y),
+            z: Math.round(bot.entity.position.z),
+          } : null,
+          onGround: bot?.entity?.onGround ?? true,
           mutex: mutex ? { mode: mutex.mode, owner: mutex.owner } : null,
           hostiles: nearbyHostiles,
-          lastActions: actionHistory.slice(-3).map(a => a.action),
+          lastActions: actionHistory.slice(-5).map(a => ({
+            action: a.action,
+            status: a.status,
+            secondsAgo: ((Date.now() - a.time) / 1000).toFixed(0),
+          })),
+          currentTask: currentTask ? {
+            action: currentTask.action,
+            status: currentTask.status,
+            secondsAgo: currentTask.started ? ((Date.now() - currentTask.started) / 1000).toFixed(0) : null,
+          } : null,
         }});
       }
 
@@ -4136,6 +4159,15 @@ const httpServer = http.createServer(async (req, res) => {
           return respond(res, 404, { ok: false, error: `Blueprint '${name}' not found` });
         }
       }
+      // ── Controller Lease — GET /controller/lease ──
+      if (path === '/controller/lease') {
+        const now = Date.now();
+        const age = (now - controllerLease.since) / 1000;
+        if (controllerLease.owner && age < controllerLease.ttl) {
+          return respond(res, 200, { ok: true, data: { ...controllerLease, age_seconds: age.toFixed(0) } });
+        }
+        return respond(res, 200, { ok: true, data: null });
+      }
     }
 
     // ── POST endpoints (actions) ────────────────
@@ -4144,6 +4176,15 @@ const httpServer = http.createServer(async (req, res) => {
       if (process.env.BOT_VERBOSE) {
         const snippet = JSON.stringify(body).slice(0, 150);
         console.error(`[req-body] ${snippet}${snippet.length >= 150 ? '…' : ''}`);
+      }
+
+      // ── Controller Lease — POST /controller/lease ──
+      if (path === '/controller/lease') {
+        const { owner, ttl } = body || {};
+        if (!owner) return respond(res, 400, { ok: false, error: 'owner required' });
+        const ttlSec = Math.min(parseInt(ttl) || 120, 600);
+        controllerLease = { owner, since: Date.now(), ttl: ttlSec };
+        return respond(res, 200, { ok: true, data: controllerLease });
       }
 
       // Cancel current task
