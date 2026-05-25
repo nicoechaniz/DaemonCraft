@@ -313,7 +313,7 @@ function checkEntityProximity() {
     const dist = bot.entity.position.distanceTo(entity.position);
     const key = entity.name || entity.mobType || entity.displayName || name;
     const last = eventDebounce.entity_near[key] || 0;
-    if (dist < 5 && now - last > 1000) {
+    if (dist < 10 && now - last > 1000) {
       eventDebounce.entity_near[key] = now;
       bot.emit('runner_event', {
         type: 'entity_near',
