@@ -325,8 +325,25 @@ function checkHealthEdges() {
   if (!bot || !botReady) return;
   const now = Date.now();
   const health = bot.health || 20;
+  const lastHealth = eventDebounce._lastHealth ?? health;
+
+  // Damage detection: any health decrease (debounced 500ms)
+  if (health < lastHealth && now - eventDebounce.health_edge > 500) {
+    eventDebounce.health_edge = now;
+    eventDebounce._lastHealth = health;
+    bot.emit('runner_event', {
+      type: 'taking_damage',
+      health,
+      maxHealth: 20,
+      priority: 'critical',
+      timestamp: now,
+    });
+  }
+
+  // Critical health alert
   if (health <= 6 && now - eventDebounce.health_edge > 500) {
     eventDebounce.health_edge = now;
+    eventDebounce._lastHealth = health;
     bot.emit('runner_event', {
       type: 'health_low',
       health,
@@ -335,6 +352,8 @@ function checkHealthEdges() {
       timestamp: now,
     });
   }
+
+  eventDebounce._lastHealth = health;
 }
 
 // (Future) checkHazardEdges() can use hazard_edge debounce for lava/fire etc.

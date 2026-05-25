@@ -7,10 +7,9 @@ class RunnerThread(threading.Thread):
         self.event_queue = queue.Queue()
         self.personality = self._load_config(config_path)
         self._running = True
-        self._last_follow = {}     # entity_type -> timestamp of last follow start
-        self._follow_timeout = 5   # seconds before giving up on a follow
         self._flee_failed = {}     # entity_type -> count of failed flees
         self._flee_positions = {}  # entity_type -> position at last flee attempt
+        self._last_health = 20     # track health for damage detection
 
     def _load_config(self, path):
         default = {
@@ -38,6 +37,7 @@ class RunnerThread(threading.Thread):
                 elif event.get('priority') == 'high':
                     self._handle_high(event)
             except queue.Empty:
+                self._check_damage()  # idle health watch
                 continue
 
     def stop(self):
@@ -53,7 +53,6 @@ class RunnerThread(threading.Thread):
         return requests.get(f'{self.bot_api}{path}', timeout=5).json()
 
     def _has_weapon(self):
-        """Check if the bot is holding or has a weapon in inventory."""
         try:
             st = self._get('/status')
             holding = st.get('data', {}).get('holding', {})
@@ -64,29 +63,23 @@ class RunnerThread(threading.Thread):
             pass
         return False
 
-    def _has_armor(self):
-        """Check if the bot has armor via inventory slot names."""
-        try:
-            inv = self._get('/inventory')
-            items = inv.get('data', {}).get('items', [])
-            armor_names = ['helmet', 'chestplate', 'leggings', 'boots',
-                          'cap', 'tunic', 'pants',  # leather variants
-                          'shell', 'elytra']
-            for item in items:
-                name = item.get('name', '').lower()
-                if any(a in name for a in armor_names):
-                    return True
-        except:
-            pass
-        # Fallback: check holding for shield
+    def _check_damage(self):
+        """Idle health watch: if health drops, react even without entity_near event."""
         try:
             st = self._get('/status')
-            holding = st.get('data', {}).get('holding', {})
-            if 'shield' in holding.get('name', ''):
-                return True
+            health = st.get('data', {}).get('health', 20)
+            if health < self._last_health - 0.5:
+                # Taking damage — push a synthetic event
+                self._last_health = health
+                self.push_event({
+                    'type': 'taking_damage',
+                    'health': health,
+                    'priority': 'critical',
+                })
+            else:
+                self._last_health = health
         except:
             pass
-        return False
 
     def _handle_critical(self, event):
         result = self._post('/mutex/claim', {
@@ -95,7 +88,7 @@ class RunnerThread(threading.Thread):
         })
         if not result.get('allowed'):
             reason = result.get('reason', '')
-            if reason == 'atomic_in_progress' and event['type'] in ('voice_command', 'health_low', 'lava_near'):
+            if reason == 'atomic_in_progress' and event['type'] in ('voice_command', 'health_low', 'lava_near', 'taking_damage'):
                 self._post('/mutex/emergency_stop', {'requester': 'runner'})
             else:
                 return
@@ -107,7 +100,6 @@ class RunnerThread(threading.Thread):
 
         self._execute_action(action)
 
-        # After flee, check if we actually escaped
         if action.get('name') == 'flee':
             entity_type = action.get('params', {}).get('from', '')
             self._check_flee_result(entity_type)
@@ -129,43 +121,37 @@ class RunnerThread(threading.Thread):
         etype = event['type']
         p = self.personality
 
-        if etype == 'entity_near':
+        if etype in ('entity_near', 'taking_damage'):
             entity_type = event.get('entityType', 'hostile')
             dist = event.get('distance', 999)
 
-            # --- Follow timeout: abandon if we've been following >5s ---
-            follow_start = self._last_follow.get(entity_type, 0)
-            if follow_start and time.time() - follow_start > self._follow_timeout:
+            # Distance gate: don't chase if mob is too far
+            if dist > 15 and etype == 'entity_near':
                 return None
 
-            # --- Distance gate: don't chase if mob is too far ---
-            if dist > 15:
-                return None
-
-            # --- Situational awareness ---
+            # Situational awareness
             has_weapon = self._has_weapon()
-            has_armor = self._has_armor()
 
-            # Flee conditions: no weapon, cowardly personality, or previous flee failures
+            # Flee: no weapon, cowardly personality, or flee-fail cascade
             must_flee = (
                 not has_weapon or
                 p['combat']['threshold'] < 0.5
             )
 
-            # Check if previous flee against this entity failed (didn't move)
             flee_count = self._flee_failed.get(entity_type, 0)
             if flee_count >= 2:
-                # Flee keeps failing — fight instead
-                must_flee = False
+                must_flee = False  # fight instead
 
-            if must_flee:
-                self._flee_positions[entity_type] = None  # will be set after flee attempt
+            if must_flee and entity_type:
+                self._flee_positions[entity_type] = None
                 return {'name': 'flee', 'params': {'from': entity_type, 'distance': 8}}
 
-            # Fight: follow + attack loop (follow lasts until timeout or mob gone)
-            self._last_follow[entity_type] = time.time()
-            self._flee_failed[entity_type] = 0  # reset flee counter
-            return {'name': 'follow', 'params': {'player': entity_type}, 'also_attack': entity_type}
+            # Fight: attack (goto + hit), re-triggers on next entity_near event
+            if entity_type:
+                self._flee_failed[entity_type] = 0
+                return {'name': 'attack', 'params': {'target': entity_type}}
+            # taking_damage without known entity_type: just attack nearest
+            return {'name': 'attack', 'params': {'target': ''}}
 
         elif etype in ('health_low', 'hunger_low'):
             return {'name': 'eat', 'params': {}}
@@ -181,7 +167,6 @@ class RunnerThread(threading.Thread):
             self._post('/action/stop', {'requester': 'runner'})
 
         elif name == 'flee':
-            # Record position before flee to detect if flee actually moved us
             entity_type = params.get('from', 'unknown')
             try:
                 st = self._get('/status')
@@ -191,10 +176,11 @@ class RunnerThread(threading.Thread):
                 pass
             self._post('/action/flee', params)
 
-        elif name == 'follow' and action.get('also_attack'):
-            self._post('/action/follow', params)
-            time.sleep(0.4)
-            self._post('/action/attack', {'target': action['also_attack']}, timeout=15)
+        elif name == 'attack':
+            self._post('/action/attack', params, timeout=15)
+
+        elif name == 'eat':
+            self._post('/action/eat', params, timeout=10)
 
         else:
             self._post(f'/action/{name}', params)
