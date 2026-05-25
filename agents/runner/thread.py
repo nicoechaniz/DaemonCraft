@@ -98,7 +98,8 @@ class RunnerThread(threading.Thread):
             if should_flee:
                 return {'name': 'flee', 'params': {'from': entity_type, 'distance': 8}}
             else:
-                return {'name': 'attack', 'params': {'target': entity_type}}
+                # Follow the hostile to track it continuously, then attack
+                return {'name': 'follow', 'params': {'player': entity_type}}
         elif etype in ('health_low', 'hunger_low'):
             return {'name': 'eat', 'params': {}}
         elif etype == 'voice_command' and event.get('intent') == 'emergency_stop':
