@@ -748,13 +748,14 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 7):
             turn_count += 1
             now = time.time()
 
-            # ── Controller Lease: claim autonomous if no human has claimed ──
+            # ── Controller Mode: no-op in lab, claim autonomous if needed ──
             if now - _last_lease_refresh > 30:
                 _last_lease_refresh = now
                 try:
-                    lease = _get_json("/controller/lease")
-                    if not lease.get("data"):  # no active lease → claim autonomous
-                        _post_json("/controller/lease", {"owner": "autonomous", "ttl": 120})
+                    mode_data = _get_json("/controller/mode")
+                    current = mode_data.get("data", {}).get("mode")
+                    if current != "lab" and current != "autonomous":
+                        _post_json("/controller/mode", {"mode": "autonomous"})
                 except Exception:
                     pass
 

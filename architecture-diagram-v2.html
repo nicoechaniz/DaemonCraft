@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DaemonCraft Five-Layer Architecture</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --fg: #c9d1d9;
+    --l5: #ff7b72;
+    --l4: #79c0ff;
+    --l3: #d2a8ff;
+    --l2: #3fb950;
+    --l1: #58a6ff;
+    --border: #30363d;
+    --card: #161b22;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2rem;
+    background: var(--bg); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+    line-height: 1.5;
+  }
+  h1 { text-align: center; margin-bottom: 0.5rem; }
+  .subtitle { text-align: center; color: #8b949e; margin-bottom: 2rem; }
+  .diagram { display: flex; flex-direction: column; gap: 1rem; max-width: 900px; margin: 0 auto; }
+  .layer {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1rem 1.5rem;
+    background: var(--card);
+    position: relative;
+    transition: transform 0.2s;
+  }
+  .layer:hover { transform: translateX(4px); }
+  .layer-header {
+    display: flex; align-items: center; gap: 0.75rem;
+    font-weight: 600; font-size: 1.1rem;
+  }
+  .badge {
+    display: inline-block; padding: 0.15rem 0.5rem;
+    border-radius: 999px; font-size: 0.75rem; font-weight: 700;
+    color: #fff;
+  }
+  .l5-bg { background: var(--l5); }
+  .l4-bg { background: var(--l4); color: #000; }
+  .l3-bg { background: var(--l3); color: #000; }
+  .l2-bg { background: var(--l2); color: #000; }
+  .l1-bg { background: var(--l1); }
+  .latency { font-size: 0.8rem; color: #8b949e; margin-left: auto; }
+  .neuro { font-size: 0.8rem; color: #8b949e; font-style: italic; }
+  .components { margin-top: 0.5rem; font-size: 0.85rem; }
+  .components span {
+    display: inline-block; background: #21262d;
+    padding: 0.2rem 0.5rem; border-radius: 6px;
+    margin: 0.15rem 0.15rem 0 0; border: 1px solid var(--border);
+  }
+  .arrow {
+    text-align: center; color: #8b949e; font-size: 1.2rem; line-height: 0.5;
+  }
+  .audio-pipe {
+    border-left: 3px dashed var(--l5);
+    padding-left: 1rem;
+    margin: 0.5rem 0;
+  }
+  .footer {
+    text-align: center; margin-top: 2rem; color: #484f58; font-size: 0.8rem;
+  }
+  .links { text-align: center; margin-top: 1rem; }
+  .links a { color: var(--l4); text-decoration: none; margin: 0 0.5rem; }
+  .links a:hover { text-decoration: underline; }
+  @media (max-width: 600px) {
+    .layer-header { flex-wrap: wrap; }
+    .latency { margin-left: 0; }
+  }
+</style>
+</head>
+<body>
+<h1>DaemonCraft Five-Layer Embodied Stack</h1>
+<p class="subtitle">From reflex arc to realtime voice — the complete nervous system of an embodied daemon</p>
+
+<div class="diagram">
+
+  <!-- L5 -->
+  <div class="layer">
+    <div class="layer-header">
+      <span class="badge l5-bg">L5</span>
+      <div>
+        Voice — Auditory Cortex (Wernicke + Broca)
+        <div class="neuro">Realtime conversation, STT streaming, TTS output</div>
+      </div>
+      <div class="latency">300–800 ms</div>
+    </div>
+    <div class="components">
+      <span>OpenClaw Realtime API</span>
+      <span>Pipecat pipeline</span>
+      <span>Barge-in (native)</span>
+      <span>Voice identity (marin)</span>
+      <span>Intent classifier</span>
+    </div>
+    <div class="audio-pipe">
+      <strong>Voice → Runner bridge:</strong> urgent commands ("¡cuidado!") bypass LLM and go directly to L2
+    </div>
+  </div>
+
+  <div class="arrow">↓ event stream (async, non-blocking)</div>
+
+  <!-- L4 -->
+  <div class="layer">
+    <div class="layer-header">
+      <span class="badge l4-bg">L4</span>
+      <div>
+        Deliberative — Prefrontal Cortex
+        <div class="neuro">Strategy, narrative, memory, social interaction</div>
+      </div>
+      <div class="latency">3–30 s</div>
+    </div>
+    <div class="components">
+      <span>Hermes Gateway</span>
+      <span>Cloud LLM (Claude / Grok / Kimi)</span>
+      <span>Memory (HMK library.db)</span>
+      <span>TaskPlan → L3</span>
+    </div>
+  </div>
+
+  <div class="arrow">↓ TaskPlan + aggregated traces</div>
+
+  <!-- L3 -->
+  <div class="layer">
+    <div class="layer-header">
+      <span class="badge l3-bg">L3</span>
+      <div>
+        Reactive — Cerebellum
+        <div class="neuro">Pathfinding, sequences, adaptation, body orchestration</div>
+      </div>
+      <div class="latency">500 ms – 3 s</div>
+    </div>
+    <div class="components">
+      <span>Gemma-Andy (Ollama)</span>
+      <span>Embodied Service (:7790)</span>
+      <span>MotionController</span>
+      <span>Recovery candidates</span>
+      <span>previous_error loop</span>
+    </div>
+    <div class="audio-pipe" style="border-color: var(--l3);">
+      <strong>Preemption tolerance:</strong> must be checkpointable + resumable before L2 ships
+    </div>
+  </div>
+
+  <div class="arrow">↓ mode flags + state queries</div>
+
+  <!-- L2 -->
+  <div class="layer">
+    <div class="layer-header">
+      <span class="badge l2-bg">L2</span>
+      <div>
+        Reflex Runner — Spinal Cord + Amygdala
+        <div class="neuro">Survival reflexes. No LLM. No pathfinder. Execute now.</div>
+      </div>
+      <div class="latency">50–200 ms</div>
+    </div>
+    <div class="components">
+      <span>Event-driven YAML rules</span>
+      <span>Personality matrix (courage/fear/loyalty/caution)</span>
+      <span>Threat index + 9-dir affordance</span>
+      <span>Tiered preemption (critical=force, non-critical=yield)</span>
+      <span>Two-channel notifier</span>
+    </div>
+    <div class="audio-pipe" style="border-color: var(--l2);">
+      <strong>Sound inputs:</strong> zombie growl, creeper hiss, arrow flight, player "¡detrás!" → immediate action
+    </div>
+  </div>
+
+  <div class="arrow">↓ raw world events</div>
+
+  <!-- L1 -->
+  <div class="layer">
+    <div class="layer-header">
+      <span class="badge l1-bg">L1</span>
+      <div>
+        Sensorimotor — Peripheral Nervous System + Cochlea
+        <div class="neuro">Raw truth. Blocks, entities, position, health, sound.</div>
+      </div>
+      <div class="latency">1–50 ms</div>
+    </div>
+    <div class="components">
+      <span>Mineflayer Bot API</span>
+      <span>mBit (binary / rows / surface / full)</span>
+      <span>Sound Classifier (local)</span>
+      <span>WebSocket events</span>
+      <span>HTTP status / nearby / inventory</span>
+    </div>
+  </div>
+
+</div>
+
+<div class="links">
+  <a href="https://daemoncraft.altermundi.net/" target="_blank">DaemonCraft Website</a>
+  <a href="https://github.com/Mar-IA-no/deamoncraft-gemma4-andy" target="_blank">g4ndy Repo</a>
+</div>
+
+<div class="footer">
+  DaemonCraft v0.0v — The Matrix begins.<br>
+  Diagram: 2026-05-19 — CompAII + Nico + Mariano + Tribe
+</div>
+
+</body>
+</html>

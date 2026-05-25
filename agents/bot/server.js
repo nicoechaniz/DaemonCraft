@@ -276,8 +276,8 @@ let agentLog = []; // { turn, time, prompt, response, tool_calls, error }
 const MAX_AGENT_LOG = 50;
 let agentHeartbeat = { nextTurnIn: null, turnInProgress: false }; // countdown for dashboard
 
-// Controller Lease — single-controller arbitration (TTL-based, bot-server-hosted)
-let controllerLease = { owner: null, since: 0, ttl: 0 };
+// Controller Mode — explicit, not automagic. "lab" = no autonomous turns.
+let controllerMode = "autonomous";
 
 // ═══════════════════════════════════════════════════════════════════
 // Phase 1 Reactive Runner — event producers (debounced edge detectors)
@@ -4159,14 +4159,9 @@ const httpServer = http.createServer(async (req, res) => {
           return respond(res, 404, { ok: false, error: `Blueprint '${name}' not found` });
         }
       }
-      // ── Controller Lease — GET /controller/lease ──
-      if (path === '/controller/lease') {
-        const now = Date.now();
-        const age = (now - controllerLease.since) / 1000;
-        if (controllerLease.owner && age < controllerLease.ttl) {
-          return respond(res, 200, { ok: true, data: { ...controllerLease, age_seconds: age.toFixed(0) } });
-        }
-        return respond(res, 200, { ok: true, data: null });
+      // ── Controller Mode — GET /controller/mode ──
+      if (path === '/controller/mode') {
+        return respond(res, 200, { ok: true, data: { mode: controllerMode } });
       }
     }
 
@@ -4178,13 +4173,14 @@ const httpServer = http.createServer(async (req, res) => {
         console.error(`[req-body] ${snippet}${snippet.length >= 150 ? '…' : ''}`);
       }
 
-      // ── Controller Lease — POST /controller/lease ──
-      if (path === '/controller/lease') {
-        const { owner, ttl } = body || {};
-        if (!owner) return respond(res, 400, { ok: false, error: 'owner required' });
-        const ttlSec = Math.min(parseInt(ttl) || 120, 600);
-        controllerLease = { owner, since: Date.now(), ttl: ttlSec };
-        return respond(res, 200, { ok: true, data: controllerLease });
+      // ── Controller Mode — POST /controller/mode ──
+      if (path === '/controller/mode') {
+        const { mode } = body || {};
+        if (!mode || !["lab","autonomous"].includes(mode)) {
+          return respond(res, 400, { ok: false, error: 'mode must be "lab" or "autonomous"' });
+        }
+        controllerMode = mode;
+        return respond(res, 200, { ok: true, data: { mode: controllerMode } });
       }
 
       // Cancel current task
