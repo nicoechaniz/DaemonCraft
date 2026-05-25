@@ -118,6 +118,7 @@ export class MotionController {
 
   // Same as step recovery but mines the block in front instead of jumping
   async _doMineRecovery() {
+    // NOTE: uses dig() + path pause only; no setControlState sequence, so _withControls not needed here.
     this._recovering = true;
     const b = this.bot;
     const g = this._targetGoal;
@@ -163,21 +164,23 @@ export class MotionController {
     const b = this.bot;
     const g = this._targetGoal;
     this._log('recovery: backstep (crouched)');
-    b.setControlState('sneak', true);
-    b.setControlState('back', true);
-    await new Promise(r => setTimeout(r, 260));
-    b.setControlState('back', false);
-    b.setControlState('sneak', false);
+    await this._withControls(async () => {
+      b.setControlState('sneak', true);
+      b.setControlState('back', true);
+      await new Promise(r => setTimeout(r, 260));
+      b.setControlState('back', false);
+      b.setControlState('sneak', false);
 
-    const yawJitter = (Math.random() - 0.5) * 0.4 * Math.PI;
-    await b.look(b.entity.yaw + yawJitter, 0, false);
+      const yawJitter = (Math.random() - 0.5) * 0.4 * Math.PI;
+      await b.look(b.entity.yaw + yawJitter, 0, false);
 
-    this._log('recovery: jump forward');
-    b.setControlState('forward', true);
-    b.setControlState('jump', true);
-    await new Promise(r => setTimeout(r, 600));
-    b.setControlState('jump', false);
-    b.setControlState('forward', false);
+      this._log('recovery: jump forward');
+      b.setControlState('forward', true);
+      b.setControlState('jump', true);
+      await new Promise(r => setTimeout(r, 600));
+      b.setControlState('jump', false);
+      b.setControlState('forward', false);
+    });
 
     this._stuckCount = 0;
     this._sameSpotCount = 0;
@@ -199,35 +202,38 @@ export class MotionController {
     try { b.pathfinder.setGoal(null); } catch {}
     await new Promise(r => setTimeout(r, 100));
 
-    // Crouch backstep to disengage from obstacle
-    this._log(`recovery lateral(${blockedSide}): crouch backstep`);
-    b.setControlState('sneak', true);
-    b.setControlState('back', true);
-    await new Promise(r => setTimeout(r, 200));
-    b.setControlState('back', false);
-    b.setControlState('sneak', false);
+    // Crouch backstep + strafe sequence wrapped for guaranteed cleanup
+    await this._withControls(async () => {
+      // Crouch backstep to disengage from obstacle
+      this._log(`recovery lateral(${blockedSide}): crouch backstep`);
+      b.setControlState('sneak', true);
+      b.setControlState('back', true);
+      await new Promise(r => setTimeout(r, 200));
+      b.setControlState('back', false);
+      b.setControlState('sneak', false);
 
-    // Turn away from the obstacle and strafe
-    const strafeDir = blockedSide === 'left' ? 1 : -1;  // +1 = right, -1 = left
-    const yawAdjust = blockedSide === 'left' ? -0.3 : 0.3;  // turn slightly away
-    await b.look(b.entity.yaw + yawAdjust, 0, false);
+      // Turn away from the obstacle and strafe
+      const strafeDir = blockedSide === 'left' ? 1 : -1;  // +1 = right, -1 = left
+      const yawAdjust = blockedSide === 'left' ? -0.3 : 0.3;  // turn slightly away
+      await b.look(b.entity.yaw + yawAdjust, 0, false);
 
-    this._log(`recovery lateral: crouch strafe ${strafeDir > 0 ? 'right' : 'left'} + forward (${LATERAL_STRAFE_MS}ms)`);
-    b.setControlState('sneak', true);
-    if (strafeDir > 0) {
-      b.setControlState('right', true);
-    } else {
-      b.setControlState('left', true);
-    }
-    b.setControlState('forward', true);
-    await new Promise(r => setTimeout(r, LATERAL_STRAFE_MS));
-    b.setControlState('forward', false);
-    if (strafeDir > 0) {
-      b.setControlState('right', false);
-    } else {
-      b.setControlState('left', false);
-    }
-    b.setControlState('sneak', false);
+      this._log(`recovery lateral: crouch strafe ${strafeDir > 0 ? 'right' : 'left'} + forward (${LATERAL_STRAFE_MS}ms)`);
+      b.setControlState('sneak', true);
+      if (strafeDir > 0) {
+        b.setControlState('right', true);
+      } else {
+        b.setControlState('left', true);
+      }
+      b.setControlState('forward', true);
+      await new Promise(r => setTimeout(r, LATERAL_STRAFE_MS));
+      b.setControlState('forward', false);
+      if (strafeDir > 0) {
+        b.setControlState('right', false);
+      } else {
+        b.setControlState('left', false);
+      }
+      b.setControlState('sneak', false);
+    });
 
     // Resume pathfinder
     this._stuckCount = 0;
@@ -316,5 +322,60 @@ export class MotionController {
     try { this.bot.pathfinder.setGoal(null); } catch {}
     try { this.bot.stopDigging(); } catch {}
     try { this.bot.clearControlStates(); } catch {}
+  }
+
+  // Clear all physical controls safely
+  _clearControls() {
+    const b = this.bot;
+    if (!b) return;
+    try { b.setControlState('forward', false); } catch {}
+    try { b.setControlState('back', false); } catch {}
+    try { b.setControlState('left', false); } catch {}
+    try { b.setControlState('right', false); } catch {}
+    try { b.setControlState('jump', false); } catch {}
+    try { b.setControlState('sneak', false); } catch {}
+  }
+
+  // Pause pathfinder (clear goal but don't change session state)
+  async _pausePathfinder() {
+    try { this.bot.pathfinder.setGoal(null); } catch {}
+    await new Promise(r => setTimeout(r, 100));
+  }
+
+  // Resume original goal from a goal descriptor
+  _resumeGoal(goalDescriptor) {
+    if (!goalDescriptor || !goalDescriptor.type) return false;
+    // Import goals dynamically or use the module-level import
+    let goal;
+    if (goalDescriptor.type === 'block') {
+      goal = new goals.GoalBlock(goalDescriptor.x, goalDescriptor.y, goalDescriptor.z);
+    } else if (goalDescriptor.type === 'near') {
+      goal = new goals.GoalNear(goalDescriptor.x, goalDescriptor.y, goalDescriptor.z, goalDescriptor.range || 2);
+    } else if (goalDescriptor.type === 'follow') {
+      return false; // cannot resume follow
+    }
+    if (goal) {
+      this.bot.pathfinder.setGoal(goal);
+      return true;
+    }
+    return false;
+  }
+
+  // Execute control sequence with guaranteed cleanup
+  async _withControls(fn) {
+    try {
+      await fn();
+    } finally {
+      this._clearControls();
+    }
+  }
+
+  dispose() {
+    if (this._fastStuckInterval) {
+      clearInterval(this._fastStuckInterval);
+      this._fastStuckInterval = null;
+    }
+    this._active = false;
+    this._recovering = false;
   }
 }

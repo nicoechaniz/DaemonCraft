@@ -592,6 +592,10 @@ async function createBotImpl() {
     bot.removeAllListeners('end');
     bot.removeAllListeners('error');
     try { bot.quit(); } catch {}
+    if (motion) {
+      motion.dispose();
+      motion = null;
+    }
     bot = null;
     botReady = false;
     await sleep(2000); // longer delay for server to clean up session
