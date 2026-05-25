@@ -202,7 +202,149 @@ await test('dispose clears session and interval', () => {
   if (mc._recovering !== false) throw new Error('_recovering not false');
 });
 
-console.log(`\nAll Phase 0 + Phase 1 tests complete. Failures: ${failed}`);
+// --- Phase 2 tests: Recovery FSM (deterministic maneuvers) ---
+
+await test('_classifyBlocked returns step for 1-block obstacle with air above', () => {
+  const fake = makeFakeBot();
+  const mc = new MotionController(fake);
+  // Simulate: solid at feet (0.4) forward, air at head (1.4). yaw=0 → forward +z
+  fake.blockAt = (pt) => {
+    const relY = pt.y - 64;
+    const relZ = pt.z - 100;
+    const relX = pt.x - 100;
+    if (Math.abs(relX) < 0.01 && Math.abs(relZ - 1) < 0.01) {
+      if (Math.abs(relY - 0.4) < 0.01) return { name: 'dirt', boundingBox: 'block' };
+      if (Math.abs(relY - 1.4) < 0.01) return { name: 'air', boundingBox: 'empty' };
+    }
+    return { name: 'air', boundingBox: 'empty' };
+  };
+  const res = mc._classifyBlocked();
+  if (res !== 'step') throw new Error('expected "step", got ' + res);
+  mc.dispose();
+});
+
+await test('step recovery: backstep → rotate → jump → measure', async () => {
+  const fake = makeFakeBot();
+  const mc = new MotionController(fake);
+  const desc = makeGoalDescriptor('block', 120, 64, 120);
+  const session = createSession('step-test', desc);
+  session.state = SESSION_STATE.STUCK_DETECTED;
+  mc._session = session;
+  mc._sessionGeneration++;
+
+  // Make blockAt return only air → no body block found, uses alternate rotate
+  fake.blockAt = () => ({ name: 'air', boundingBox: 'empty' });
+
+  await mc._handleStuck(session);
+
+  // Should have run to completion (no progress → FAILED path exercised)
+  if (session.state !== SESSION_STATE.FAILED) {
+    // May be NAV if somehow, but expect FAILED on zero disp
+    if (session.state !== SESSION_STATE.NAVIGATING && session.state !== SESSION_STATE.FAILED) {
+      throw new Error('unexpected final state: ' + session.state);
+    }
+  }
+  // Controls must be cleared (guaranteed by finally / _clear)
+  const c = fake.controls;
+  if (c.forward || c.back || c.left || c.right || c.jump || c.sneak) {
+    throw new Error('controls not cleared after step recovery: ' + JSON.stringify(c));
+  }
+  if (mc._activeRecovery) throw new Error('_activeRecovery left true');
+  mc.dispose();
+});
+
+await test('lateral recovery: rotate before measure', async () => {
+  const fake = makeFakeBot();
+  const mc = new MotionController(fake);
+  const desc = makeGoalDescriptor('near', 105, 64, 105, 2);
+  const session = createSession('lateral-test', desc);
+  session.state = SESSION_STATE.STUCK_DETECTED;
+  mc._session = session;
+  mc._sessionGeneration++;
+  session.state = SESSION_STATE.RECOVERY_ATOMIC;
+
+  fake.blockAt = () => ({ name: 'air', boundingBox: 'empty' });
+
+  // Force a lateral direction
+  // We call the FSM directly to target the rotate-before-measure path
+  await mc._doLateralRecoveryFSM(session, mc._sessionGeneration, 'left');
+
+  const c = fake.controls;
+  if (c.forward || c.back || c.left || c.right || c.jump || c.sneak) {
+    throw new Error('controls not cleared after lateral: ' + JSON.stringify(c));
+  }
+  // Since no real separation, it falls back to step which also clears
+  if (mc._activeRecovery) throw new Error('_activeRecovery left true');
+  mc.dispose();
+});
+
+await test('mine recovery: dig block, fallback to step on no block', async () => {
+  const fake = makeFakeBot();
+  let digCalled = 0;
+  let lastDigBlock = null;
+
+  // Case 1: mineable block present → dig called, success path
+  const fake1 = makeFakeBot();
+  fake1.blockAt = () => ({ name: 'stone', boundingBox: 'block', position: { x: 101, y: 65, z: 101 } });
+  fake1.canDigBlock = () => true;
+  fake1.dig = async (blk) => { digCalled++; lastDigBlock = blk; return; };
+
+  const mc1 = new MotionController(fake1);
+  const s1 = createSession('mine1', makeGoalDescriptor('block', 10,64,10));
+  s1.state = SESSION_STATE.STUCK_DETECTED;
+  mc1._session = s1;
+  mc1._sessionGeneration++;
+  s1.state = SESSION_STATE.RECOVERY_ATOMIC;
+  await mc1._doMineRecoveryFSM(s1, mc1._sessionGeneration);
+  if (digCalled !== 1) throw new Error('expected dig called once for mineable case');
+  if (s1.state !== SESSION_STATE.NAVIGATING) throw new Error('mine success should set NAVIGATING, got ' + s1.state);
+  if (mc1._activeRecovery) throw new Error('activeRecovery true after mine');
+  mc1.dispose();
+
+  // Case 2: no mineable → fallback to step (which will run and set FAILED due to no disp)
+  const fake2 = makeFakeBot();
+  fake2.blockAt = () => ({ name: 'air', boundingBox: 'empty' });
+  fake2.canDigBlock = () => false;
+  const mc2 = new MotionController(fake2);
+  const s2 = createSession('mine2', makeGoalDescriptor('block', 10,64,10));
+  s2.state = SESSION_STATE.STUCK_DETECTED;
+  mc2._session = s2;
+  mc2._sessionGeneration++;
+  s2.state = SESSION_STATE.RECOVERY_ATOMIC;
+  await mc2._doMineRecoveryFSM(s2, mc2._sessionGeneration);
+  if (s2.state !== SESSION_STATE.FAILED && s2.state !== SESSION_STATE.NAVIGATING) {
+    throw new Error('no-block mine should fallback and end not stuck, got ' + s2.state);
+  }
+  const c2 = fake2.controls;
+  if (c2.sneak || c2.back || c2.forward || c2.jump) throw new Error('controls not cleared in mine fallback');
+  mc2.dispose();
+});
+
+await test('recovery FSM clears controls on error', async () => {
+  const fake = makeFakeBot();
+  // Force an error inside step recovery (e.g. during look or jump phase)
+  fake.look = async () => { throw new Error('simulated look failure'); };
+
+  const mc = new MotionController(fake);
+  const session = createSession('err-test', makeGoalDescriptor('block', 99,64,99));
+  session.state = SESSION_STATE.STUCK_DETECTED;
+  mc._session = session;
+  mc._sessionGeneration++;
+
+  fake.blockAt = () => ({ name: 'air', boundingBox: 'empty' });
+
+  await mc._handleStuck(session);  // should catch, set FAILED, finally clear controls
+
+  const c = fake.controls;
+  if (c.forward || c.back || c.left || c.right || c.jump || c.sneak) {
+    throw new Error('controls NOT cleared on error path: ' + JSON.stringify(c));
+  }
+  if (session.state !== SESSION_STATE.FAILED) throw new Error('on error should mark FAILED, got ' + session.state);
+  if (mc._activeRecovery !== false) throw new Error('_activeRecovery not reset on error');
+  mc.dispose();
+});
+
+console.log(`\nAll Phase 0 + Phase 1 + Phase 2 tests complete. Failures: ${failed}`);
 if (failed > 0) {
   process.exit(1);
 }

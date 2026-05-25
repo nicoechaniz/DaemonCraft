@@ -25,6 +25,22 @@ export const SESSION_STATE = {
   FAILED: 'failed',
 };
 
+export const RECOVERY_STAGE = {
+  IDLE: 'idle',
+  REQUESTING_SAFE_CANCEL: 'requesting_safe_cancel',
+  PAUSING_PATHFINDER: 'pausing_pathfinder',
+  BACKSTEP: 'backstep',
+  ROTATING: 'rotating',
+  JUMP_FORWARD: 'jump_forward',
+  ROTATING_LATERAL: 'rotating_lateral',
+  STRAFE_AWAY: 'strafe_away',
+  MEASURING: 'measuring',
+  MINE_TARGET: 'mine_target',
+  RESUME: 'resume',
+  DONE: 'done',
+  FAILED: 'failed',
+};
+
 export function makeGoalDescriptor(type, x, y, z, rangeOrEntity, distance) {
   if (type === 'block') return { type: 'block', x: Math.floor(x), y: Math.floor(y), z: Math.floor(z) };
   if (type === 'near') return { type: 'near', x: Math.floor(x), y: Math.floor(y), z: Math.floor(z), range: rangeOrEntity || 2 };
@@ -52,6 +68,8 @@ export class MotionController {
     this._stuckCount = 0;
     this._session = null; // active MotionSession or null
     this._sessionGeneration = 0; // monotonic counter
+    this._activeRecovery = false;
+    this._recoverySpinDir = 1; // alternates per recovery attempt (+1 / -1)
     
     bot.on('path_reset', (reason) => {
       if (reason === 'stuck' && this._active) {
@@ -137,6 +155,13 @@ export class MotionController {
     const fwdLeftDx = fwdDx + leftDx, fwdLeftDz = fwdDz + leftDz;
     const fwdRightDx = fwdDx + rightDx, fwdRightDz = fwdDz + rightDz;
 
+    // Tier 0: step check — solid at feet [0.4] forward BUT air at head [1.4] → step (1-block obstacle)
+    const BODY_FEET = [0.4];
+    const BODY_HEAD = [1.4];
+    if (_isSolidAt(fwdDx, fwdDz, BODY_FEET) && !_isSolidAt(fwdDx, fwdDz, BODY_HEAD)) {
+      return 'step';
+    }
+
     // Tier 1: body-level blocks (0.4-1.9) — these need mine or strafe
     const BODY = [0.4, 0.9, 1.4, 1.9];
     if (_isSolidAt(fwdDx, fwdDz, BODY)) return 'forward';
@@ -145,153 +170,8 @@ export class MotionController {
     if (_isSolidAt(leftDx, leftDz, BODY)) return 'left';
     if (_isSolidAt(rightDx, rightDz, BODY)) return 'right';
     
-    // Tier 2: step ahead (block at y=1, above feet) — simple jump
-    if (_isSolidAt(fwdDx, fwdDz, [1])) return 'step';
-    
-    // Tier 3: nothing obvious — could be stuck on edge/lip, do backstep+jump
+    // Tier 2: nothing obvious — could be stuck on edge/lip, do backstep+jump (old step-at-[1] removed; now covered by Tier 0 or unknown)
     return 'unknown';
-  }
-
-  // Same as step recovery but mines the block in front instead of jumping
-  async _doMineRecovery() {
-    // NOTE: uses dig() + path pause only; no setControlState sequence, so _withControls not needed here.
-    this._recovering = true;
-    const b = this.bot;
-    const g = this._targetGoal;
-    if (!g) { this._recovering = false; return; }
-
-    // Clear pathfinder
-    try { b.pathfinder.setGoal(null); } catch {}
-    await new Promise(r => setTimeout(r, 100));
-
-    // Find the block directly in front of the bot's face
-    const facing = b.entity.position.offset(
-      -Math.sin(b.entity.yaw), 1.5, Math.cos(b.entity.yaw)
-    );
-    const block = b.blockAt(facing);
-    if (block && block.name !== 'air' && b.canDigBlock(block)) {
-      this._log(`recovery: mining ${block.name} at ${block.position}`);
-      try {
-        await b.dig(block, true);  // forceLook=true for blocks above
-        this._log('recovery: block mined');
-      } catch (e) {
-        this._log(`recovery: dig failed (${e.message}), trying step instead`);
-        await this._doStepRecoveryInternal();
-        return;
-      }
-    } else {
-      this._log(`recovery: no mineable block ahead (${block?.name || 'none'}), trying step`);
-      await this._doStepRecoveryInternal();
-      return;
-    }
-
-    // Resume pathfinder
-    this._stuckCount = 0;
-    this._sameSpotCount = 0;
-    this._active = true;
-    this._resetFastStuckWindow();
-    b.pathfinder.setGoal(new goals.GoalBlock(Math.floor(g.x), Math.floor(g.y), Math.floor(g.z)));
-    this._log('recovery: done (mined), pathfinder resumed');
-    this._recovering = false;
-  }
-
-  // Extracted step recovery logic for reuse by _doMineRecovery fallback
-  async _doStepRecoveryInternal() {
-    const b = this.bot;
-    const g = this._targetGoal;
-    this._log('recovery: backstep (crouched)');
-    await this._withControls(async () => {
-      b.setControlState('sneak', true);
-      b.setControlState('back', true);
-      await new Promise(r => setTimeout(r, 260));
-      b.setControlState('back', false);
-      b.setControlState('sneak', false);
-
-      const yawJitter = (Math.random() - 0.5) * 0.4 * Math.PI;
-      await b.look(b.entity.yaw + yawJitter, 0, false);
-
-      this._log('recovery: jump forward');
-      b.setControlState('forward', true);
-      b.setControlState('jump', true);
-      await new Promise(r => setTimeout(r, 600));
-      b.setControlState('jump', false);
-      b.setControlState('forward', false);
-    });
-
-    this._stuckCount = 0;
-    this._sameSpotCount = 0;
-    this._active = true;
-    this._resetFastStuckWindow();
-    b.pathfinder.setGoal(new goals.GoalBlock(Math.floor(g.x), Math.floor(g.y), Math.floor(g.z)));
-    this._log('recovery: done (step), pathfinder resumed');
-    this._recovering = false;
-  }
-
-  // Lateral recovery: crouch-backstep → turn away from obstacle → strafe → resume
-  async _doLateralRecovery(blockedSide) {
-    this._recovering = true;
-    const b = this.bot;
-    const g = this._targetGoal;
-    if (!g) { this._recovering = false; return; }
-
-    // Clear pathfinder
-    try { b.pathfinder.setGoal(null); } catch {}
-    await new Promise(r => setTimeout(r, 100));
-
-    // Crouch backstep + strafe sequence wrapped for guaranteed cleanup
-    await this._withControls(async () => {
-      // Crouch backstep to disengage from obstacle
-      this._log(`recovery lateral(${blockedSide}): crouch backstep`);
-      b.setControlState('sneak', true);
-      b.setControlState('back', true);
-      await new Promise(r => setTimeout(r, 200));
-      b.setControlState('back', false);
-      b.setControlState('sneak', false);
-
-      // Turn away from the obstacle and strafe
-      const strafeDir = blockedSide === 'left' ? 1 : -1;  // +1 = right, -1 = left
-      const yawAdjust = blockedSide === 'left' ? -0.3 : 0.3;  // turn slightly away
-      await b.look(b.entity.yaw + yawAdjust, 0, false);
-
-      this._log(`recovery lateral: crouch strafe ${strafeDir > 0 ? 'right' : 'left'} + forward (${LATERAL_STRAFE_MS}ms)`);
-      b.setControlState('sneak', true);
-      if (strafeDir > 0) {
-        b.setControlState('right', true);
-      } else {
-        b.setControlState('left', true);
-      }
-      b.setControlState('forward', true);
-      await new Promise(r => setTimeout(r, LATERAL_STRAFE_MS));
-      b.setControlState('forward', false);
-      if (strafeDir > 0) {
-        b.setControlState('right', false);
-      } else {
-        b.setControlState('left', false);
-      }
-      b.setControlState('sneak', false);
-    });
-
-    // Resume pathfinder
-    this._stuckCount = 0;
-    this._sameSpotCount = 0;
-    this._active = true;
-    this._resetFastStuckWindow();
-    b.pathfinder.setGoal(new goals.GoalBlock(Math.floor(g.x), Math.floor(g.y), Math.floor(g.z)));
-    this._log('recovery: done (lateral), pathfinder resumed');
-    this._recovering = false;
-  }
-
-  async _doStepRecovery() {
-    this._recovering = true;
-    this._recoveryDone = null;
-    const b = this.bot;
-    const g = this._targetGoal;
-    if (!g) { this._recovering = false; return; }
-
-    try { b.pathfinder.setGoal(null); } catch {}
-    await new Promise(r => setTimeout(r, 100));
-
-    await this._doStepRecoveryInternal();
   }
 
   async goto(x, y, z, timeoutMs = 15000) {
@@ -395,6 +275,7 @@ export class MotionController {
     this._targetGoal = null;
     this._stuckCount = 0;
     this._sameSpotCount = 0;
+    this._activeRecovery = false;
 
     try { this.bot.pathfinder.setGoal(null); } catch {}
     try { this.bot.stopDigging(); } catch {}
@@ -448,15 +329,266 @@ export class MotionController {
     }
   }
 
-  // Phase 1 stub: called from fast-stuck when STUCK_DETECTED.
-  // Does NOT perform recovery (FSM comes in Phase 2). Just logs and marks session FAILED
-  // so that navigation terminates cleanly instead of looping.
-  _handleStuck(session) {
-    if (!session) return;
-    this._log(`stuck detected (session ${session.id}, state=${session.state}); Phase 1 stub: marking FAILED (no recovery yet)`);
-    session.state = SESSION_STATE.FAILED;
-    // Note: caller (interval) already set STUCK_DETECTED; we override to FAILED here for Phase 1.
-    // In Phase 2 this will enqueue atomic recovery and only mark FAILED on unrecoverable.
+  // Sample forward/left/right at body heights to find nearest solid obstruction.
+  // Used by step recovery to decide rotation direction.
+  _findNearestBodyBlock() {
+    const b = this.bot;
+    if (!b || !b.entity) return null;
+    const yaw = b.entity.yaw;
+    const pos = b.entity.position;
+    const fwdDx = -Math.sin(yaw), fwdDz = Math.cos(yaw);
+    const leftDx = -Math.cos(yaw), leftDz = -Math.sin(yaw);
+    const rightDx = Math.cos(yaw), rightDz = Math.sin(yaw);
+
+    const dirs = [
+      { dx: fwdDx, dz: fwdDz, name: 'forward' },
+      { dx: leftDx, dz: leftDz, name: 'left' },
+      { dx: rightDx, dz: rightDz, name: 'right' },
+    ];
+    const BODY = [0.4, 0.9, 1.4, 1.9];
+
+    let nearest = null;
+    let nearestDist = Infinity;
+
+    for (const dir of dirs) {
+      for (const h of BODY) {
+        const pt = pos.offset(dir.dx, h, dir.dz);
+        const blk = b.blockAt(pt);
+        if (blk && blk.name !== 'air' && blk.name !== 'cave_air' && blk.name !== 'void_air' && blk.boundingBox === 'block') {
+          const dist = Math.abs(dir.dx) + Math.abs(dir.dz);
+          if (dist < nearestDist) {
+            nearestDist = dist;
+            nearest = { block: blk, direction: dir.name };
+          }
+        }
+      }
+    }
+    return nearest;
+  }
+
+  async _doStepRecoveryFSM(session, generation) {
+    // Guard: bail if session/generation changed (new navigation started)
+    if (this._sessionGeneration !== generation) return;
+    if (!session || session.state !== SESSION_STATE.RECOVERY_ATOMIC) return;
+
+    try {
+      // Stage: PAUSING_PATHFINDER
+      await this._pausePathfinder();
+
+      // Stage: BACKSTEP (crouched 260ms)
+      this.bot.setControlState('sneak', true);
+      this.bot.setControlState('back', true);
+      await new Promise(r => setTimeout(r, 260));
+      this._clearControls();
+
+      // Stage: ROTATING — prefer nearest body block, else alternate ±90° using recoverySpinDir
+      const yaw = this.bot.entity.yaw;
+      const bodyBlock = this._findNearestBodyBlock();
+      let targetYaw;
+      if (bodyBlock) {
+        // Rotate away: use spin dir (will flip after)
+        targetYaw = yaw + (this._recoverySpinDir * (Math.PI / 2));
+      } else {
+        // Alternate per attempt
+        const alt = (session.recoveryAttempt % 2 === 0) ? 1 : -1;
+        targetYaw = yaw + alt * (Math.PI / 2);
+      }
+      // Round to nearest 22.5° (PI/8)
+      targetYaw = Math.round(targetYaw / (Math.PI / 8)) * (Math.PI / 8);
+      await this.bot.look(targetYaw, 0, false);
+
+      // Flip spin dir for next attempt
+      this._recoverySpinDir = -this._recoverySpinDir;
+
+      // Stage: JUMP_FORWARD — measure, 600ms jump+forward, settle 200ms
+      const preJump = { x: this.bot.entity.position.x, y: this.bot.entity.position.y, z: this.bot.entity.position.z };
+      this.bot.setControlState('jump', true);
+      this.bot.setControlState('forward', true);
+      await new Promise(r => setTimeout(r, 600));
+      this._clearControls();
+      await new Promise(r => setTimeout(r, 200)); // physics settle
+
+      // Stage: MEASURING
+      const postJump = this.bot.entity.position;
+      const dx = postJump.x - preJump.x;
+      const dy = postJump.y - preJump.y;
+      const dz = postJump.z - preJump.z;
+      const moved = Math.sqrt(dx * dx + dz * dz);
+      this._log(`step recovery result: dx=${dx.toFixed(2)} dy=${dy.toFixed(2)} dz=${dz.toFixed(2)} moved=${moved.toFixed(2)}`);
+
+      // Stage: RESUME or FAILED
+      if (dy > 0.3 || moved > 1.0) {
+        this._resetFastStuckWindow();
+        if (session.goalDescriptor) {
+          this._resumeGoal(session.goalDescriptor);
+          session.state = SESSION_STATE.NAVIGATING;
+        } else {
+          session.state = SESSION_STATE.COMPLETE;
+        }
+        this._log('step recovery: resumed navigation');
+      } else {
+        this._log('step recovery: no progress, marking failed');
+        session.state = SESSION_STATE.FAILED;
+      }
+    } catch (e) {
+      this._log(`step recovery error: ${e.message}`);
+      session.state = SESSION_STATE.FAILED;
+    }
+  }
+
+  async _doLateralRecoveryFSM(session, generation, blockedDir) {
+    if (this._sessionGeneration !== generation) return;
+    if (!session || session.state !== SESSION_STATE.RECOVERY_ATOMIC) return;
+
+    try {
+      await this._pausePathfinder();
+
+      // Compute obstacle world normal from blockedDir + current yaw
+      const yaw = this.bot.entity.yaw;
+      let obsDx, obsDz;
+      if (blockedDir === 'left' || blockedDir === 'forward-left') {
+        obsDx = -Math.cos(yaw);
+        obsDz = -Math.sin(yaw);
+      } else {
+        obsDx = Math.cos(yaw);
+        obsDz = Math.sin(yaw);
+      }
+      const len = Math.sqrt(obsDx * obsDx + obsDz * obsDz) || 1;
+      const obsNx = obsDx / len;
+      const obsNz = obsDz / len;
+
+      // Stage: ROTATING_LATERAL — rotate away from obstacle by ~0.5 rad
+      let targetYaw;
+      if (blockedDir === 'left' || blockedDir === 'forward-left') {
+        targetYaw = yaw + 0.5; // turn right
+      } else {
+        targetYaw = yaw - 0.5; // turn left
+      }
+      await this.bot.look(targetYaw, 0, false);
+      await new Promise(r => setTimeout(r, 150)); // settle
+
+      // Stage: MEASURING pre-strafe + reclassify
+      const preStrafe = { x: this.bot.entity.position.x, y: this.bot.entity.position.y, z: this.bot.entity.position.z };
+      const recheck = this._classifyBlocked();
+
+      // Compute strafe dir: right vector dot obs normal; if positive, right points toward obs → strafe left (away)
+      const newYaw = this.bot.entity.yaw;
+      const rightDx = Math.cos(newYaw);
+      const rightDz = Math.sin(newYaw);
+      const dotRight = rightDx * obsNx + rightDz * obsNz;
+      const strafeRight = dotRight < 0; // if dotRight <0, right points away → strafe right to move away? Wait: logic per spec: strafe away
+
+      // Stage: STRAFE_AWAY (sneak + lateral)
+      this.bot.setControlState('sneak', true);
+      if (strafeRight) {
+        this.bot.setControlState('right', true);
+      } else {
+        this.bot.setControlState('left', true);
+      }
+      await new Promise(r => setTimeout(r, LATERAL_STRAFE_MS));
+      this._clearControls();
+      await new Promise(r => setTimeout(r, 200));
+
+      // Stage: separation measurement
+      const postStrafe = this.bot.entity.position;
+      const dispDx = postStrafe.x - preStrafe.x;
+      const dispDz = postStrafe.z - preStrafe.z;
+      const separation = dispDx * obsNx + dispDz * obsNz; // dot with obs normal; per spec: negative = moved away
+      this._log(`lateral recovery: separation=${separation.toFixed(2)}`);
+
+      const recheck2 = this._classifyBlocked();
+      const stillBlocked = (recheck2 === 'left' || recheck2 === 'right' || recheck2 === 'forward-left' || recheck2 === 'forward-right');
+
+      if (separation < -0.3 && !stillBlocked) {
+        this._resetFastStuckWindow();
+        if (session.goalDescriptor) {
+          this._resumeGoal(session.goalDescriptor);
+          session.state = SESSION_STATE.NAVIGATING;
+        } else {
+          session.state = SESSION_STATE.COMPLETE;
+        }
+        this._log('lateral recovery: resumed navigation');
+      } else {
+        this._log('lateral recovery: insufficient separation or still blocked, falling back to step');
+        await this._doStepRecoveryFSM(session, generation);
+      }
+    } catch (e) {
+      this._log(`lateral recovery error: ${e.message}`);
+      session.state = SESSION_STATE.FAILED;
+      // ensure fallback? but per spec, on error outer finally clears
+    }
+  }
+
+  async _doMineRecoveryFSM(session, generation) {
+    if (this._sessionGeneration !== generation) return;
+    if (!session || session.state !== SESSION_STATE.RECOVERY_ATOMIC) return;
+
+    try {
+      await this._pausePathfinder();
+
+      // Find block at bot face (+1.5 height)
+      const b = this.bot;
+      const facing = b.entity.position.offset(
+        -Math.sin(b.entity.yaw), 1.5, Math.cos(b.entity.yaw)
+      );
+      const block = b.blockAt(facing);
+
+      if (block && block.name !== 'air' && block.name !== 'cave_air' && block.name !== 'void_air' && b.canDigBlock(block)) {
+        this._log(`recovery: mining ${block.name}`);
+        try {
+          await b.dig(block, true);
+          this._log('recovery: mined successfully');
+          this._resetFastStuckWindow();
+          if (session.goalDescriptor) {
+            this._resumeGoal(session.goalDescriptor);
+            session.state = SESSION_STATE.NAVIGATING;
+          }
+          this._log('recovery: resumed after mining');
+        } catch (e) {
+          this._log(`recovery: dig failed (${e.message}), fallback to step`);
+          await this._doStepRecoveryFSM(session, generation);
+        }
+      } else {
+        this._log(`recovery: no mineable block, fallback to step`);
+        await this._doStepRecoveryFSM(session, generation);
+      }
+    } catch (e) {
+      this._log(`mine recovery error: ${e.message}`);
+      session.state = SESSION_STATE.FAILED;
+      await this._doStepRecoveryFSM(session, generation); // per spirit, but guard will catch gen
+    }
+  }
+
+  // Phase 2: Recovery entry point — dispatches to deterministic FSM based on _classifyBlocked
+  async _handleStuck(session) {
+    if (!session || session.state !== SESSION_STATE.STUCK_DETECTED) return;
+    if (this._activeRecovery) return; // already recovering
+    this._activeRecovery = true;
+    const generation = this._sessionGeneration;
+
+    try {
+      session.state = SESSION_STATE.RECOVERY_ATOMIC;
+      session.recoveryAttempt++;
+
+      const blocked = this._classifyBlocked();
+      this._log(`recovery attempt=${session.recoveryAttempt} direction=${blocked}`);
+
+      if (blocked === 'step' || blocked === 'unknown') {
+        await this._doStepRecoveryFSM(session, generation);
+      } else if (blocked === 'left' || blocked === 'right' || blocked === 'forward-left' || blocked === 'forward-right') {
+        await this._doLateralRecoveryFSM(session, generation, blocked);
+      } else if (blocked === 'forward') {
+        await this._doMineRecoveryFSM(session, generation);
+      } else {
+        await this._doStepRecoveryFSM(session, generation); // fallback
+      }
+    } catch (e) {
+      this._log(`recovery error: ${e.message}`);
+      session.state = SESSION_STATE.FAILED;
+    } finally {
+      this._activeRecovery = false;
+      this._clearControls();
+    }
   }
 
   dispose() {
@@ -465,6 +597,8 @@ export class MotionController {
       this._fastStuckInterval = null;
     }
     this._session = null;
+    this._activeRecovery = false;
+    this._recoverySpinDir = 1;
     this._active = false;
     this._recovering = false;
   }
