@@ -12,7 +12,7 @@ agents:
     type: local
     hermes_home: ~/.hermes
     port: 3003
-    agent_loop: false
+    agent_loop: true
     bot_config:
       minecraft:
         host: localhost

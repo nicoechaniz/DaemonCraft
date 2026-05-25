@@ -298,7 +298,8 @@ function checkEntityProximity() {
   const HOSTILES = ['zombie', 'skeleton', 'creeper', 'spider', 'witch', 'enderman', 'drowned', 'phantom', 'blaze', 'ghast', 'wither_skeleton', 'piglin_brute', 'cave_spider'];
   for (const [id, entity] of Object.entries(entities)) {
     if (entity === bot.entity) continue;
-    if (entity.type !== 'mob') continue;
+    // Hostile mobs can have type 'mob' or 'hostile' depending on Minecraft version
+    if (entity.type !== 'mob' && entity.type !== 'hostile') continue;
     const name = (entity.name || entity.mobType || entity.displayName || '').toLowerCase();
     if (!name) continue;
     const isHostile = HOSTILES.some(h => name.includes(h));
