@@ -44,8 +44,8 @@ class RunnerThread(threading.Thread):
     def push_event(self, event):
         self.event_queue.put(event)
 
-    def _post(self, path, data):
-        return requests.post(f'{self.bot_api}{path}', json=data, timeout=5).json()
+    def _post(self, path, data, timeout=30):
+        return requests.post(f'{self.bot_api}{path}', json=data, timeout=timeout).json()
 
     def _get(self, path):
         return requests.get(f'{self.bot_api}{path}', timeout=5).json()
