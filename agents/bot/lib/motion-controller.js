@@ -70,6 +70,7 @@ export class MotionController {
     this._sessionGeneration = 0; // monotonic counter
     this._activeRecovery = false;
     this._recoverySpinDir = 1; // alternates per recovery attempt (+1 / -1)
+    this._pendingGotoCleanup = null; // cleanup for active goto/gotoNear promise
     this._recoveryPromise = null;
     
     bot.on('goal_reached', () => {
@@ -192,12 +193,14 @@ export class MotionController {
       const onReached = () => {
         if (timer) clearTimeout(timer);
         this.bot.removeListener('goal_reached', onReached);
+        this._pendingGotoCleanup = null;
         session.state = SESSION_STATE.COMPLETE;
         this._session = null;
         resolve({ ok: true, result: 'Arrived at ' + Math.round(x) + ', ' + Math.round(y) + ', ' + Math.round(z) });
       };
       const onTimeout = () => {
         this.bot.removeListener('goal_reached', onReached);
+        this._pendingGotoCleanup = null;
         const p = this.bot.entity.position;
         session.state = SESSION_STATE.FAILED;
         this._session = null;
@@ -205,6 +208,16 @@ export class MotionController {
       };
       timer = setTimeout(onTimeout, timeoutMs);
       this.bot.once('goal_reached', onReached);
+
+      // Store cleanup for external cancellation (stop/mutexCancel/emergencyStop)
+      this._pendingGotoCleanup = () => {
+        if (timer) clearTimeout(timer);
+        this.bot.removeListener('goal_reached', onReached);
+        this._pendingGotoCleanup = null;
+        session.state = SESSION_STATE.CANCELLED;
+        this._session = null;
+        resolve({ ok: true, result: 'Navigation cancelled.' });
+      };
     });
   }
 
@@ -226,12 +239,14 @@ export class MotionController {
       const onReached = () => {
         if (timer) clearTimeout(timer);
         this.bot.removeListener('goal_reached', onReached);
+        this._pendingGotoCleanup = null;
         session.state = SESSION_STATE.COMPLETE;
         this._session = null;
         resolve({ ok: true, result: 'Arrived near ' + Math.round(x) + ', ' + Math.round(y) + ', ' + Math.round(z) });
       };
       const onTimeout = () => {
         this.bot.removeListener('goal_reached', onReached);
+        this._pendingGotoCleanup = null;
         const p = this.bot.entity.position;
         session.state = SESSION_STATE.FAILED;
         this._session = null;
@@ -239,6 +254,16 @@ export class MotionController {
       };
       timer = setTimeout(onTimeout, 15000);
       this.bot.once('goal_reached', onReached);
+
+      // Store cleanup for external cancellation (stop/mutexCancel/emergencyStop)
+      this._pendingGotoCleanup = () => {
+        if (timer) clearTimeout(timer);
+        this.bot.removeListener('goal_reached', onReached);
+        this._pendingGotoCleanup = null;
+        session.state = SESSION_STATE.CANCELLED;
+        this._session = null;
+        resolve({ ok: true, result: 'Navigation cancelled.' });
+      };
     });
   }
 
@@ -278,6 +303,13 @@ export class MotionController {
     this._sameSpotCount = 0;
     this._activeRecovery = false;
 
+    // Resolve pending goto promise immediately (N1 fix)
+    if (this._pendingGotoCleanup) {
+      const cleanup = this._pendingGotoCleanup;
+      this._pendingGotoCleanup = null;
+      cleanup();
+    }
+
     try { this.bot.pathfinder.setGoal(null); } catch {}
     try { this.bot.stopDigging(); } catch {}
     try { this.bot.clearControlStates(); } catch {}
@@ -300,6 +332,14 @@ export class MotionController {
 
     // Normal cancel path (not in atomic recovery)
     session.hardCancelled = true;
+
+    // Resolve pending goto promise immediately (N1 fix)
+    if (this._pendingGotoCleanup) {
+      const cleanup = this._pendingGotoCleanup;
+      this._pendingGotoCleanup = null;
+      cleanup();
+    }
+
     try { this.bot.pathfinder.setGoal(null); } catch {}
     this._clearControls();
   }
@@ -314,6 +354,14 @@ export class MotionController {
     }
     this._activeRecovery = false;
     this._recoveryPromise = null;
+
+    // Resolve pending goto promise immediately (N1 fix)
+    if (this._pendingGotoCleanup) {
+      const cleanup = this._pendingGotoCleanup;
+      this._pendingGotoCleanup = null;
+      cleanup();
+    }
+
     try { this.bot.pathfinder.setGoal(null); } catch {}
     this._clearControls();
     this._session = null;
