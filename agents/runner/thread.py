@@ -92,20 +92,22 @@ class RunnerThread(threading.Thread):
 
         if etype == 'entity_near':
             dist = event.get('distance', 999)
+            entity_type = event.get('entityType', 'hostile')
             if p['combat']['threshold'] < 0.5 or dist < 3:
-                return {'name': 'flee_from_hostile', 'params': {'direction': 'away', 'from_type': event.get('entityType')}}
+                # FLEE: use real 'flee' action (moves away from entityType using from param)
+                return {'name': 'flee', 'params': {'from': entity_type, 'distance': 8}}
             else:
-                return {'name': 'attack_nearest', 'params': {}}
+                return {'name': 'attack', 'params': {'target': entity_type}}
         elif etype in ('health_low', 'hunger_low'):
-            return {'name': 'eat_on_low_hp', 'params': {}}
+            return {'name': 'eat', 'params': {}}
         elif etype == 'voice_command' and event.get('intent') == 'emergency_stop':
-            return {'name': 'emergency_stop_all', 'params': {}}
+            return {'name': 'stop', 'params': {}}
         return None
 
     def _execute_action(self, action):
         name = action['name']
         params = action.get('params', {})
-        if name == 'emergency_stop_all':
+        if name == 'stop':
             self._post('/action/stop', {'requester': 'runner'})
         else:
             self._post(f'/action/{name}', params)
