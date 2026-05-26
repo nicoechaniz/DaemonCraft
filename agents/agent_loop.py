@@ -47,6 +47,11 @@ _METRICS_DIR_DEFAULT = Path.home() / ".hermes" / "metrics"
 METRICS_CAST = os.getenv("MC_METRICS_CAST", "")  # set by daemoncraft.py launcher
 METRICS_DIR = Path(os.getenv("MC_METRICS_DIR", str(_METRICS_DIR_DEFAULT)))
 
+# Phase 1 Cross-Layer Visibility: populated by main() when RunnerThread is started.
+# _build_body_session() reads reflex_history from here for heartbeat enrichment.
+_runner = None
+_last_l4_turn_ts = 0  # updated by wake_body() when L4 gets a turn
+
 
 def _emit_metric(kind: str, **fields) -> None:
     """Append a JSON line to ~/.hermes/metrics/<cast>/<date>.jsonl. Best-effort.
@@ -354,6 +359,14 @@ def _build_body_session(status: dict, reason: str = "idle") -> dict:
     if mutex.get("owner") == "runner":
         runner_reflex = f"RUNNER_ACTIVE (mode={mutex.get('mode', '?')})"
 
+    # Runner activity delta since L4's last active turn
+    runner_activity = {"total": 0, "detail": [], "summary": ""}
+    if _runner and _last_l4_turn_ts > 0:
+        try:
+            runner_activity = _runner.get_activity_summary(since_ts=_last_l4_turn_ts)
+        except Exception:
+            pass
+
     # Nearby hostiles with positions
     hostiles = combat_data.get("hostiles") or []
 
@@ -371,6 +384,7 @@ def _build_body_session(status: dict, reason: str = "idle") -> dict:
         "is_day": status.get("isDay"),
         "nearby_hostiles": hostiles,
         "runner_reflex": runner_reflex,
+        "runner_activity": runner_activity,
     }
 
 
@@ -394,6 +408,8 @@ def wake_body(reason: str, detail: str = "") -> bool:
         body_session = _build_body_session(status, reason=reason)
         ok = send_heartbeat_context(status, nearby, inventory, {}, events, body_session=body_session)
         if ok:
+            global _last_l4_turn_ts
+            _last_l4_turn_ts = now
             _LAST_HAZARD_ALERT[hazard_key] = now
         _log_event("wake_body_sent", reason=reason, detail=detail, ok=ok)
         return ok
@@ -853,6 +869,8 @@ def main():
         from agents.runner.event_poller import EventPoller
         runner = RunnerThread(bot_api_url=bot_api_url)
         runner.start()
+        global _runner
+        _runner = runner
         poller = EventPoller(bot_api_url=bot_api_url, runner_thread=runner)
         poller.start()
         print("[loop] Reactive RunnerThread + EventPoller started", flush=True)

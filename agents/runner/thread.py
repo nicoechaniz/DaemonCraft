@@ -1,4 +1,9 @@
 import threading, queue, time, requests, json, yaml, os
+from pathlib import Path
+
+RUNNER_STATE_DIR = os.getenv("MC_RUNNER_STATE_DIR", os.path.expanduser("~/.local/share/daemoncraft/lab"))
+RUNNER_STATE_FILE = os.path.join(RUNNER_STATE_DIR, "runner_state.json")
+MAX_REFLEX_HISTORY = 100  # detail=true returns up to this many entries
 
 class RunnerThread(threading.Thread):
     def __init__(self, bot_api_url, config_path=None):
@@ -20,7 +25,7 @@ class RunnerThread(threading.Thread):
 
     def _load_config(self, path):
         default = {
-            'combat': {'threshold': 0.4, 'flee_health': 6, 'preferred_weapon': 'iron_sword'},
+            'combat': {'threshold': 0.6, 'flee_health': 6, 'preferred_weapon': 'iron_sword'},
             'survival': {'eat_when_hunger_below': 6, 'avoid_lava': True},
             'social': {'loyalty': 0.9, 'follow_distance': 5}
         }
@@ -65,6 +70,73 @@ class RunnerThread(threading.Thread):
             'flee_failed': dict(self._flee_failed),
             'flee_steps': dict(self._flee_steps),
         }
+
+    def get_activity_summary(self, since_ts: float, detail: bool = False) -> dict:
+        """Synthesize reflex activity since a given timestamp.
+
+        Used by mc_interoception and heartbeat enrichment. More detail toward
+        the present, less toward the remote past. Capped at MAX_REFLEX_HISTORY.
+
+        Args:
+            since_ts: Unix timestamp — only reflexes after this are included.
+            detail: If True, return full history (capped). If False, last 3
+                    with full detail + aggregated summary for older entries.
+        """
+        recent = [r for r in self._reflex_history if r['at'] > since_ts]
+        total = len(recent)
+
+        if total == 0:
+            return {"total": 0, "detail": [], "summary": ""}
+
+        if detail:
+            # Full detail, capped
+            return {
+                "total": min(total, MAX_REFLEX_HISTORY),
+                "detail": [
+                    {"reflex": r['reflex'], "target": r['target'],
+                     "seconds_ago": round(time.time() - r['at'], 0)}
+                    for r in recent[-MAX_REFLEX_HISTORY:]
+                ],
+                "summary": "",
+            }
+
+        # Default: last 3 with full detail, rest aggregated by type
+        detail_items = []
+        for r in recent[-3:]:
+            detail_items.append({
+                "reflex": r['reflex'],
+                "target": r['target'],
+                "seconds_ago": round(time.time() - r['at'], 0),
+            })
+
+        by_type = {}
+        for r in recent[:-3]:
+            by_type[r['reflex']] = by_type.get(r['reflex'], 0) + 1
+        summary_parts = [f"{count}× {rtype}" for rtype, count in by_type.items()]
+
+        return {
+            "total": total,
+            "detail": detail_items,
+            "summary": ", ".join(summary_parts) if summary_parts else "",
+        }
+
+    def _write_state(self):
+        """Write runner reflex state to shared file for interoception endpoint."""
+        try:
+            Path(RUNNER_STATE_DIR).mkdir(parents=True, exist_ok=True)
+            payload = {
+                "active_reflex": self._active_reflex,
+                "last_reflex_at": self._last_reflex_at,
+                "reflex_history": self._reflex_history,
+                "updated_at": time.time(),
+            }
+            # Atomic write
+            tmp = f"{RUNNER_STATE_FILE}.tmp"
+            with open(tmp, 'w') as f:
+                json.dump(payload, f)
+            os.replace(tmp, RUNNER_STATE_FILE)
+        except Exception:
+            pass  # best-effort; interoception falls back to empty
 
     def _post(self, path, data, timeout=5):
         """POST and return JSON response. For mutex ops that need the result."""
@@ -306,8 +378,9 @@ class RunnerThread(threading.Thread):
             'target': params.get('target') or params.get('from') or '',
             'at': time.time(),
         })
-        if len(self._reflex_history) > 10:
-            self._reflex_history = self._reflex_history[-10:]
+        if len(self._reflex_history) > MAX_REFLEX_HISTORY:
+            self._reflex_history = self._reflex_history[-MAX_REFLEX_HISTORY:]
+        self._write_state()
 
         if name == 'stop':
             self._post('/action/stop', {'requester': 'runner'})
