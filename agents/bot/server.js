@@ -2435,14 +2435,12 @@ async collect({ block, count = 1 }) {
       throw new Error(`No ${target || 'hostile mob'} found nearby. ${hint} Try specifying a different target or explore further.`);
     }
 
-    // Attack: melee only, no pathfinding (runner handles re-approach per tick)
-    // If entity > 3m away, return out-of-range so runner re-evaluates next tick
-    const distToEntity = entity.position.distanceTo(b.entity.position);
-    if (distToEntity > 3.5) {
-      return { result: `Entity ${entity.name || target} out of melee range (${fmt(distToEntity)}m). Runner will re-engage.` };
+    // Approach and attack
+    if (entity.position.distanceTo(b.entity.position) > 3) {
+      if (b.motion) await b.motion.gotoNear(entity.position.x, entity.position.y, entity.position.z, 2);
     }
     await b.attack(entity);
-    return { result: `Attacked ${entity.name || target} (${fmt(distToEntity)}m away)` };
+    return { result: `Attacked ${entity.name || target} (${fmt(entity.position.distanceTo(b.entity.position))}m away)` };
   },
 
   async eat() {
