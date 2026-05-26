@@ -253,9 +253,9 @@ class RunnerThread(threading.Thread):
                 if still_near:
                     if h < 8 and self._has_food():
                         self._post_fire('/action/eat', {})
-                    else:
-                        # health ok → counter-attack
-                        self._post_fire('/action/attack', {'target': entity_type})
+                    # No counter-attack: let next entity_near event decide.
+                    # attack() does gotoNear which causes the bot to chase,
+                    # not what we want after a micro-step flee.
                 else:
                     # clear of threat — reset step counter
                     self._flee_steps[entity_type] = 0
@@ -317,11 +317,17 @@ class RunnerThread(threading.Thread):
             has_food = self._has_food()
             health = float(event.get('health', self._last_health or 20))
 
+            # DEBUG: log every decision
+            print(f"[runner-debug] _select_action: etype={etype} entity={entity_type} dist={dist} "
+                  f"has_weapon={has_weapon} has_food={has_food} health={health} "
+                  f"threshold={p['combat']['threshold']}", flush=True)
+
             # Prefer eat over flee if health low + food available (let auto-eat plugin or explicit eat recover)
             if health < 8 and has_food:
                 if entity_type:
                     self._flee_steps[entity_type] = 0
                     self._flee_failed[entity_type] = 0
+                print(f"[runner-debug] → EAT (health={health} < 8)", flush=True)
                 return {'name': 'eat', 'params': {}}
 
             # Flee: no weapon, cowardly personality, or flee-fail cascade
@@ -329,6 +335,7 @@ class RunnerThread(threading.Thread):
                 not has_weapon or
                 p['combat']['threshold'] < 0.5
             )
+            print(f"[runner-debug] must_flee={must_flee} (not has_weapon={not has_weapon}, threshold<0.5={p['combat']['threshold'] < 0.5})", flush=True)
 
             # Anti-flee-chain: if we fled recently and hostile is >6m, attack instead
             if must_flee and time.time() - self._last_flee_at < 4.0 and dist > 6:
@@ -345,12 +352,14 @@ class RunnerThread(threading.Thread):
             if must_flee and entity_type:
                 self._flee_positions[entity_type] = None
                 self._flee_steps[entity_type] = flee_step + 1
+                print(f"[runner-debug] → FLEE from {entity_type} (step={self._flee_steps[entity_type]})", flush=True)
                 return {'name': 'flee', 'params': {'from': entity_type, 'distance': 8}}
 
             # Fight: attack (goto + hit), re-triggers on next entity_near event
             if entity_type:
                 self._flee_failed[entity_type] = 0
                 self._flee_steps[entity_type] = 0
+                print(f"[runner-debug] → ATTACK {entity_type}", flush=True)
                 return {'name': 'attack', 'params': {'target': entity_type}}
             # taking_damage without known entity_type: just attack nearest
             return {'name': 'attack', 'params': {'target': ''}}

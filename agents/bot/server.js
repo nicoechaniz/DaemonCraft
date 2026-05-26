@@ -760,8 +760,12 @@ async function createBotImpl() {
         if (!lastPos) { lastPos = pos.clone(); return; }
         const dist = pos.distanceTo(lastPos);
         if (dist > 5) {
-          // Teleported — central stop: motion, runner events, mutex
-          if (bot && bot.motion) { bot.motion.stop().catch(() => {}); }
+          // Teleported — nuclear stop: motion, pathfinder, control states, events, mutex
+          try {
+            if (bot && bot.motion) { bot.motion.stop().catch(() => {}); }
+            if (bot && bot.pathfinder) { bot.pathfinder.setGoal(null); }
+            if (bot) { bot.clearControlStates(); }
+          } catch (e) { log(`Teleport stop error: ${e.message || e}`); }
           runnerEventBuffer = [];
           if (bot && bot.bodyMutex) { bot.bodyMutex.emergencyStop('teleport').catch(() => {}); }
           if (currentTask && currentTask.status === 'running') {
@@ -2412,23 +2416,38 @@ async collect({ block, count = 1 }) {
     // Auto-equip best weapon (single source: combat-data.js)
     await equipBestWeapon(b);
 
-    // Hostile detection via combat-data.js
+    // Hostile detection via combat-data.js.
+    // IMPORTANT: only choose attackable living entities. A generic fallback that
+    // includes items can kick the bot with invalid_entity_attacked.
     const rawEnts = Object.values(b.entities).filter(e => e !== b.entity);
     const visible = filterEntitiesFairPlay(rawEnts);
+    const nameOf = (e) => (e.name || e.mobType || e.displayName || '').toLowerCase();
+    const distToBot = (e) => b.entity.position.distanceTo(e.position);
+    const byDistance = (a, c) => distToBot(a) - distToBot(c);
+    const isAttackableLivingEntity = (e) => {
+      if (!e?.position) return false;
+      const name = nameOf(e);
+      if (!name || name === 'item' || name === 'experience_orb') return false;
+      if (e.type === 'player') return false;
+      return e.type === 'hostile' || e.type === 'mob' || isHostileName(name);
+    };
+    const attackable = visible.filter(isAttackableLivingEntity);
+
     let entity;
-    if (target) {
-      // If caller provides a target name (from runner's entity_near or taking_damage),
-      // search by name match FIRST, then fall back to nearest non-player entity.
-      // If something is hitting us, it's hostile by definition.
-      entity = visible.find(e => (e.name || '').toLowerCase().includes(target.toLowerCase()));
-      if (!entity) {
-        // Fallback: nearest non-player entity within 8m (the one that hit us)
-        entity = visible
-          .filter(e => e.position && b.entity.position.distanceTo(e.position) < 8)
-          .sort((a, c) => b.entity.position.distanceTo(a.position) - b.entity.position.distanceTo(c.position))[0];
-      }
+    const wanted = (target || '').toLowerCase();
+    const isGenericTarget = !wanted || wanted === 'hostile' || wanted === 'mob' || wanted === 'entity';
+    if (!isGenericTarget) {
+      // Prefer exact target type, then substring matches, always nearest first.
+      const exact = attackable.filter(e => nameOf(e) === wanted).sort(byDistance);
+      const partial = attackable
+        .filter(e => nameOf(e) !== wanted && (nameOf(e).includes(wanted) || wanted.includes(nameOf(e))))
+        .sort(byDistance);
+      entity = exact[0] || partial[0];
     } else {
-      entity = visible.find(e => HOSTILE_NAMES.includes((e.name || '').toLowerCase()));
+      // taking_damage has no reliable entity type; hit the nearest attackable
+      // living entity, preferably within melee/reactive range.
+      entity = attackable.filter(e => distToBot(e) < 8).sort(byDistance)[0]
+        || attackable.sort(byDistance)[0];
     }
     if (!entity) {
       const hint = nearbyEntitiesHint(b);
@@ -3712,7 +3731,7 @@ function respond(res, status, data) {
     if (!res._verbose_quiet) {
       const bodyStr = JSON.stringify(data);
       const snippet = bodyStr.length > 150 ? bodyStr.slice(0, 150) + '…' : bodyStr;
-      console.error(`[res] ${methodPath} → ${status} ${snippet}`);
+      console.error(`[res] ${new Date().toISOString()} ${methodPath} → ${status} ${snippet}`);
     }
   }
   res.writeHead(status, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
@@ -3740,7 +3759,7 @@ const httpServer = http.createServer(async (req, res) => {
     const isQuiet = req.method === 'GET' && QUIET_GETS.has(path);
     if (isQuiet) res._verbose_quiet = true;
     if (!isQuiet) {
-      console.error(`[req] ${req.method} ${path} (${req.socket?.remoteAddress || ''})`);
+      console.error(`[req] ${new Date().toISOString()} ${req.method} ${path} (${req.socket?.remoteAddress || ''})`);
     }
   }
 
@@ -4320,7 +4339,7 @@ const httpServer = http.createServer(async (req, res) => {
       const body = await parseBody(req);
       if (process.env.BOT_VERBOSE) {
         const snippet = JSON.stringify(body).slice(0, 150);
-        console.error(`[req-body] ${snippet}${snippet.length >= 150 ? '…' : ''}`);
+        console.error(`[req-body] ${new Date().toISOString()} ${snippet}${snippet.length >= 150 ? '…' : ''}`);
       }
 
       // ── Controller Mode — POST /controller/mode ──

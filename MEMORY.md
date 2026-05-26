@@ -1590,3 +1590,34 @@ MC_USERNAME=CompAII
 - The corresponding lab/local-agent template lives at `agents/SOUL-lab.md` and is referenced by `agents/casts/lab.yaml`.
 - Universal bot behavior improvements belong in `agents/SOUL-base.md`; lab/local-only rules belong in `agents/SOUL-lab.md`; CompAII-only identity belongs in `~/.hermes/SOUL_daemoncraft.md`.
 - Runtime-only SOUL edits are regressions. Keep runtime/module/template parity when improving embodied behavior.
+## SESSION RESTART — 2026-05-26 ~03:40 AM
+
+Debugging runner combat: bot attacks slimes but appears to flee from zombies.
+
+**State:**
+- Branch: feat/motion-refactor (DaemonCraft), feat/daemoncraft (hermes-agent)
+- Allay disguise removed — can see actual animations now
+- agent_loop.py has `[runner-debug]` prints showing runner decisions
+- Runner chooses ATTACK for zombies (must_flee=False, threshold=0.9 from ~/.config/daemoncraft/runner.yaml)
+- Counter-attack post-flee removed from _handle_critical and _handle_high
+- Nuclear TP stop in server.js move handler (pathfinder.setGoal + clearControlStates)
+- Timestamps added to bot req/res/body logs
+- mc_interoception tool live, runner_state.json writes on every reflex
+- /interoception endpoint with summary + detail modes
+
+**What Nico needs to say to resume:**
+"Volvamos a debuggear el runner — ataca slimes pero no zombies. Está sin disfraz. Revisá los logs de runner-debug."
+
+**Modified files (uncommitted changes):**
+- agents/runner/thread.py (debug prints, counter-attack removal)
+- agents/bot/server.js (timestamps, nuclear TP stop)
+
+**Follow-up finding after GPT-5.5 switch (2026-05-26 ~03:48):**
+- Concrete root cause found in `attack()` target selection, not `_select_action()`:
+  - `target="zombie"` used first substring match, unsorted, so it could attack a far `zombie_villager` instead of the nearest exact zombie.
+  - generic `target="hostile"` fallback included non-player items; bot attacked `item` and got kicked with `invalid_entity_attacked`.
+- Patched `agents/bot/server.js` to filter attackable living entities only, prefer exact nearest match, then partial nearest, and exclude `item`/`experience_orb`/players.
+- Restarted `daemoncraft-cast`, set controller mode back to lab, controlled-spawn verified:
+  - slime: runner-debug → ATTACK slime; bot log → `Attacked slime (2–3m away)`.
+  - zombie: runner-debug → ATTACK zombie; bot log → `Attacked zombie (2–2.9m away)`.
+  - no new `invalid_entity_attacked` kick during verification.
