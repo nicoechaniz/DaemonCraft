@@ -446,17 +446,18 @@ def _poll_shared_state() -> None:
     # Fase 2: New quantified intent submission
     if os.path.exists(executor_path):
         try:
+            _log_event("executor", msg=f"DEBUG: executor_path exists, sys.path[0]={sys.path[0]}")
             with open(executor_path) as f:
                 data = _json_mod.load(f)
             intent_type = data.get("intent_type", "")
             target = int(data.get("target_count", 0))
             verify = data.get("verify_spec")
             if intent_type and target > 0 and _executor:
-                from agents.plan_schema import VerifySpec as _VS, VerifyType as _VT
+                from plan_schema import VerifySpec as _VS, VerifyType as _VT
                 vs = None
                 if verify and verify.get("type"):
                     vs = _VS(
-                        type=_VT(verify["type"]),
+                        type=_VT(verify["type"].lower()),
                         item=verify.get("item", ""),
                         count=int(verify.get("count", 0)),
                     )
@@ -477,7 +478,7 @@ def _poll_shared_state() -> None:
                 data = _json_mod.load(f)
             manifest_dict = data.get("manifest")
             if manifest_dict and _orchestrator:
-                from agents.plan_schema import PlanManifest as _PM
+                from plan_schema import PlanManifest as _PM
                 manifest = _PM.from_dict(manifest_dict)
                 _orchestrator.validate_manifest(manifest)
                 outcome = _orchestrator.execute_plan(manifest)
