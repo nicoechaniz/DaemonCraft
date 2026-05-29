@@ -23,11 +23,18 @@ Design constraints (from task):
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+# Ensure repo root is importable so 'agents.plan_schema' resolves
+_repo_root = Path(__file__).resolve().parent.parent
+if str(_repo_root) not in sys.path:
+    sys.path.insert(0, str(_repo_root))
+
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
-from plan_schema import PlanManifest, SubPlan, VerifySpec, VerifyType
-from plan_executor import QuantifiedIntentExecutor, get_executor
+from agents.plan_schema import PlanManifest, SubPlan, VerifySpec, VerifyType
+from agents.plan_executor import QuantifiedIntentExecutor, get_executor
 
 
 @dataclass
@@ -170,7 +177,9 @@ class PlanOrchestrator:
 
             state.status = "running"
 
-            # Dispatch to embodied (Gemma). Real path goes through /intent → Gemma → actions.
+            # Dispatch to embodied (Gemma). This returns after Gemma finishes PLANNING,
+            # but the actual execution (mining, moving) happens asynchronously on the bot.
+            # We mark as "dispatched" and let heartbeat ticks verify progress later.
             disp = self._dispatch_intent(sp.intent)
             ok = bool(disp and disp.get("ok", True))
 
@@ -190,37 +199,17 @@ class PlanOrchestrator:
                     return self._build_escalation(manifest, sp.order, err, executed_orders, results)
                 continue
 
-            # For unit-test / sync execution path: immediately verify via executor.
-            # In real agent_loop usage, completion is observed later (on_intent_complete called
-            # by loop when embodied reports success for this sub-intent).
-            verify_ok = self._executor.on_intent_complete()
-
-            if verify_ok:
-                state.status = "done"
-                state.result = {"ok": True, "disp": disp}
-                executed_orders.append(sp.order)
-                results.append({"order": sp.order, "intent": sp.intent, "ok": True})
-                self._log(f"[orchestrator] done order={sp.order}: {sp.intent}")
-            else:
-                state.status = "failed"
-                err = {
-                    "error_type": "verify_failed",
-                    "order": sp.order,
-                    "intent": sp.intent,
-                    "verify": sp.verify.to_dict(),
-                    "details": "VerifySpec not satisfied after dispatch",
-                }
-                state.error = err
-                self._executor.on_intent_fail(err)
-                results.append({"order": sp.order, "intent": sp.intent, "ok": False, "error": err})
-
-                if manifest.abort_on_failure:
-                    return self._build_escalation(manifest, sp.order, err, executed_orders, results)
+            # Dispatched successfully — verify will happen async on heartbeat ticks
+            state.status = "dispatched"
+            state.result = {"ok": True, "disp": disp}
+            results.append({"order": sp.order, "intent": sp.intent, "ok": True, "status": "dispatched"})
+            self._log(f"[orchestrator] dispatched order={sp.order}: {sp.intent}")
 
         # All processed
+        dispatched = sum(1 for s in self._subplan_states.values() if s.status == "dispatched")
         done_count = sum(1 for s in self._subplan_states.values() if s.status == "done")
         total = len(manifest.sub_plans)
-        status = "completed" if done_count == total else "partial"
+        status = "completed" if done_count == total else ("dispatched" if dispatched + done_count == total else "partial")
 
         return {
             "status": status,
@@ -230,8 +219,32 @@ class PlanOrchestrator:
             "previous_error": None,
             "results": results,
             "done": done_count,
+            "dispatched": dispatched,
             "total": total,
         }
+
+    def sync_progress(self) -> dict[str, Any] | None:
+        """Called from heartbeat to sync executor state → orchestrator state.
+
+        If the executor cleared its active intent (verify passed via
+        _check_executor_resume), mark the dispatched sub-plan as done.
+        Returns update dict or None if nothing changed.
+        """
+        if not self._last_manifest:
+            return None
+
+        # If executor has no active intent but we have dispatched sub-plans,
+        # the executor must have completed (verified via _check_executor_resume)
+        if not self._executor.has_active_intent():
+            changed = False
+            for order, state in self._subplan_states.items():
+                if state.status == "dispatched":
+                    state.status = "done"
+                    self._log(f"[orchestrator] sync: order={order} → done (executor cleared)")
+                    changed = True
+            if changed:
+                return self.get_last_result()
+        return None
 
     def _build_escalation(
         self,

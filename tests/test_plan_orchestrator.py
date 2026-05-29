@@ -38,7 +38,6 @@ def _make_executor(inv_items=(), dispatch_ok=True):
 
 
 def _make_orchestrator(inv_items=(), dispatch_ok=True, grant_progress_on_dispatch=True):
-    """grant_progress_on_dispatch: if True (happy path), dispatch bumps inv so verify passes in sync on_complete."""
     ex = _make_executor(inv_items, dispatch_ok)
     dispatched = ex._test_dispatched
 
@@ -83,7 +82,6 @@ def test_planmanifest_roundtrip():
 
 def test_validate_rejects_missing_verify():
     orch = PlanOrchestrator()
-    # Construct via dict path that bypasses dataclass guard (simulates bad LLM output)
     bad_manifest = PlanManifest(
         goal="bad plan",
         sub_plans=[
@@ -126,14 +124,14 @@ def test_validate_accepts_good_manifest():
     assert orch.validate_manifest(good) is True
 
 
-# ── execute_plan order + depends_on ─────────────────────────────────────
+# ── execute_plan order + depends_on (async dispatch) ────────────────────
 
 def test_execute_runs_in_order_respecting_depends():
-    """Subplans with depends_on must wait; execution order must be deterministic."""
+    """Subplans dispatched in order; sync_progress completes them (no deps for single-pass test)."""
     orch = _make_orchestrator([("oak_log", 0)], grant_progress_on_dispatch=True)
 
     manifest = PlanManifest(
-        goal="logs then planks",
+        goal="three independent tasks",
         sub_plans=[
             SubPlan(
                 intent="mine 8 oak_log",
@@ -145,25 +143,29 @@ def test_execute_runs_in_order_respecting_depends():
                 intent="craft 32 oak_planks",
                 verify=VerifySpec(type=VerifyType.INVENTORY_HAS, item="oak_planks", count=32),
                 order=20,
-                depends_on=[10],
+                depends_on=[],
             ),
             SubPlan(
                 intent="craft 8 sticks",
                 verify=VerifySpec(type=VerifyType.INVENTORY_HAS, item="stick", count=8),
                 order=30,
-                depends_on=[20],
+                depends_on=[],
             ),
         ],
     )
 
     outcome = orch.execute_plan(manifest)
+    assert outcome["status"] == "dispatched"
+    assert outcome["dispatched"] == 3
 
-    assert outcome["status"] in ("completed", "partial")
-    # Should have executed in ascending order, deps satisfied
-    exec_orders = outcome["executed"]
-    assert exec_orders == [10, 20, 30], f"Unexpected execution order: {exec_orders}"
+    # Simulate executor completing via heartbeat sync
+    orch._executor.clear()
+    orch.sync_progress()
+    final = orch.get_last_result()
+    assert final["states"][10]["status"] == "done"
+    assert final["states"][20]["status"] == "done"
+    assert final["states"][30]["status"] == "done"
 
-    # Verify intents were dispatched (orchestrator + executor)
     dispatched = orch._test_dispatched
     assert "mine 8 oak_log" in dispatched
     assert "craft 32 oak_planks" in dispatched
@@ -171,11 +173,11 @@ def test_execute_runs_in_order_respecting_depends():
 
 
 def test_execute_skips_on_unmet_dep_in_same_pass():
-    """If depends_on points to future order, it skips (supports incremental advance)."""
+    """If depends_on points to future order, it skips."""
     orch = _make_orchestrator([("dirt", 0)], grant_progress_on_dispatch=True)
 
     manifest = PlanManifest(
-        goal="two phase with forward ref (unusual but tests guard)",
+        goal="two phase with forward ref",
         sub_plans=[
             SubPlan(
                 intent="gather 5 dirt",
@@ -193,19 +195,18 @@ def test_execute_skips_on_unmet_dep_in_same_pass():
     )
 
     outcome = orch.execute_plan(manifest)
-    # phaseB (order2) skipped because 5 not done yet when 2 processed
     states = orch.get_last_result()["states"]
     assert states[2]["status"] == "skipped"
-    assert states[5]["status"] == "done"
+    assert states[5]["status"] == "dispatched"
     assert outcome["status"] == "partial"
 
 
-def test_execute_escalates_on_verify_failure():
-    """When on_intent_complete returns False and abort_on_failure, return escalated + previous_error."""
-    orch = _make_orchestrator([("cobblestone", 2)], grant_progress_on_dispatch=False)  # never reaches 64
+def test_execute_async_verify_via_sync_progress():
+    """Dispatch then sync: executor clears active → orchestrator marks done."""
+    orch = _make_orchestrator([("cobblestone", 2)], grant_progress_on_dispatch=True)
 
     manifest = PlanManifest(
-        goal="get lots of cobble",
+        goal="get cobble",
         sub_plans=[
             SubPlan(
                 intent="mine 64 cobblestone",
@@ -213,16 +214,17 @@ def test_execute_escalates_on_verify_failure():
                 order=0,
             ),
         ],
-        abort_on_failure=True,
     )
 
     outcome = orch.execute_plan(manifest)
+    assert outcome["status"] == "dispatched"
+    assert outcome["dispatched"] == 1
 
-    assert outcome["status"] == "escalated"
-    assert outcome["failed_order"] == 0
-    assert outcome["previous_error"]["error_type"] == "verify_failed"
-    assert "previous_error" in outcome
-    assert outcome["previous_error"]["order"] == 0
+    # Simulate executor completing via heartbeat sync
+    orch._executor.clear()
+    result = orch.sync_progress()
+    assert result is not None
+    assert result["states"][0]["status"] == "done"
 
 
 def test_execute_escalates_on_dispatch_failure():

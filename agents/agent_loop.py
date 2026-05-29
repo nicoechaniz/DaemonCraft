@@ -33,6 +33,9 @@ if str(HERMES_DIR) not in sys.path:
 
 # Import plan schema from same directory (Autonomia Corporal)
 _AGENTS_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _AGENTS_DIR.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 if str(_AGENTS_DIR) not in sys.path:
     sys.path.insert(0, str(_AGENTS_DIR))
 
@@ -452,7 +455,7 @@ def _poll_shared_state() -> None:
             target = int(data.get("target_count", 0))
             verify = data.get("verify_spec")
             if intent_type and target > 0 and _executor:
-                from plan_schema import VerifySpec as _VS, VerifyType as _VT
+                from agents.plan_schema import VerifySpec as _VS, VerifyType as _VT
                 vs = None
                 if verify and verify.get("type"):
                     vs = _VS(
@@ -477,7 +480,7 @@ def _poll_shared_state() -> None:
                 data = _json_mod.load(f)
             manifest_dict = data.get("manifest")
             if manifest_dict and _orchestrator:
-                from plan_schema import PlanManifest as _PM
+                from agents.plan_schema import PlanManifest as _PM
                 manifest = _PM.from_dict(manifest_dict)
                 _orchestrator.validate_manifest(manifest)
                 outcome = _orchestrator.execute_plan(manifest)
@@ -910,6 +913,9 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 7):
                 _poll_shared_state()
                 # Fase 2: check if executor needs to resume after L2 interrupt
                 _check_executor_resume()
+                # Fase 3: sync orchestrator progress (executor → orchestrator state)
+                if _orchestrator:
+                    _orchestrator.sync_progress()
                 print(f"[loop] Turn {turn_count} — idle heartbeat...", flush=True)
                 turn_in_progress.set()
                 send_agent_heartbeat(next_turn_in=None, turn_in_progress=True)
@@ -976,8 +982,8 @@ def main():
     # EventPoller bridges bot /events (from physicsTick producers) → RunnerThread.push_event()
     bot_api_url = MC_API_URL
     try:
-        from runner.thread import RunnerThread
-        from runner.event_poller import EventPoller
+        from agents.runner.thread import RunnerThread
+        from agents.runner.event_poller import EventPoller
         runner = RunnerThread(bot_api_url=bot_api_url)
         runner.start()
         global _runner
@@ -987,7 +993,7 @@ def main():
         print("[loop] Reactive RunnerThread + EventPoller started", flush=True)
 
         # Fase 2: Quantified Intent Executor (cross-layer resume after L2 preemption)
-        from plan_executor import QuantifiedIntentExecutor, set_executor
+        from agents.plan_executor import QuantifiedIntentExecutor, set_executor
         _exec = QuantifiedIntentExecutor(
             fetch_inventory=lambda: (fetch_bot_inventory() or {}),
             dispatch_intent=lambda intent: call_embodied(intent),
@@ -999,7 +1005,7 @@ def main():
         print("[loop] QuantifiedIntentExecutor initialized", flush=True)
 
         # Fase 3: PlanOrchestrator (additive, safe if plan_schema changes)
-        from plan_orchestrator import PlanOrchestrator
+        from agents.plan_orchestrator import PlanOrchestrator
         _orch = PlanOrchestrator(
             executor=_exec,  # share the same executor instance
             dispatch_intent=lambda intent: call_embodied(intent),

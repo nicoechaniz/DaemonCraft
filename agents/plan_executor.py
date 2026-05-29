@@ -22,11 +22,18 @@ Design constraints respected:
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+# Ensure repo root is importable
+_repo_root = Path(__file__).resolve().parent.parent
+if str(_repo_root) not in sys.path:
+    sys.path.insert(0, str(_repo_root))
+
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
-from plan_schema import VerifySpec, VerifyType
+from agents.plan_schema import VerifySpec, VerifyType
 
 
 @dataclass
