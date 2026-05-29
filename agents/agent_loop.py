@@ -522,7 +522,7 @@ def wake_body(reason: str, detail: str = "") -> bool:
         return False
 
 
-def call_embodied(intent: str, deadline_s: int = 20, previous_error: dict | None = None) -> dict:
+def call_embodied(intent: str, deadline_s: int = 60, previous_error: dict | None = None) -> dict:
     """Call POST /intent on the embodied service. Retries with backoff."""
     last_error = None
     for attempt in range(_MAX_EMBODIED_RETRIES + 1):
