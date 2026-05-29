@@ -9,24 +9,28 @@ With `allowSprinting=true`, the bot got stuck on 1-block step-ups (`direction=st
 1. **Phantom node advancement:** `getReached` used `Math.abs(delta.y) < 1`, which is true mid-jump (e.g. delta.y = 0.58 on tick 1). The pathfinder advanced `path[0]` while the bot was still in the air.
 2. **Sprint-jump timing:** `canSprintJump` returns true geometrically, but at sprint speed the bot crosses the optimal launch window (~0.7–1.2 b from edge) in 2 ticks. Collision zeros horizontal velocity during rise, so the bot crawls forward and lands short.
 
-### Fixes (both needed together; neither alone is sufficient)
-**File:** `agents/bot/node_modules/mineflayer-pathfinder/lib/physics.js`
-- `getReached`: tightened Y tolerance from `< 1` to `< 0.25`
+### Final Fix (committed)
+**Strategy:** Disable `canSprintJump` entirely. Sprint only on flat straight lines.
 
 **File:** `agents/bot/node_modules/mineflayer-pathfinder/index.js`
-- `monitorMovement` sprint-jump branch: gated with `(path[0].y - p.y) <= 0.5`
-- Forces step-ups to fall through to `canWalkJump` (walk+jump, no sprint)
+- `monitorMovement` sprint-jump branch: disabled with `false && ...`
+- Any jump falls through to `canWalkJump` (walk+jump, no sprint)
+
+**File:** `agents/bot/node_modules/mineflayer-pathfinder/lib/physics.js`
+- `getReached`: kept original value `< 1` (reverted from `< 0.25`)
 
 **File:** `agents/bot/server.js`
-- `allowSprinting = true` (was `false` since bounding-box fix session)
+- `allowSprinting = true` — sprint on flat straight lines, walk on jumps
 
-### Test Results
-- Target1 (54,84,-53) → Target2 (62,84,-48) → Target3 (68,84,-48): successful
-- No `path_reset reason="stuck"` events in recent logs
-- Zero stuck states on repeated round trips
+**What didn't work:**
+- `getReached < 0.25` alone → still stuck on steps
+- `getReached < 0.25` + sprint guard `(path[0].y - p.y) <= 0.5` → worked for forward trip but failed on return; sprint guard only prevents sprint on step-ups, not barriers/jumps at same Y level
+- Disabling `canSprintJump` alone was insufficient with original getReached when bot started near obstacles
 
-### Key Learning
-`getReached` alone did NOT fix the issue. The sprint guard on step-ups was required. Both patches are persisted via `patch-package` in the same `mineflayer-pathfinder+2.4.5.patch` file.
+**What works:**
+- Kill `canSprintJump` entirely + `getReached` at original `< 1` + `allowSprinting=true`
+- Full round trip (2→1→2→3) passes, zero stuck events
+- Bot sprints on flats, walks on all jumps
 
 ---
 
