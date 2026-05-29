@@ -1,6 +1,59 @@
 # DaemonCraft Project Memory
 
-## Session State — 2026-05-29 (Cross-Layer Coordination Fase 2 + Fase 3 — COMPLETED)
+## Session State — 2026-05-29 (Autonomous Play Setup ✅)
+
+### What we achieved
+- **Autonomous loop pipeline**: agent_loop → heartbeat → gateway WS → wake_up → CompAII session → mc_* tools
+- Controller mode: `autonomous`
+- Model: `deepseek-v4-flash` via `platforms.daemoncraft.extra.profile` (not set up, using default from systemd)
+- **Gateway fix**: `DAEMONCRAFT_ALLOWED_USERS=system` added to systemd service Environment
+- **Deploy fix**: `~/.hermes/hermes-agent` had corrupted minecraft_tools.py (merge conflict markers + line-number corruption). Reset to `origin/main`, re-merged `feat/daemoncraft` cleanly.
+- **aiohttp fix**: Gateway venv was missing aiohttp — installed via `~/.hermes/hermes-agent/venv/bin/pip`
+
+### Curriculum
+- `~/.hermes/SOUL_daemoncraft.md` now includes "Autonomous Play — Minecraft Curriculum" section
+- 6 tiers: Wood Age → Shelter → Mining/Iron → Diamond/Enchanting → Nether → The End
+- Turn protocol: no plan → SET ONE NOW, then act. NEVER wait for a player.
+- `mc_chat` announcements on tier progression for Nico to read later
+
+### Wake-up prompt fix
+- `gateway/platforms/daemoncraft.py` line 607: changed from "Decide ... or wait" to "START following your autonomous curriculum immediately. Take ONE concrete action now. Do not wait."
+- Workspace: committed to `feat/daemoncraft`
+- Deploy: `~/.hermes/hermes-agent` has the change live
+
+### Verified circuit
+- Gateway WebSocket connected to bot :3003 (PID visible via ss -tnp)
+- Agent_loop sends heartbeats → gateway processes → DaemonCraft session wakes up
+- CompAII autonomous session IS acting (verified via Minecraft chat messages)
+- When Nico is nearby: follows him. When Nico is gone: curriculum kicks in.
+
+### Files modified this session
+| File | Change |
+|------|--------|
+| `~/.hermes/SOUL_daemoncraft.md` | Added Autonomous Curriculum section |
+| `~/.hermes/hermes-agent/gateway/platforms/daemoncraft.py` | Proactive wake-up prompt |
+| `~/.hermes/hermes-agent/tools/minecraft_tools.py` | Fixed merge conflicts (then reset) |
+| `~/.config/systemd/user/hermes-gateway.service` | Added `DAEMONCRAFT_ALLOWED_USERS=system` |
+| `~/.hermes/.env` | Added `,system` to DAEMONCRAFT_ALLOWED_USERS |
+| `~/Projects/hermes-agent/gateway/platforms/daemoncraft.py` | Backported wake-up prompt |
+
+### Service state (auto-starts on boot)
+- `daemoncraft.service` → Minecraft server
+- `daemoncraft-cast.service` → bot (node server.js :3003) + agent_loop.py
+- `hermes-gateway.service` → gateway (WebSocket to :3003, Telegram, DaemonCraft)
+- `embodied-service.service` → Gemma-Andy (:7790)
+
+### Known issues
+- Gateway logs daemoncraft platform at DEBUG level — don't expect WARNING/INFO in journal
+- Memory full (9,942/10,000 chars) — needs cleanup
+- `mc_plan` starts empty (goal: null) — curriculum now auto-creates it
+- Wake-up prompt fix is in deploy but NOT committed to deploy's git (deploy is on `main` with merge)
+
+### Git commits this session
+- DaemonCraft `feat/motion-refactor`: `fix(agent_loop): executor resume, orchestrator clear, async dispatch, logging timestamps`
+- Hermes-agent `feat/daemoncraft`: `fix(daemoncraft): proactive wake-up prompt — no plan → start curriculum`
+
+---
 
 ### Fase 2: Quantified Intent Executor ✅
 - **agents/plan_executor.py** (318 lines): QuantifiedIntentExecutor class
