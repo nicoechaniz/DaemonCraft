@@ -411,6 +411,46 @@ def check_hazards(status: dict) -> str | None:
     return None
 
 
+def _defend_against_ranged(status: dict) -> bool:
+    """If bot is taking ranged damage, identify attacker and neutralize it.
+    
+    Called from the health-drop handler (L3). Does NOT duplicate L2 runner
+    (which handles <3m threats). Focuses on ranged attackers (skeleton, pillager, etc.)
+    that can kill the bot while it ignores them.
+    
+    Returns True if a combat action was taken.
+    """
+    combat = _get_json("/combat").get("data", {})
+    hostiles = combat.get("hostiles", [])
+    if not hostiles:
+        return False
+    
+    # Ranged attackers first (can kill from distance without L2 triggering)
+    RANGED_TYPES = ["skeleton", "stray", "pillager", "witch", "blaze", "ghast", "phantom"]
+    
+    # Sort by distance
+    hostiles.sort(key=lambda h: float(h.get("distance", 999)))
+    
+    # Prefer ranged attackers
+    target = None
+    for h in hostiles:
+        htype = h.get("type", "").lower()
+        if any(r in htype for r in RANGED_TYPES):
+            target = h
+            break
+    
+    # Fallback: any hostile
+    if not target:
+        target = hostiles[0]
+    
+    tname = target.get("type", "unknown")
+    tdist = target.get("distance", "?")
+    print(f"[loop] RANGED DEFENSE: attacking {tname} at {tdist}m", flush=True)
+    
+    _post_json("/action/attack", {"target": tname})
+    return True
+
+
 # ═════════════════════════════════════════════════════════════════════════════════════════════════════════
 # Heartbeat loop
 # ═════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -934,6 +974,7 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 7):
 
     hazard = None
     reason = "idle"
+    status = None
     try:
         while True:
             global _IDLE_HEARTBEAT_COUNT
@@ -990,6 +1031,7 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 7):
                 max_hp = status.get("maxHealth", 20)
                 if detect_rapid_health_drop(health, max_hp):
                     print(f"[loop] RAPID HEALTH DROP: {health}/{max_hp}", flush=True)
+                    _defend_against_ranged(status)
                     # Stream export + event consumption on every tick
                     events_raw = read_and_clear_event_queue()
                     events_context = format_events_for_injection(events_raw)
