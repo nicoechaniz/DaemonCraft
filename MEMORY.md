@@ -1,5 +1,33 @@
 # DaemonCraft Project Memory
 
+## Session State — 2026-05-28 (Pathfinder Bounding Box Fix)
+
+### Problem
+The bot repeatedly got stuck against 1×1 columns and fences because `mineflayer-pathfinder`'s A* treated the bot as a point when validating diagonal moves. It allowed diagonal paths as long as **one** of the two cardinal adjacent blocks was clear, ignoring that the bot's 0.6×0.6 bounding box clips the corner of the solid block during the diagonal traversal.
+
+### Fix (committed on `feat/motion-refactor`)
+**File:** `agents/bot/node_modules/mineflayer-pathfinder/lib/movements.js` (persisted via `patch-package`)
+- In `getMoveDiagonal`, added a bounding-box guard after computing `blockC1` and `blockC2`:
+  ```js
+  if (blockC1.physical || blockC2.physical) return
+  ```
+- This rejects any diagonal move where either cardinal neighbor is a solid block (`physical === true`), forcing the pathfinder to route around corners via cardinal steps only.
+
+**Supporting changes:**
+- Added `patch-package` + `postinstall` script in `agents/bot/package.json` so the patch survives `npm install`.
+- Added `_recoveryEnabled = false` flag in `MotionController` to disable the recovery FSM during pathfinder debugging (recovery code preserved, not deleted).
+- Extended `path_update` logging in `server.js` to emit full path node sequences for diagnostics.
+
+### Test Results
+- Round-trip navigation between 3 targets with 1-block columns and 1-block gaps works reliably.
+- Path lengths increased (more nodes) but zero stuck states observed.
+- Recovery FSM remains disabled until we decide the pathfinder is robust enough to re-enable it.
+
+### Next Question
+Does this fix also resolve the `allowSprinting = false` requirement? With correct corner avoidance, the bot may no longer bump into block edges when sprinting, so we should test re-enabling `allowSprinting`.
+
+---
+
 ## Session State — 2026-05-25 (MotionController Refactor)
 
 ### Branch: feat/motion-refactor (base: b09a1e7 on feat/reactive-runner-phase1)
