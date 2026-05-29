@@ -908,6 +908,8 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 7):
                 _IDLE_HEARTBEAT_COUNT = 0
                 # Fase 2+3: poll shared state for new intent/plan submissions
                 _poll_shared_state()
+                # Fase 2: check if executor needs to resume after L2 interrupt
+                _check_executor_resume()
                 print(f"[loop] Turn {turn_count} — idle heartbeat...", flush=True)
                 turn_in_progress.set()
                 send_agent_heartbeat(next_turn_in=None, turn_in_progress=True)
