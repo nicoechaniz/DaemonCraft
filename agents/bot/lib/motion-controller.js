@@ -167,8 +167,6 @@ export class MotionController {
         const pt = pos.offset(dx, h, dz);
         const blk = b.blockAt(pt);
         if (blk && blk.name !== 'air' && blk.name !== 'cave_air' && blk.name !== 'void_air' && blk.boundingBox === 'block') {
-          // Leaves are passable — don't treat them as obstacles
-          if (blk.name.includes('leaves') || blk.name === 'bamboo') continue;
           return true;
         }
       }
