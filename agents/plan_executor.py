@@ -159,13 +159,16 @@ class QuantifiedIntentExecutor:
             return "max_resumes"
 
         # For non-INVENTORY_HAS intents (fill, place, goto), just re-dispatch
-        # the original intent — progress can't be tracked via inventory delta
+        # the original intent — progress can't be tracked via inventory delta.
+        # After dispatching, clear the active intent — the orchestrator's
+        # sync_progress will handle completion via heartbeat.
         if a.verify_spec and a.verify_spec.type != VerifyType.INVENTORY_HAS:
             if a.original_intent:
                 self._log(f"[executor] resume (non-quantified): re-dispatching '{a.original_intent}' (attempt {a.resume_count}/3)")
                 result = self._dispatch_intent(a.original_intent)
                 self._last_resume_ts = now
                 if result and result.get("ok"):
+                    self._active = None  # let orchestrator sync handle completion
                     return a.original_intent
             return None
 
