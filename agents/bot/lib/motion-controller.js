@@ -69,7 +69,7 @@ export class MotionController {
     this._session = null; // active MotionSession or null
     this._sessionGeneration = 0; // monotonic counter
     this._activeRecovery = false;
-    this._recoveryEnabled = false; // disabled for pathfinder debugging
+    this._recoveryEnabled = false; // recovery FSM disabled — pathfinder-level fixes handle most cases
     this._recoverySpinDir = 1; // alternates per recovery attempt (+1 / -1)
     this._pendingGotoCleanup = null; // cleanup for active goto/gotoNear promise
     this._recoveryPromise = null;
@@ -130,6 +130,47 @@ export class MotionController {
     return this._sessionGeneration === generation && !session.hardCancelled;
   }
 
+  // Walk to the horizontal center of the block the bot is standing on.
+  // Ensures the bot starts every movement with clearance from adjacent blocks.
+  async _walkToBlockCenter(timeoutMs = 500) {
+    const p = this.bot.entity.position;
+    const cx = Math.floor(p.x) + 0.5;
+    const cz = Math.floor(p.z) + 0.5;
+    const dx = cx - p.x;
+    const dz = cz - p.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+
+    if (dist <= 0.1) return;
+
+    this._log(`centering: (${p.x.toFixed(2)},${p.z.toFixed(2)}) → (${cx.toFixed(2)},${cz.toFixed(2)}) dist=${dist.toFixed(2)}`);
+
+    this.bot.setControlState('forward', true);
+    this.bot.setControlState('sprint', false);
+    this.bot.setControlState('jump', false);
+
+    const startPos = { x: p.x, z: p.z };
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      await new Promise(r => setTimeout(r, 100));
+      const np = this.bot.entity.position;
+      const ndx = cx - np.x;
+      const ndz = cz - np.z;
+      if (Math.abs(ndx) <= 0.1 && Math.abs(ndz) <= 0.1) {
+        this._log('centering complete');
+        break;
+      }
+      // Bail early if bot isn't making progress (stuck from start)
+      const moved = Math.sqrt((np.x - startPos.x)**2 + (np.z - startPos.z)**2);
+      if (moved < 0.05 && Date.now() - start > 300) {
+        this._log('centering stalled — bailing');
+        break;
+      }
+      this.bot.look(Math.atan2(-ndx, -ndz), 0);
+    }
+
+    this.bot.setControlState('forward', false);
+  }
+
   get isActive() { return this._session !== null && this._session.state !== SESSION_STATE.IDLE; }
 
   // Check which direction is blocking. Returns 'forward', 'left',
@@ -178,6 +219,7 @@ export class MotionController {
 
   async goto(x, y, z, timeoutMs = 15000) {
     await this.stop();
+    await this._walkToBlockCenter(); // center before starting path
     const sessionId = `goto_${Date.now()}`;
     const goalDescriptor = makeGoalDescriptor('block', x, y, z);
     const session = createSession(sessionId, goalDescriptor, timeoutMs);
@@ -224,6 +266,7 @@ export class MotionController {
 
   async gotoNear(x, y, z, range = 2) {
     await this.stop();
+    await this._walkToBlockCenter(); // center before starting path
     const sessionId = `gotoNear_${Date.now()}`;
     const goalDescriptor = makeGoalDescriptor('near', x, y, z, range);
     const session = createSession(sessionId, goalDescriptor, 15000);
@@ -270,6 +313,7 @@ export class MotionController {
 
   async follow(entity, distance = 2) {
     await this.stop();
+    await this._walkToBlockCenter(); // center before starting follow
     const sessionId = `follow_${Date.now()}`;
     const goalDescriptor = makeGoalDescriptor('follow', 0, 0, 0, entity, distance);
     const session = createSession(sessionId, goalDescriptor);
@@ -468,27 +512,7 @@ export class MotionController {
       if (!this._isSessionValid(session, generation)) { this._clearControls(); return; }
       this._clearControls();
 
-      // Stage: ROTATING — prefer nearest body block, else alternate ±60° using recoverySpinDir
-      const yaw = this.bot.entity.yaw;
-      const bodyBlock = this._findNearestBodyBlock();
-      let targetYaw;
-      if (bodyBlock) {
-        // Rotate away: use spin dir (will flip after)
-        targetYaw = yaw + (this._recoverySpinDir * (Math.PI / 3));
-      } else {
-        // Alternate per attempt
-        const alt = (session.recoveryAttempt % 2 === 0) ? 1 : -1;
-        targetYaw = yaw + alt * (Math.PI / 3);
-      }
-      // Round to nearest 22.5° (PI/8)
-      targetYaw = Math.round(targetYaw / (Math.PI / 8)) * (Math.PI / 8);
-      await this.bot.look(targetYaw, 0, false);
-      if (!this._isSessionValid(session, generation)) { this._clearControls(); return; }
-
-      // Flip spin dir for next attempt
-      this._recoverySpinDir = -this._recoverySpinDir;
-
-      // Stage: JUMP_FORWARD — measure, 600ms jump+forward, settle 200ms
+      // Stage: JUMP_FORWARD — straight ahead (no rotation, jump towards obstacle)
       const preJump = { x: this.bot.entity.position.x, y: this.bot.entity.position.y, z: this.bot.entity.position.z };
       this.bot.setControlState('jump', true);
       this.bot.setControlState('forward', true);
@@ -660,9 +684,6 @@ export class MotionController {
     if (!session || session.state !== SESSION_STATE.STUCK_DETECTED) return;
     if (session.hardCancelled || session.cancelRequested) return;
     if (!this._recoveryEnabled) {
-      // Simple restart-on-stuck: replan from current position.
-      // The new path triggers centering in monitorMovement, giving
-      // the bot clearance from the obstacle it's stuck against.
       if (session.recoveryAttempt >= 3) {
         this._log(`stuck restart limit reached (${session.recoveryAttempt}) — giving up`);
         session.state = SESSION_STATE.FAILED;
@@ -670,30 +691,18 @@ export class MotionController {
         return;
       }
       session.recoveryAttempt++;
-      this._log(`stuck detected (attempt ${session.recoveryAttempt}) — restarting navigation`);
+      session.state = SESSION_STATE.REPLANNING;
+      this._log(`stuck detected (attempt ${session.recoveryAttempt}) — restarting via motion controller`);
 
+      // Restart through goto/follow so _walkToBlockCenter runs before the new path.
       const gd = session.goalDescriptor;
-      if (gd && gd.type !== 'follow') {
-        this.bot.pathfinder.setGoal(null);
-        setTimeout(() => {
-          let goal;
-          if (gd.type === 'block') {
-            goal = new goals.GoalBlock(gd.x, gd.y, gd.z);
-          } else if (gd.type === 'near') {
-            goal = new goals.GoalNear(gd.x, gd.y, gd.z, gd.range);
-          }
-          if (goal) {
-            this.bot.pathfinder.setGoal(goal);
-            this._resetFastStuckWindow();
-            session.state = SESSION_STATE.NAVIGATING;
-            this._log('goal re-set after stuck restart');
-          }
-        }, 100);
+      if (gd && gd.type === 'block') {
+        this.goto(gd.x, gd.y, gd.z);
+      } else if (gd && gd.type === 'near') {
+        this.gotoNear(gd.x, gd.y, gd.z, gd.range);
+      } else if (gd && gd.type === 'follow' && gd.entity) {
+        this.follow(gd.entity, gd.distance || 2);
       }
-      return;
-    }
-    if (session.goalDescriptor && session.goalDescriptor.type === 'follow') {
-      this._log('follow session, skipping recovery');
       return;
     }
     if (this._activeRecovery) return; // already recovering
@@ -704,6 +713,14 @@ export class MotionController {
       try {
         session.state = SESSION_STATE.RECOVERY_ATOMIC;
         session.recoveryAttempt++;
+
+        // Bail after too many recovery attempts
+        if (session.recoveryAttempt > 10) {
+          this._log(`recovery attempt limit reached (${session.recoveryAttempt - 1}) — giving up`);
+          session.state = SESSION_STATE.FAILED;
+          this._session = null;
+          return;
+        }
 
         const blocked = this._classifyBlocked();
         this._log(`recovery attempt=${session.recoveryAttempt} direction=${blocked}`);
