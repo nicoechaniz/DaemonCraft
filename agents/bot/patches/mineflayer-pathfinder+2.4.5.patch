@@ -1,8 +1,17 @@
 diff --git a/node_modules/mineflayer-pathfinder/index.js b/node_modules/mineflayer-pathfinder/index.js
-index b38bd30..2df6f1a 100644
+index b38bd30..ad82720 100644
 --- a/node_modules/mineflayer-pathfinder/index.js
 +++ b/node_modules/mineflayer-pathfinder/index.js
-@@ -602,8 +602,35 @@ function inject (bot) {
+@@ -439,6 +439,8 @@ function inject (bot) {
+       }
+     }
+ 
++    if (!stateGoal) return  // no goal set — don't compute A* or emit path_update
++
+     if (astarContext && astartTimedout) {
+       const results = astarContext.compute()
+       results.path = postProcessPath(results.path)
+@@ -602,8 +604,35 @@ function inject (bot) {
        }
        dx = nextPoint.x - p.x
        dz = nextPoint.z - p.z
@@ -38,7 +47,7 @@ index b38bd30..2df6f1a 100644
      bot.look(Math.atan2(-dx, -dz), 0)
      bot.setControlState('forward', true)
      bot.setControlState('jump', false)
-@@ -611,10 +638,10 @@ function inject (bot) {
+@@ -611,10 +640,10 @@ function inject (bot) {
      if (bot.entity.isInWater) {
        bot.setControlState('jump', true)
        bot.setControlState('sprint', false)
