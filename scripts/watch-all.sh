@@ -1,6 +1,6 @@
 #!/bin/bash
 # watch-all.sh — unified real-time log viewer for the DaemonCraft stack
-# Layers: [GANDY] embodied-service  [BOT] bot server.js  [LOOP] agent_loop
+# Layers: [GANDY] embodied-service  [BOT] bot server.js  [LOOP] agent_loop  [LLM] autonomous session
 # Usage: ./scripts/watch-all.sh [cast_name] [agent_name]
 # Default: lab CompAII
 
@@ -25,7 +25,8 @@ trap cleanup EXIT INT TERM HUP
 echo -e "${BOLD}=== DaemonCraft Unified Watch — ${CAST}/${AGENT} ===${NC}"
 echo -e "  ${CYN}[GANDY]${NC} embodied-service (Gemma-Andy plans, tool dispatch)"
 echo -e "  ${GRN}[BOT]${NC}   bot server.js (HTTP requests, mineflayer events)"
-echo -e "  ${YLW}[LOOP]${NC}  agent_loop (heartbeats, guardian)"
+echo -e "  ${YLW}[LOOP]${NC}  agent_loop (heartbeats, guardian, actions)"
+echo -e "  ${MAG}[LLM]${NC}   autonomous LLM (wake-up prompts, decisions)"
 echo -e "  ${RED}[ERR]${NC}   errors across all layers"
 echo ""
 
@@ -86,12 +87,60 @@ tail -n 0 -F "${LOG_DIR}/${AGENT}_bot.log" 2>/dev/null \
 # ── Layer 3: Agent Loop (log file) ─────────────────
 tail -n 0 -F "${LOG_DIR}/${AGENT}_agent.log" 2>/dev/null \
   | while IFS= read -r line; do
-      if echo "$line" | grep -qiE 'heartbeat|wake|guardian|turn|hazard'; then
-        echo -e "${YLW}[LOOP]${NC} ${line:0:180}"
+      if echo "$line" | grep -qiE 'heartbeat|wake|guardian|turn|hazard|ACTION|LLM|RAPID'; then
+        echo -e "${YLW}[LOOP]${NC} ${line:0:250}"
       elif echo "$line" | grep -qiE 'error|fail|crash|exception'; then
         echo -e "${RED}[ERR]${NC} ${line:0:250}"
       fi
     done &
+
+# ── Layer 4: LLM Autonomous Decisions (gateway log + agent log) ──
+HERMES_LOG="$HOME/.hermes/logs/agent.log"
+GATEWAY_LOG="$HOME/.hermes/logs/gateway.log"
+# Track last seen position to avoid duplicates on restart
+LAST_GW=0
+LAST_AG=0
+
+while true; do
+  # Gateway: show wake-up prompts and heartbeat classifications
+  if [ -f "$GATEWAY_LOG" ]; then
+    NEW_LINES=$(tail -n +$((LAST_GW + 1)) "$GATEWAY_LOG" 2>/dev/null)
+    if [ -n "$NEW_LINES" ]; then
+      echo "$NEW_LINES" | grep -i "daemoncraft.*wake-up\|Heartbeat classified\|Wake-up reason\|chat.*queued\|agent_response" 2>/dev/null | while IFS= read -r line; do
+        # Extract meaningful parts
+        if echo "$line" | grep -q "Wake-up reason:"; then
+          reason=$(echo "$line" | sed 's/.*Wake-up reason: //' | cut -c1-120)
+          echo -e "${MAG}[LLM]${NC} wake: ${reason}"
+        elif echo "$line" | grep -q "Heartbeat classified as:"; then
+          hb=$(echo "$line" | sed 's/.*classified as: //' | cut -c1-40)
+          echo -e "${MAG}[LLM]${NC} heartbeat → ${hb}"
+        elif echo "$line" | grep -q "inbound message.*daemoncraft"; then
+          msg=$(echo "$line" | sed "s/.*msg='//" | sed "s/'$//" | cut -c1-150)
+          echo -e "${MAG}[LLM]${NC} prompt: ${msg}..."
+        fi
+      done
+      LAST_GW=$(wc -l < "$GATEWAY_LOG")
+    fi
+  fi
+
+  # Agent log: show tool calls from autonomous session
+  if [ -f "$HERMES_LOG" ]; then
+    NEW_LINES=$(tail -n +$((LAST_AG + 1)) "$HERMES_LOG" 2>/dev/null)
+    if [ -n "$NEW_LINES" ]; then
+      echo "$NEW_LINES" | grep -i "tool_executor\|conversation_loop: API" 2>/dev/null | grep -v "20260529_165725" | while IFS= read -r line; do
+        if echo "$line" | grep -q "tool_executor.*completed"; then
+          tool=$(echo "$line" | sed 's/.*tool //' | sed 's/ completed.*//' | cut -c1-60)
+          echo -e "${MAG}[LLM]${NC} tool: ${tool}"
+        elif echo "$line" | grep -q "API call"; then
+          call=$(echo "$line" | sed 's/.*API call //' | cut -c1-80)
+          echo -e "${GRAY}[LLM]${NC}   ${call}"
+        fi
+      done
+      LAST_AG=$(wc -l < "$HERMES_LOG")
+    fi
+  fi
+  sleep 2
+done &
 
 # Keep alive
 wait
