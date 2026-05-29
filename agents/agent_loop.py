@@ -1078,6 +1078,15 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 7):
                     if events_context:
                         print(f"[loop] Consumed {len(events_raw)} external events", flush=True)
 
+                    # Print agent decisions from the autonomous LLM session (gateway writes them)
+                    for ev in (events_raw or []):
+                        if ev.get("type") == "agent_response":
+                            text = ev.get("text", "")
+                            tools = ev.get("tool_calls", [])
+                            tools_str = ", ".join(tools) if tools else "none"
+                            text_preview = text[:120] + "..." if len(text) > 120 else text
+                            print(f"[loop] LLM #{turn_count}: tools=[{tools_str}] text=\"{text_preview}\"", flush=True)
+
                     # Singleton Session: export context stream
                     export_context_stream(
                         status=status, nearby=nearby, inventory=inventory,
