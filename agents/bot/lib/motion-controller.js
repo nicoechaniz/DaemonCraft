@@ -428,16 +428,33 @@ export class MotionController {
 
       // If blocking block is easily mineable (leaves, dirt, etc.), mine it first
       const blocked = this._classifyBlocked();
-      if (blocked && blocked !== 'unknown') {
+      if (blocked && blocked !== 'unknown' && blocked !== 'step') {
+        // Compute direction vector for the blocked direction
         const p = this.bot.entity.position;
         const yaw = this.bot.entity.yaw;
         const fwdDx = -Math.sin(yaw), fwdDz = Math.cos(yaw);
-        const mineBlock = this.bot.blockAt(p.offset(fwdDx, 1.5, fwdDz));
-        if (mineBlock && mineBlock.name !== 'air' && mineBlock.name !== 'cave_air') {
-          const easyBlocks = ['leaves', 'dirt', 'grass_block', 'sand', 'gravel', 'short_grass', 'tall_grass', 'fern', 'dead_bush', 'snow', 'vine', 'moss_carpet', 'bamboo'];
-          if (easyBlocks.some(n => mineBlock.name.includes(n)) || mineBlock.hardness < 0.5) {
-            this._log(`mining blocking block: ${mineBlock.name}`);
-            try { await this.bot.dig(mineBlock, { forceLook: true }); } catch {}
+        const leftDx = -Math.cos(yaw), leftDz = -Math.sin(yaw);
+        const rightDx = Math.cos(yaw), rightDz = Math.sin(yaw);
+        let dx = 0, dz = 0;
+        if (blocked === 'forward') { dx = fwdDx; dz = fwdDz; }
+        else if (blocked === 'left') { dx = leftDx; dz = leftDz; }
+        else if (blocked === 'right') { dx = rightDx; dz = rightDz; }
+        else if (blocked === 'forward-left') { dx = fwdDx + leftDx; dz = fwdDz + leftDz; }
+        else if (blocked === 'forward-right') { dx = fwdDx + rightDx; dz = fwdDz + rightDz; }
+        
+        // Try mining at body heights (0.5 to 2.0) in the blocked direction
+        const easyBlocks = ['leaves', 'dirt', 'grass_block', 'sand', 'gravel', 'short_grass',
+          'tall_grass', 'fern', 'dead_bush', 'snow', 'vine', 'moss_carpet', 'bamboo',
+          'oak_leaves', 'spruce_leaves', 'birch_leaves', 'jungle_leaves', 'acacia_leaves',
+          'dark_oak_leaves', 'mangrove_leaves', 'cherry_leaves', 'azalea_leaves'];
+        const heights = [0.5, 1.0, 1.5, 2.0];
+        for (const h of heights) {
+          const block = this.bot.blockAt(p.offset(dx, h, dz));
+          if (block && block.name !== 'air' && block.name !== 'cave_air') {
+            if (easyBlocks.some(n => block.name.includes(n)) || (block.hardness != null && block.hardness < 0.5)) {
+              this._log(`mining blocking ${block.name} at height ${h} (${blocked})`);
+              try { await this.bot.dig(block, { forceLook: true }); break; } catch {}
+            }
           }
         }
       }
