@@ -1,39 +1,41 @@
 # DaemonCraft Project Memory
 
-## Session State — 2026-05-29 (Cross-Layer Coordination Fase 2 + Fase 3 delegation)
+## Session State — 2026-05-29 (Cross-Layer Coordination Fase 2 + Fase 3 — COMPLETED)
 
-### Fase 2: Quantified Intent Executor — COMPLETED
-- **agents/plan_executor.py** (318 lines): `QuantifiedIntentExecutor` class
-  - start_intent: snapshots inventory baseline at intent start
-  - resume_after_interrupt: computes delta, re-dispatches adjusted count (debounce 5s)
-  - on_intent_complete: final VerifySpec check
-  - get_state: returns dict for body_session. executor_state injection
-  - Tolerant inventory parsing (flat list + categories)
-  - Noop fetch/dispatch defaults for testability
-- **agent_loop.py**: executor_state in heartbeat, _check_executor_resume() after wake_body
+### Fase 2: Quantified Intent Executor ✅
+- **agents/plan_executor.py** (318 lines): QuantifiedIntentExecutor class
+- **agent_loop.py**: executor_state in heartbeat, _check_executor_resume()
 - **tests/test_plan_executor.py**: 19 tests passing
-- Commit: 42ee3d5 (pushed to origin)
+- Commit: 42ee3d5
 
-### Fase 3: Plan Decomposition — DELEGATED
-- Grok build running (pid varies, ~/Projects/ia-bridge-mcp/build.sh)
-- Task t_df043933 on Kanban board daemoncraft
-- Will produce: PlanManifest/SubPlan dataclasses, PlanOrchestrator, mc_plan_decompose tool
+### Fase 3: Plan Decomposition ✅
+- **agents/plan_orchestrator.py** (310 lines): PlanOrchestrator class
+  - validate_manifest: anti-hallucination guard (VerifySpec mandatory)
+  - execute_plan: order + depends_on execution, escalation on failure
+  - orchestrator_state in heartbeat (agent_loop.py)
+- **agents/plan_schema.py**: SubPlan + PlanManifest dataclasses (to_dict/from_dict)
+- **mc_plan_decompose tool**: registered in hermes-agent tools/minecraft_tools.py
+- **tests/test_plan_orchestrator.py**: 10 tests passing
+- Commit: e04ad69 (DaemonCraft) + hermes-agent feat/daemoncraft
 
-### Code audit: Phase 1 verification
-- mutex_released → runnerEventBuffer: ✅ server.js:719-722
-- runner_activity in heartbeat: ✅ agent_loop.py:366-387
-- mc_interoception tool: ✅ minecraft_tools.py:1703-1707
-- GET /interoception endpoint: ✅ server.js:3878-3942
-- All wiring confirmed on disk, no missing pieces
+### Code audit: Phase 1 verification ✅
+- mutex_released → runnerEventBuffer: server.js:719-722
+- runner_activity in heartbeat: agent_loop.py:366-387
+- mc_interoception tool: minecraft_tools.py:1703-1707
+- GET /interoception endpoint: server.js:3878-3942
 
-### Kanban status
-- t_c817a6cc (Fase 2): done
-- t_df043933 (Fase 3): triage → delegating to Grok
-- t_a9399767 (epic): triage, 2/3 child tasks complete
+### Epic t_a9399767 — COMPLETED
+- Fase 1 (visibility): done (pre-session)
+- Fase 2 (executor): done (42ee3d5)
+- Fase 3 (orchestrator): done (e04ad69 + hermes-agent)
+- Total: 3/3 child tasks; 29 tests passing
+- Pending: end-to-end validation with live bot
 
-### Commits on feat/motion-refactor (newest first)
-- 42ee3d5 feat(executor): QuantifiedIntentExecutor for cross-layer resume (Fase 2)
-- Push: origin/feat/motion-refactor up to date
+### Commits on feat/motion-refactor
+- e04ad69 feat(orchestrator): PlanOrchestrator + PlanManifest (Fase 3)
+- 185941b docs: update MEMORY.md with Fase 2 + Fase 3 delegation
+- 42ee3d5 feat(executor): QuantifiedIntentExecutor (Fase 2)
+- 6bc928a docs: MEMORY.md pathfinder fixes + motion cleanup
 
 ---
 
