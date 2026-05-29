@@ -894,7 +894,10 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 7):
                 if hazard:
                     print(f"[loop] HAZARD DETECTED: {hazard}", flush=True)
                     wake_body("hazard_critical", detail=hazard)
+                    # Poll shared state even during hazards (cross-layer pipeline)
+                    _poll_shared_state()
                     send_agent_heartbeat(next_turn_in=interval, turn_in_progress=False)
+                    _IDLE_HEARTBEAT_COUNT = 0  # Reset counter to avoid double-fire
                     continue
             except Exception as e:
                 print(f"[loop] Hazard check error: {e}", flush=True)
