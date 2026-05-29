@@ -626,7 +626,7 @@ async function createBotImpl() {
 
       // Configure pathfinder
       const moves = new Movements(bot);
-      moves.allowSprinting = PATHFINDER_CFG.allow_sprinting ?? false;
+      moves.allowSprinting = true; // PATHFINDER_CFG.allow_sprinting ?? false;
       moves.canDig = PATHFINDER_CFG.can_dig ?? true;
       moves.allowParkour = PATHFINDER_CFG.allow_parkour ?? true;
       bot.pathfinder.setMovements(moves);
