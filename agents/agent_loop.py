@@ -932,6 +932,8 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 7):
     turn_count = 0
     _last_lease_refresh = 0
 
+    hazard = None
+    reason = "idle"
     try:
         while True:
             global _IDLE_HEARTBEAT_COUNT
