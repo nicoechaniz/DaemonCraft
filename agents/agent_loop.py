@@ -31,16 +31,12 @@ HERMES_DIR = Path.home() / ".hermes" / "hermes-agent"
 if str(HERMES_DIR) not in sys.path:
     sys.path.insert(0, str(HERMES_DIR))
 
-# Import plan schema from same directory (Autonomia Corporal)
 _AGENTS_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _AGENTS_DIR.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 if str(_AGENTS_DIR) not in sys.path:
     sys.path.insert(0, str(_AGENTS_DIR))
-
-# Fase 2 executor (deferred import — see main())
-_plan_executor_mod = None
 
 MC_API_URL = os.getenv("MC_API_URL", "http://localhost:3001")
 EMBODIED_SERVICE_URL = os.getenv("EMBODIED_SERVICE_URL", "http://localhost:7790")
@@ -57,12 +53,6 @@ METRICS_DIR = Path(os.getenv("MC_METRICS_DIR", str(_METRICS_DIR_DEFAULT)))
 # _build_body_session() reads reflex_history from here for heartbeat enrichment.
 _runner = None
 _last_l4_turn_ts = 0  # updated by wake_body() when L4 gets a turn
-
-# Fase 2: Quantified Intent Executor (cross-layer resume after L2 preemption)
-_executor = None
-
-# Fase 3: PlanOrchestrator (PlanManifest execution with VerifySpec guard + depends_on)
-_orchestrator = None
 
 
 def _emit_metric(kind: str, **fields) -> None:
@@ -131,7 +121,8 @@ def _get_json(path: str) -> dict:
 
 
 def send_heartbeat_context(status: dict, nearby: dict, inventory: dict, plan: dict, events: list,
-                          body_session: dict | None = None) -> bool:
+                          body_session: dict | None = None,
+                          events_context: str | None = None) -> bool:
     """Send a perception snapshot to the gateway via the bot server."""
     payload = {
         "status": status,
@@ -142,6 +133,8 @@ def send_heartbeat_context(status: dict, nearby: dict, inventory: dict, plan: di
     }
     if body_session:
         payload["body_session"] = body_session
+    if events_context:
+        payload["events_context"] = events_context
     return _post_json("/heartbeat/context", payload)
 
 
@@ -187,17 +180,22 @@ def fetch_bot_inventory() -> dict:
 _SESSION_DIR = Path.home() / ".hermes" / "sessions"
 _SESSION_DIR.mkdir(parents=True, exist_ok=True)
 
-# Per-bot stream and event files — derived from MC_USERNAME env var
-_STREAM_FILE = _SESSION_DIR / f"{BOT_USERNAME}-stream.json"
-_STREAM_TMP = _SESSION_DIR / f"{BOT_USERNAME}-stream.tmp"
-_EVENTS_FILE = _SESSION_DIR / f"{BOT_USERNAME}-events.jsonl"
-_EVENTS_PROCESSING = _SESSION_DIR / f"{BOT_USERNAME}-events.processing"
+# Per-bot stream and event files — derived from MC_USERNAME env var,
+# overridable via DAEMONCRAFT_STREAM_FILE and DAEMONCRAFT_EVENTS_FILE
+# for the canonical names (daemoncraft-stream.json, daemoncraft-events.jsonl).
+_STREAM_FILE = Path(os.getenv("DAEMONCRAFT_STREAM_FILE",
+    str(_SESSION_DIR / f"{BOT_USERNAME}-stream.json")))
+_STREAM_TMP = _SESSION_DIR / f"{_STREAM_FILE.stem}.tmp"
+_EVENTS_FILE = Path(os.getenv("DAEMONCRAFT_EVENTS_FILE",
+    str(_SESSION_DIR / f"{BOT_USERNAME}-events.jsonl")))
+_EVENTS_PROCESSING = _SESSION_DIR / f"{_EVENTS_FILE.stem}.processing"
 
 
 def export_context_stream(status: dict, nearby: dict, inventory: dict,
                           bot_plan: dict = None, last_chat: list = None,
                           errors: list = None, events_consumed: int = 0,
-                          tick: int = 0, session_id: str = "daemoncraft-singleton"):
+                          tick: int = 0, session_id: str = "daemoncraft-singleton",
+                          events_raw: list | None = None):
     """Export current bot state to daemoncraft-stream.json via atomic rename."""
     try:
         payload = {
@@ -225,6 +223,7 @@ def export_context_stream(status: dict, nearby: dict, inventory: dict,
             "last_chat": last_chat or status.get("unreadChat", []),
             "errors": errors or [],
             "events_consumed": events_consumed,
+            "events": events_raw or [],
         }
         _STREAM_TMP.write_text(json.dumps(payload, indent=2))
         _STREAM_TMP.rename(_STREAM_FILE)
@@ -303,6 +302,74 @@ def _log_event(event: str, **fields) -> None:
     print(json.dumps(record, separators=(",", ":")), flush=True)
 
 
+
+
+# ── Health drop monitor ────────────────────────────────────────────
+
+_HD_WINDOW = int(os.getenv("HEALTH_DROP_WINDOW_SIZE", "5"))
+_HD_THRESHOLD = float(os.getenv("HEALTH_DROP_THRESHOLD", "0.20"))
+_HD_MAX_INTERVAL = float(os.getenv("HEALTH_DROP_INTERVAL_S", "1.5"))
+_health_history: list[tuple[float, float]] = []  # [(ts, health), ...]
+
+
+def detect_rapid_health_drop(current_health: float, max_health: float) -> bool:
+    """Return True if health dropped > threshold% within the interval.
+
+    Two criteria, both must be met:
+
+    1. Cumulative drop from the HIGHEST value in the window exceeds
+       the threshold % of max_health.
+    2. Drop rate per health-sample exceeds a minimum steepness (40% of
+       the cumulative threshold per sample). Filters gradual multi-tick
+       descent (1 HP/tick over 5 ticks) while catching sudden spikes
+       (6 HP in one tick).
+
+    Configurable via env vars: HEALTH_DROP_WINDOW_SIZE,
+    HEALTH_DROP_THRESHOLD, HEALTH_DROP_INTERVAL_S.
+    """
+    if not max_health:
+        return False
+
+    now = time.time()
+    _health_history.append((now, current_health))
+    # Trim to window
+    while len(_health_history) > _HD_WINDOW:
+        _health_history.pop(0)
+
+    if len(_health_history) < 2:
+        return False
+
+    # Only fire if health actually decreased since the last tick
+    if current_health >= _health_history[-2][1]:
+        return False
+
+    # --- Criterion 1: cumulative drop exceeds threshold ---
+    valid_samples = _health_history[:-1]
+    valid_in_window = [(t, h) for t, h in valid_samples
+                       if now - t <= _HD_MAX_INTERVAL]
+    if not valid_in_window:
+        return False
+    baseline = max(h for _, h in valid_in_window)
+    if baseline == 0.0:
+        return False
+
+    cumulative_drop = (baseline - current_health) / max_health
+    if cumulative_drop < _HD_THRESHOLD:
+        return False
+
+    # --- Criterion 2: steepness per sample ---
+    samples_since_baseline = 0
+    for _, h in reversed(valid_in_window):
+        samples_since_baseline += 1
+        if h == baseline:
+            break
+
+    if samples_since_baseline <= 0:
+        return False
+
+    rate_threshold = _HD_THRESHOLD * 0.4
+    rate = cumulative_drop / samples_since_baseline
+    return rate >= rate_threshold
 
 
 def check_hazards(status: dict) -> str | None:
@@ -896,6 +963,16 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 7):
                 hazard = check_hazards(status)
                 if hazard:
                     print(f"[loop] HAZARD DETECTED: {hazard}", flush=True)
+                    # Stream export + event consumption on every tick
+                    events_raw = read_and_clear_event_queue()
+                    export_context_stream(
+                        status=status, nearby=fetch_bot_nearby(),
+                        inventory=fetch_bot_inventory(),
+                        bot_plan=fetch_plan(),
+                        events_consumed=len(events_raw),
+                        tick=turn_count,
+                        events_raw=events_raw,
+                    )
                     wake_body("hazard_critical", detail=hazard)
                     # Poll shared state even during hazards (cross-layer pipeline)
                     _poll_shared_state()
@@ -904,6 +981,31 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 7):
                     continue
             except Exception as e:
                 print(f"[loop] Hazard check error: {e}", flush=True)
+
+            # ── Rapid health drop check every tick ──
+            try:
+                health = status.get("health", 20)
+                max_hp = status.get("maxHealth", 20)
+                if detect_rapid_health_drop(health, max_hp):
+                    print(f"[loop] RAPID HEALTH DROP: {health}/{max_hp}", flush=True)
+                    # Stream export + event consumption on every tick
+                    events_raw = read_and_clear_event_queue()
+                    events_context = format_events_for_injection(events_raw)
+                    export_context_stream(
+                        status=status, nearby=fetch_bot_nearby(),
+                        inventory=fetch_bot_inventory(),
+                        bot_plan=fetch_plan(),
+                        events_consumed=len(events_raw),
+                        tick=turn_count,
+                        events_raw=events_raw,
+                    )
+                    wake_body("rapid_health_drop", detail=f"health={health}/{max_hp}")
+                    _poll_shared_state()
+                    send_agent_heartbeat(next_turn_in=interval, turn_in_progress=False)
+                    _IDLE_HEARTBEAT_COUNT = 0
+                    continue
+            except Exception as e:
+                print(f"[loop] Health drop check error: {e}", flush=True)
 
             # ── Periodic heartbeat ──
             _IDLE_HEARTBEAT_COUNT += 1
@@ -938,6 +1040,7 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 7):
                         bot_plan=bot_plan,
                         events_consumed=len(events_raw),
                         tick=turn_count,
+                        events_raw=events_raw,
                     )
 
                     events = []
@@ -953,7 +1056,12 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 7):
 
                     body_session = _build_body_session(status, reason=reason)
 
-                    ok = send_heartbeat_context(status, nearby, inventory, bot_plan, events, body_session=body_session)
+                    # Inject event context into heartbeat so agent sees it
+                    ok = send_heartbeat_context(
+                        status, nearby, inventory, bot_plan, events,
+                        body_session=body_session,
+                        events_context=events_context if events_context else None,
+                    )
                     if ok:
                         print(f"[loop] Idle heartbeat sent", flush=True)
                         _emit_metric("heartbeat", triggered=bool(triggered))
