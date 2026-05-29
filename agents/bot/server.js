@@ -910,7 +910,8 @@ async function createBotImpl() {
       });
       bot.on('path_update', (results) => {
         if (results.status === 'success') {
-          console.error(`[mineflayer] path_update path_len=${results.path.length} cycles=${results.cycles}`);
+          const pathStr = results.path.map(n => `${n.x},${n.y},${n.z}`).join(' -> ');
+          console.error(`[mineflayer] path_update path_len=${results.path.length} cycles=${results.cycles} path=${pathStr}`);
         } else {
           console.error(`[mineflayer] path_update FAILED status=${results.status}`);
         }

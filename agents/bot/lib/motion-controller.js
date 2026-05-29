@@ -69,6 +69,7 @@ export class MotionController {
     this._session = null; // active MotionSession or null
     this._sessionGeneration = 0; // monotonic counter
     this._activeRecovery = false;
+    this._recoveryEnabled = false; // disabled for pathfinder debugging
     this._recoverySpinDir = 1; // alternates per recovery attempt (+1 / -1)
     this._pendingGotoCleanup = null; // cleanup for active goto/gotoNear promise
     this._recoveryPromise = null;
@@ -658,6 +659,12 @@ export class MotionController {
   async _handleStuck(session) {
     if (!session || session.state !== SESSION_STATE.STUCK_DETECTED) return;
     if (session.hardCancelled || session.cancelRequested) return;
+    if (!this._recoveryEnabled) {
+      this._log('stuck detected — recovery disabled');
+      session.state = SESSION_STATE.FAILED;
+      this._session = null;
+      return;
+    }
     if (session.goalDescriptor && session.goalDescriptor.type === 'follow') {
       this._log('follow session, skipping recovery');
       return;
