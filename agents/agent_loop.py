@@ -36,6 +36,9 @@ _AGENTS_DIR = Path(__file__).resolve().parent
 if str(_AGENTS_DIR) not in sys.path:
     sys.path.insert(0, str(_AGENTS_DIR))
 
+# Fase 2 executor (import is safe even if not yet used by callers)
+from agents import plan_executor as _plan_executor_mod
+
 MC_API_URL = os.getenv("MC_API_URL", "http://localhost:3001")
 EMBODIED_SERVICE_URL = os.getenv("EMBODIED_SERVICE_URL", "http://localhost:7790")
 BOT_USERNAME = os.getenv("MC_USERNAME", "Steve").lower()
@@ -51,6 +54,9 @@ METRICS_DIR = Path(os.getenv("MC_METRICS_DIR", str(_METRICS_DIR_DEFAULT)))
 # _build_body_session() reads reflex_history from here for heartbeat enrichment.
 _runner = None
 _last_l4_turn_ts = 0  # updated by wake_body() when L4 gets a turn
+
+# Fase 2: Quantified Intent Executor (cross-layer resume after L2 preemption)
+_executor = None
 
 
 def _emit_metric(kind: str, **fields) -> None:
@@ -385,7 +391,35 @@ def _build_body_session(status: dict, reason: str = "idle") -> dict:
         "nearby_hostiles": hostiles,
         "runner_reflex": runner_reflex,
         "runner_activity": runner_activity,
+        "executor_state": _executor.get_state() if _executor else {"active": False},
     }
+
+
+def _check_executor_resume() -> str | None:
+    """If an active quantified intent exists and mutex is IDLE, resume it.
+    
+    Called from wake_body after each heartbeat that reaches L4.
+    Returns the re-dispatched intent string or None.
+    """
+    global _executor
+    if not _executor or not _executor.has_active_intent():
+        return None
+    
+    combat_data = _get_json("/combat").get("data", {})
+    mutex = combat_data.get("mutex") or {}
+    mutex_mode = mutex.get("mode", -1)
+    if mutex_mode != 0:  # CONTROL_MODE.IDLE
+        return None
+    
+    runner_activity = {}
+    global _runner
+    if _runner and _last_l4_turn_ts > 0:
+        try:
+            runner_activity = _runner.get_activity_summary(since_ts=_last_l4_turn_ts)
+        except Exception:
+            pass
+    
+    return _executor.resume_after_interrupt(runner_activity)
 
 
 def wake_body(reason: str, detail: str = "") -> bool:
@@ -411,6 +445,8 @@ def wake_body(reason: str, detail: str = "") -> bool:
             global _last_l4_turn_ts
             _last_l4_turn_ts = now
             _LAST_HAZARD_ALERT[hazard_key] = now
+            # If executor has an active intent and mutex is IDLE, resume it
+            _check_executor_resume()
         _log_event("wake_body_sent", reason=reason, detail=detail, ok=ok)
         return ok
     except Exception as e:
@@ -874,6 +910,18 @@ def main():
         poller = EventPoller(bot_api_url=bot_api_url, runner_thread=runner)
         poller.start()
         print("[loop] Reactive RunnerThread + EventPoller started", flush=True)
+
+        # Fase 2: Quantified Intent Executor (cross-layer resume after L2 preemption)
+        from agents.plan_executor import QuantifiedIntentExecutor, set_executor
+        _exec = QuantifiedIntentExecutor(
+            fetch_inventory=lambda: (fetch_bot_inventory() or {}),
+            dispatch_intent=lambda intent: call_embodied(intent),
+            log=lambda s: _log_event("executor", msg=s),
+        )
+        set_executor(_exec)
+        global _executor
+        _executor = _exec
+        print("[loop] QuantifiedIntentExecutor initialized", flush=True)
     except Exception as e:
         # Additive; do not break existing loop if runner deps (requests/yaml) or package missing
         print(f"[loop] RunnerThread + EventPoller not started (optional): {e}", flush=True)
