@@ -1,5 +1,5 @@
 diff --git a/node_modules/mineflayer-pathfinder/index.js b/node_modules/mineflayer-pathfinder/index.js
-index b38bd30..fcb98e5 100644
+index b38bd30..ee57a6f 100644
 --- a/node_modules/mineflayer-pathfinder/index.js
 +++ b/node_modules/mineflayer-pathfinder/index.js
 @@ -614,7 +614,7 @@ function inject (bot) {
@@ -7,7 +7,7 @@ index b38bd30..fcb98e5 100644
        bot.setControlState('jump', false)
        bot.setControlState('sprint', true)
 -    } else if (stateMovements.allowSprinting && physics.canSprintJump(path)) {
-+    } else if (stateMovements.allowSprinting && (path[0].y - p.y) <= 0.5 && physics.canSprintJump(path)) {
++    } else if (false && stateMovements.allowSprinting && (path[0].y - p.y) <= 0.5 && physics.canSprintJump(path)) {
        bot.setControlState('jump', true)
        bot.setControlState('sprint', true)
      } else if (physics.canStraightLine(path)) {
@@ -26,16 +26,3 @@ index a7e3505..82bb123 100644
      if (cost1 < cost2) {
        cost += cost1
        toBreak.push(...toBreak1)
-diff --git a/node_modules/mineflayer-pathfinder/lib/physics.js b/node_modules/mineflayer-pathfinder/lib/physics.js
-index ef9e389..37b43db 100644
---- a/node_modules/mineflayer-pathfinder/lib/physics.js
-+++ b/node_modules/mineflayer-pathfinder/lib/physics.js
-@@ -103,7 +103,7 @@ class Physics {
-   getReached (path) {
-     return (state) => {
-       const delta = path[0].minus(state.pos)
--      return Math.abs(delta.x) <= 0.35 && Math.abs(delta.z) <= 0.35 && Math.abs(delta.y) < 1
-+      return Math.abs(delta.x) <= 0.35 && Math.abs(delta.z) <= 0.35 && Math.abs(delta.y) < 0.25
-     }
-   }
- 
