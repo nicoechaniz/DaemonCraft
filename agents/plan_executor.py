@@ -46,6 +46,8 @@ class _ActiveIntent:
     started_ts: float
     verify_spec: Optional[VerifySpec] = None
     last_gained: int = 0      # for reporting only
+    original_intent: str = ""  # the full intent string for non-INVENTORY_HAS types
+    resume_count: int = 0     # track resume attempts, max 3
 
 
 class QuantifiedIntentExecutor:
@@ -88,6 +90,7 @@ class QuantifiedIntentExecutor:
         intent_type: str,
         target_count: int,
         verify_spec: Optional[VerifySpec] = None,
+        original_intent: str = "",
     ) -> bool:
         """
         Begin tracking a quantified intent. Snapshots current inventory as baseline.
@@ -121,6 +124,7 @@ class QuantifiedIntentExecutor:
             started_ts=time.time(),
             verify_spec=verify_spec,
             last_gained=0,
+            original_intent=original_intent,
         )
         self._log(
             f"[executor] start_intent: {intent_type} {target_count} {item} "
@@ -146,6 +150,24 @@ class QuantifiedIntentExecutor:
         now = time.time()
         if now - self._last_resume_ts < self._resume_debounce_s:
             return None  # debounce — previous resume still settling
+
+        # Max resume guard: after 3 attempts, give up and clear
+        a.resume_count += 1
+        if a.resume_count > 3:
+            self._log(f"[executor] resume: max attempts ({a.resume_count}) — giving up on {a.intent_type} {a.item}")
+            self._active = None
+            return "max_resumes"
+
+        # For non-INVENTORY_HAS intents (fill, place, goto), just re-dispatch
+        # the original intent — progress can't be tracked via inventory delta
+        if a.verify_spec and a.verify_spec.type != VerifyType.INVENTORY_HAS:
+            if a.original_intent:
+                self._log(f"[executor] resume (non-quantified): re-dispatching '{a.original_intent}' (attempt {a.resume_count}/3)")
+                result = self._dispatch_intent(a.original_intent)
+                self._last_resume_ts = now
+                if result and result.get("ok"):
+                    return a.original_intent
+            return None
 
         try:
             inv = self._fetch_inventory()

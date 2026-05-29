@@ -171,7 +171,7 @@ class PlanOrchestrator:
             intent_type = self._infer_intent_type(sp.intent)
             target = self._infer_target_count(sp.intent, sp.verify)
             try:
-                self._executor.start_intent(intent_type, target, verify_spec=sp.verify)
+                self._executor.start_intent(intent_type, target, verify_spec=sp.verify, original_intent=sp.intent)
             except Exception as e:
                 self._log(f"[orchestrator] start_intent failed for order={sp.order}: {e}")
 
