@@ -660,9 +660,36 @@ export class MotionController {
     if (!session || session.state !== SESSION_STATE.STUCK_DETECTED) return;
     if (session.hardCancelled || session.cancelRequested) return;
     if (!this._recoveryEnabled) {
-      this._log('stuck detected — recovery disabled');
-      session.state = SESSION_STATE.FAILED;
-      this._session = null;
+      // Simple restart-on-stuck: replan from current position.
+      // The new path triggers centering in monitorMovement, giving
+      // the bot clearance from the obstacle it's stuck against.
+      if (session.recoveryAttempt >= 3) {
+        this._log(`stuck restart limit reached (${session.recoveryAttempt}) — giving up`);
+        session.state = SESSION_STATE.FAILED;
+        this._session = null;
+        return;
+      }
+      session.recoveryAttempt++;
+      this._log(`stuck detected (attempt ${session.recoveryAttempt}) — restarting navigation`);
+
+      const gd = session.goalDescriptor;
+      if (gd && gd.type !== 'follow') {
+        this.bot.pathfinder.setGoal(null);
+        setTimeout(() => {
+          let goal;
+          if (gd.type === 'block') {
+            goal = new goals.GoalBlock(gd.x, gd.y, gd.z);
+          } else if (gd.type === 'near') {
+            goal = new goals.GoalNear(gd.x, gd.y, gd.z, gd.range);
+          }
+          if (goal) {
+            this.bot.pathfinder.setGoal(goal);
+            this._resetFastStuckWindow();
+            session.state = SESSION_STATE.NAVIGATING;
+            this._log('goal re-set after stuck restart');
+          }
+        }, 100);
+      }
       return;
     }
     if (session.goalDescriptor && session.goalDescriptor.type === 'follow') {

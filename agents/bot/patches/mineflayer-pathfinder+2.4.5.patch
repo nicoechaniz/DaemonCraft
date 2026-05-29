@@ -1,9 +1,49 @@
 diff --git a/node_modules/mineflayer-pathfinder/index.js b/node_modules/mineflayer-pathfinder/index.js
-index b38bd30..ee57a6f 100644
+index b38bd30..2df6f1a 100644
 --- a/node_modules/mineflayer-pathfinder/index.js
 +++ b/node_modules/mineflayer-pathfinder/index.js
-@@ -614,7 +614,7 @@ function inject (bot) {
-     } else if (stateMovements.allowSprinting && physics.canStraightLine(path, true)) {
+@@ -602,8 +602,35 @@ function inject (bot) {
+       }
+       dx = nextPoint.x - p.x
+       dz = nextPoint.z - p.z
++
++      // Center on current block before proceeding to next node.
++      // Prevents starting a move from the edge of a block where the
++      // bot would immediately collide with an adjacent obstacle.
++      const cx = Math.floor(p.x) + 0.5
++      const cz = Math.floor(p.z) + 0.5
++      const offX = cx - p.x
++      const offZ = cz - p.z
++      if (Math.abs(offX) > 0.08 || Math.abs(offZ) > 0.08) {
++        bot.look(Math.atan2(-offX, -offZ), 0)
++        bot.setControlState('forward', true)
++        bot.setControlState('jump', false)
++        bot.setControlState('sprint', false)
++        lastNodeTime = performance.now()
++        return
++      }
+     }
+ 
++    // Compute near-block flag once for sprint gating.
++    // Same principle as the getMoveDiagonal bounding-box guard:
++    // the bot's 0.6×0.6 bounding box needs clearance to sprint safely.
++    const fwdX = -Math.sin(bot.entity.yaw)
++    const fwdZ = Math.cos(bot.entity.yaw)
++    const probeVec = p.offset(fwdX * 0.65, 0, fwdZ * 0.65).floored()
++    const feetBlock = bot.blockAt(probeVec)
++    const headBlock = bot.blockAt(probeVec.offset(0, 1, 0))
++    const nearBlock = (feetBlock && feetBlock.boundingBox === 'block') ||
++                      (headBlock && headBlock.boundingBox === 'block')
++
+     bot.look(Math.atan2(-dx, -dz), 0)
+     bot.setControlState('forward', true)
+     bot.setControlState('jump', false)
+@@ -611,10 +638,10 @@ function inject (bot) {
+     if (bot.entity.isInWater) {
+       bot.setControlState('jump', true)
+       bot.setControlState('sprint', false)
+-    } else if (stateMovements.allowSprinting && physics.canStraightLine(path, true)) {
++    } else if (stateMovements.allowSprinting && !nearBlock && physics.canStraightLine(path, true)) {
        bot.setControlState('jump', false)
        bot.setControlState('sprint', true)
 -    } else if (stateMovements.allowSprinting && physics.canSprintJump(path)) {
