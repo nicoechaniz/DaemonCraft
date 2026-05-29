@@ -2073,15 +2073,14 @@ async collect({ block, count = 1 }) {
     // so comparing against feet would let through blocks at the bot's new lower level.
     const botPos = b.entity.position;
     const botFeetY = Math.floor(botPos.y);
-    const botUnderfoot = botFeetY - 1;  // the block we're standing on
+    const botUnderfoot = botFeetY - 1;  // the single block we stand on
 
     const safe = found.filter(pos => {
-      // Skip blocks directly under our feet
+      // Skip ONLY the block directly under our feet — never dig ourselves in
       if (Math.abs(pos.x - Math.floor(botPos.x)) < 1 &&
           Math.abs(pos.z - Math.floor(botPos.z)) < 1 &&
           pos.y === botUnderfoot) return false;
-      // Never dig downward — only mine at or above the block we stand on
-      if (pos.y < botUnderfoot) return false;
+      // All other blocks are fair game — including those below us on slopes
       return true;
     }).sort((a, b) => b.y - a.y);
 
