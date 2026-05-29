@@ -2072,16 +2072,16 @@ async collect({ block, count = 1 }) {
     // Use bot Y (eye level), not feet — the goto already put us at the block's Y,
     // so comparing against feet would let through blocks at the bot's new lower level.
     const botPos = b.entity.position;
-    const botEyeY = Math.floor(botPos.y);
-    const botFeet = botEyeY - 1;
+    const botFeetY = Math.floor(botPos.y);
+    const botUnderfoot = botFeetY - 1;  // the block we're standing on
 
     const safe = found.filter(pos => {
       // Skip blocks directly under our feet
       if (Math.abs(pos.x - Math.floor(botPos.x)) < 1 &&
           Math.abs(pos.z - Math.floor(botPos.z)) < 1 &&
-          pos.y === botFeet) return false;
-      // Only mine at or above eye level — never dig downward
-      if (pos.y < botEyeY) return false;
+          pos.y === botUnderfoot) return false;
+      // Never dig downward — only mine at or above the block we stand on
+      if (pos.y < botUnderfoot) return false;
       return true;
     }).sort((a, b) => b.y - a.y);
 
@@ -2096,10 +2096,10 @@ async collect({ block, count = 1 }) {
         if (!target || target.name !== block) continue;
         await b.tool.equipForBlock(target);
 
-        // Navigate to stand one block ABOVE the target, so we mine down onto it
-        // rather than standing beside it at the same level (which creates a pit).
+        // Navigate to beside the target block (X+1 offset), so we mine sideways
+        // rather than standing directly on it (which triggers the under-foot safety filter).
         if (b.entity.position.distanceTo(pos) > 4.5) {
-          if (b.motion) await b.motion.gotoNear(pos.x, pos.y + 1, pos.z, 3);
+          if (b.motion) await b.motion.gotoNear(pos.x + 1, pos.y, pos.z, 3);
         }
 
         // Safety: never mine the block directly under our feet
