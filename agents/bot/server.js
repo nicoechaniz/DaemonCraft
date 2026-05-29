@@ -2464,6 +2464,8 @@ async collect({ block, count = 1 }) {
     if (entity.position.distanceTo(b.entity.position) > 3) {
       if (b.motion) await b.motion.gotoNear(entity.position.x, entity.position.y, entity.position.z, 2);
     }
+    // Face the entity before attacking — looks natural
+    await b.lookAt(entity.position.offset(0, entity.height || 1.6, 0));
     await b.attack(entity);
     return { result: `Attacked ${entity.name || target} (${fmt(entity.position.distanceTo(b.entity.position))}m away)` };
   },
