@@ -446,7 +446,6 @@ def _poll_shared_state() -> None:
     # Fase 2: New quantified intent submission
     if os.path.exists(executor_path):
         try:
-            _log_event("executor", msg=f"DEBUG: executor_path exists, sys.path[0]={sys.path[0]}")
             with open(executor_path) as f:
                 data = _json_mod.load(f)
             intent_type = data.get("intent_type", "")
