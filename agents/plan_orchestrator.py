@@ -243,6 +243,11 @@ class PlanOrchestrator:
                     self._log(f"[orchestrator] sync: order={order} → done (executor cleared)")
                     changed = True
             if changed:
+                # If all sub-plans are done, clear executor to stop idle re-dispatch
+                all_done = all(s.status == "done" for s in self._subplan_states.values())
+                if all_done:
+                    self._executor.clear()
+                    self._log("[orchestrator] all sub-plans done — executor cleared")
                 return self.get_last_result()
         return None
 
