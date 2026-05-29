@@ -201,7 +201,6 @@ export class MotionController {
 
   async goto(x, y, z, timeoutMs = 15000) {
     await this.stop();
-    await this._walkToBlockCenter(); // center before starting path
     const sessionId = `goto_${Date.now()}`;
     const goalDescriptor = makeGoalDescriptor('block', x, y, z);
     const session = createSession(sessionId, goalDescriptor, timeoutMs);
@@ -255,7 +254,6 @@ export class MotionController {
 
   async gotoNear(x, y, z, range = 2) {
     await this.stop();
-    await this._walkToBlockCenter(); // center before starting path
     const sessionId = `gotoNear_${Date.now()}`;
     const goalDescriptor = makeGoalDescriptor('near', x, y, z, range);
     const session = createSession(sessionId, goalDescriptor, 15000);
@@ -302,7 +300,6 @@ export class MotionController {
 
   async follow(entity, distance = 2) {
     await this.stop();
-    await this._walkToBlockCenter(); // center before starting follow
     const sessionId = `follow_${Date.now()}`;
     const goalDescriptor = makeGoalDescriptor('follow', 0, 0, 0, entity, distance);
     const session = createSession(sessionId, goalDescriptor);
@@ -424,10 +421,20 @@ export class MotionController {
       }
       session.recoveryAttempt++;
       session.state = SESSION_STATE.REPLANNING;
-      this._log(`stuck detected (attempt ${session.recoveryAttempt}) — restarting via motion controller`);
+      this._log(`stuck detected (attempt ${session.recoveryAttempt}) — centering, reorienting, restarting`);
 
-      // Restart through goto/follow so _walkToBlockCenter runs before the new path.
+      // Center on current block and face the target before retrying
+      await this._walkToBlockCenter();
+
       const gd = session.goalDescriptor;
+      // Re-orient yaw toward the target so we don't retry with wrong angle
+      if (gd && (gd.type === 'block' || gd.type === 'near')) {
+        const dx = gd.x - this.bot.entity.position.x;
+        const dz = gd.z - this.bot.entity.position.z;
+        const targetYaw = Math.atan2(-dx, -dz);
+        await this.bot.look(targetYaw, 0);
+      }
+
       if (gd && gd.type === 'block') {
         this.goto(gd.x, gd.y, gd.z);
       } else if (gd && gd.type === 'near') {
