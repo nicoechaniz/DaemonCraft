@@ -1,5 +1,46 @@
 # DaemonCraft Project Memory
 
+## Session State — 2026-05-29 (Pathfinder Fixes Final + MotionController Cleanup)
+
+### What we solved today
+**Pathfinder-level fixes (mineflayer-pathfinder, persisted via patch-package):**
+- `getMoveDiagonal` bounding-box guard: rejects diagonals where either cardinal block is solid
+- `canSprintJump` disabled (`false && ...`) — sprint+jump completely removed
+- Centering between nodes in `monitorMovement`: after arriving at a node, walks to block center (0.08 tolerance) before proceeding
+- Clearance guard: computes `nearBlock` flag (solid block <0.65 ahead at feet/head), gates `canStraightLine(path, true)` with `!nearBlock`
+- `getReached` kept at original `< 1` (reverted from `< 0.25` experiment)
+- `allowSprinting = true` — sprint only on clear flat straight lines, walk+jump for everything else
+
+**MotionController (our code):**
+- `_walkToBlockCenter()`: runs at start of every `goto()`, `gotoNear()`, `follow()` — centers bot on block before pathfinding. Timeout 500ms, bails early if stalled.
+- Fast-stuck detection: 200ms interval, 0.5m threshold, 200ms trigger. Fires in ~200-400ms.
+- Stuck restart: sets session to REPLANNING, calls `goto()`/`follow()` again → triggers `_walkToBlockCenter()` → new path starts from centered position. Max 3 attempts.
+- Recovery FSM completely stripped (-339 lines): `_doStepRecoveryFSM`, `_doLateralRecoveryFSM`, `_doMineRecoveryFSM`, `_pausePathfinder`, `_resumeGoal`, `_findNearestBodyBlock`, `_withControls`, `RECOVERY_STAGE` enum all removed. Placeholder comment left in `_handleStuck`.
+- `_recoveryEnabled = false` kept as flag with documentation comment.
+- `_classifyBlocked` and `_clearControls` preserved (used elsewhere).
+
+**Key learning:** The FSM recovery (backstep + rotate + jump) was causing infinite loops because it measured success as `dy > 0.3 || moved > 1.0` — the bot would move sideways, "succeed", resume, get stuck again. The simpler approach (centering + restart) works better.
+
+**Forum consultation (ia-bridge):** Claude, Codex, Gemini, Grok all identified `getReached` and `canSprintJump` as root causes. Consensus: disable sprint+jump, tighten `getReached`, don't touch prismarine-physics. Final solution follows consensus.
+
+**BodyMutex / Reflex Layer Phase 1 status:** Fully implemented on disk — `mutex.js`, `action-registry.js`, `runner/thread.py`, endpoints in server.js, RunnerThread in agent_loop.py. `mutex_released` → runnerEventBuffer wired. `runner_activity` injected in heartbeat. `mc_interoception` tool available. Epic t_18006055 in triage pending end-to-end validation.
+
+### Next: L2→L3→L4 Cross-Layer Coordination (t_a9399767)
+Fase 1 already done. Next is Fase 2 (simple executor for quantified intents) and Fase 3 (plan decomposition). Delegate to Grok via ia-bridge /build.
+
+### Kanban cleanup this session
+- Closed: t_b18779b5 (MotionController), t_53ff09e1 (pathfinding stuck-loop), t_3dee4fae (BodyMutex impl)
+- t_18006055 (Reactive Runner Phase 1 epic) — code done, needs e2e validation
+
+### Commits on feat/motion-refactor
+- Bounding box guard + patch-package
+- canSprintJump disabled
+- Faster stuck detection timings
+- Recovery FSM stripped
+- Stuck restart through goto/follow with centering
+
+---
+
 ## Session State — 2026-05-29 (Pathfinder Sprint + Step-Up Fix)
 
 ### Problem
