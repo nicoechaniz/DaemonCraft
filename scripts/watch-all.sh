@@ -97,9 +97,13 @@ tail -n 0 -F "${LOG_DIR}/${AGENT}_agent.log" 2>/dev/null \
 # ── Layer 4: LLM Autonomous Decisions (gateway log + agent log) ──
 HERMES_LOG="$HOME/.hermes/logs/agent.log"
 GATEWAY_LOG="$HOME/.hermes/logs/gateway.log"
-# Track last seen position to avoid duplicates on restart
-LAST_GW=0
-LAST_AG=0
+PREVIEW=30  # Lines to show on startup (avoid replaying entire log history)
+
+# Track last seen position — start near the end so we only show recent history
+LAST_GW=$(($(wc -l < "$GATEWAY_LOG" 2>/dev/null || echo 0) - PREVIEW))
+LAST_AG=$(($(wc -l < "$HERMES_LOG" 2>/dev/null || echo 0) - PREVIEW))
+[ "$LAST_GW" -lt 0 ] && LAST_GW=0
+[ "$LAST_AG" -lt 0 ] && LAST_AG=0
 
 while true; do
   # Gateway: show wake-up prompts and heartbeat classifications
