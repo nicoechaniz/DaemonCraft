@@ -26,8 +26,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
-from agents.plan_schema import PlanManifest, SubPlan, VerifySpec, VerifyType
-from agents.plan_executor import QuantifiedIntentExecutor, get_executor
+from plan_schema import PlanManifest, SubPlan, VerifySpec, VerifyType
+from plan_executor import QuantifiedIntentExecutor, get_executor
 
 
 @dataclass

@@ -36,8 +36,8 @@ _AGENTS_DIR = Path(__file__).resolve().parent
 if str(_AGENTS_DIR) not in sys.path:
     sys.path.insert(0, str(_AGENTS_DIR))
 
-# Fase 2 executor (import is safe even if not yet used by callers)
-from agents import plan_executor as _plan_executor_mod
+# Fase 2 executor (deferred import — see main())
+_plan_executor_mod = None
 
 MC_API_URL = os.getenv("MC_API_URL", "http://localhost:3001")
 EMBODIED_SERVICE_URL = os.getenv("EMBODIED_SERVICE_URL", "http://localhost:7790")
@@ -971,8 +971,8 @@ def main():
     # EventPoller bridges bot /events (from physicsTick producers) → RunnerThread.push_event()
     bot_api_url = MC_API_URL
     try:
-        from agents.runner.thread import RunnerThread
-        from agents.runner.event_poller import EventPoller
+        from runner.thread import RunnerThread
+        from runner.event_poller import EventPoller
         runner = RunnerThread(bot_api_url=bot_api_url)
         runner.start()
         global _runner
@@ -982,7 +982,7 @@ def main():
         print("[loop] Reactive RunnerThread + EventPoller started", flush=True)
 
         # Fase 2: Quantified Intent Executor (cross-layer resume after L2 preemption)
-        from agents.plan_executor import QuantifiedIntentExecutor, set_executor
+        from plan_executor import QuantifiedIntentExecutor, set_executor
         _exec = QuantifiedIntentExecutor(
             fetch_inventory=lambda: (fetch_bot_inventory() or {}),
             dispatch_intent=lambda intent: call_embodied(intent),
@@ -994,7 +994,7 @@ def main():
         print("[loop] QuantifiedIntentExecutor initialized", flush=True)
 
         # Fase 3: PlanOrchestrator (additive, safe if plan_schema changes)
-        from agents.plan_orchestrator import PlanOrchestrator
+        from plan_orchestrator import PlanOrchestrator
         _orch = PlanOrchestrator(
             executor=_exec,  # share the same executor instance
             dispatch_intent=lambda intent: call_embodied(intent),

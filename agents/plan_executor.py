@@ -26,7 +26,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
-from agents.plan_schema import VerifySpec, VerifyType
+from plan_schema import VerifySpec, VerifyType
 
 
 @dataclass
