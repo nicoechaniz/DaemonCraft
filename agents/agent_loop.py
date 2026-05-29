@@ -426,6 +426,70 @@ def _check_executor_resume() -> str | None:
     return _executor.resume_after_interrupt(runner_activity)
 
 
+def _poll_shared_state() -> None:
+    """Check shared state files written by Hermes tools (mc_* via bot server).
+    
+    Reads executor_intent.json for new quantified intents and
+    plan_manifest.json for new PlanManifest submissions.
+    Consumes each file once (deletes after reading).
+    """
+    import json as _json_mod
+    runner_dir = os.getenv("MC_RUNNER_STATE_DIR") or os.path.join(
+        os.path.expanduser("~"), ".local", "share", "daemoncraft", "lab"
+    )
+
+    executor_path = os.path.join(runner_dir, "executor_intent.json")
+    plan_path = os.path.join(runner_dir, "plan_manifest.json")
+
+    global _executor, _orchestrator
+
+    # Fase 2: New quantified intent submission
+    if os.path.exists(executor_path):
+        try:
+            with open(executor_path) as f:
+                data = _json_mod.load(f)
+            intent_type = data.get("intent_type", "")
+            target = int(data.get("target_count", 0))
+            verify = data.get("verify_spec")
+            if intent_type and target > 0 and _executor:
+                from agents.plan_schema import VerifySpec as _VS, VerifyType as _VT
+                vs = None
+                if verify and verify.get("type"):
+                    vs = _VS(
+                        type=_VT(verify["type"]),
+                        item=verify.get("item", ""),
+                        count=int(verify.get("count", 0)),
+                    )
+                _executor.start_intent(intent_type, target, verify_spec=vs)
+                _log_event("executor", msg=f"started intent from shared state: {intent_type} {target}")
+            os.remove(executor_path)  # consume once
+            try:
+                os.remove(executor_path + ".done")  # cleanup marker if any
+            except OSError:
+                pass
+        except Exception as e:
+            _log_event("executor", msg=f"shared state read error: {e}")
+
+    # Fase 3: New plan manifest submission
+    if os.path.exists(plan_path):
+        try:
+            with open(plan_path) as f:
+                data = _json_mod.load(f)
+            manifest_dict = data.get("manifest")
+            if manifest_dict and _orchestrator:
+                from agents.plan_schema import PlanManifest as _PM
+                manifest = _PM.from_dict(manifest_dict)
+                _orchestrator.validate_manifest(manifest)
+                outcome = _orchestrator.execute_plan(manifest)
+                _log_event("orchestrator", msg=f"plan executed: {outcome.get('status')} "
+                    f"({outcome.get('done', 0)}/{outcome.get('total', 0)})")
+                if outcome.get("status") == "escalated":
+                    _log_event("orchestrator", msg=f"ESCALATED: {outcome.get('previous_error', {})}")
+            os.remove(plan_path)  # consume once
+        except Exception as e:
+            _log_event("orchestrator", msg=f"shared state read error: {e}")
+
+
 def wake_body(reason: str, detail: str = "") -> bool:
     """Alert Steve (Hermes agent) by sending an emergency heartbeat with the alert.
     
@@ -839,6 +903,8 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 7):
             _IDLE_HEARTBEAT_COUNT += 1
             if _IDLE_HEARTBEAT_COUNT >= _IDLE_HEARTBEAT_EVERY:
                 _IDLE_HEARTBEAT_COUNT = 0
+                # Fase 2+3: poll shared state for new intent/plan submissions
+                _poll_shared_state()
                 print(f"[loop] Turn {turn_count} — idle heartbeat...", flush=True)
                 turn_in_progress.set()
                 send_agent_heartbeat(next_turn_in=None, turn_in_progress=True)
