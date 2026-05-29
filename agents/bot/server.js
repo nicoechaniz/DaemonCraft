@@ -3945,44 +3945,6 @@ const httpServer = http.createServer(async (req, res) => {
         }});
       }
 
-      // ── Fase 2: Start quantified intent tracking ──
-      if (path === '/executor/start-intent' && req.method === 'POST') {
-        try {
-          const body = await readBody(req);
-          if (!body || !body.intent_type || !body.target_count) {
-            return respond(res, 400, { ok: false, error: 'Missing intent_type or target_count' });
-          }
-          const payload = {
-            intent_type: body.intent_type,
-            target_count: parseInt(body.target_count) || 1,
-            verify_spec: body.verify_spec || null,
-            timestamp: Date.now(),
-          };
-          fs.writeFileSync(EXECUTOR_INTENT_PATH, JSON.stringify(payload));
-          return respond(res, 200, { ok: true, data: payload });
-        } catch (e) {
-          return respond(res, 500, { ok: false, error: e.message });
-        }
-      }
-
-      // ── Fase 3: Submit PlanManifest for orchestration ──
-      if (path === '/plan/submit' && req.method === 'POST') {
-        try {
-          const body = await readBody(req);
-          if (!body || !body.manifest) {
-            return respond(res, 400, { ok: false, error: 'Missing manifest' });
-          }
-          const payload = {
-            manifest: body.manifest,
-            timestamp: Date.now(),
-          };
-          fs.writeFileSync(PLAN_MANIFEST_PATH, JSON.stringify(payload));
-          return respond(res, 200, { ok: true, data: { received: true } });
-        } catch (e) {
-          return respond(res, 500, { ok: false, error: e.message });
-        }
-      }
-
       if (path === '/inventory') {
         return respond(res, 200, { ok: true, data: getInventory() });
       }
@@ -4382,6 +4344,31 @@ const httpServer = http.createServer(async (req, res) => {
       if (process.env.BOT_VERBOSE) {
         const snippet = JSON.stringify(body).slice(0, 150);
         console.error(`[req-body] ${new Date().toISOString()} ${snippet}${snippet.length >= 150 ? '…' : ''}`);
+      }
+
+      // ── Fase 2: Start quantified intent tracking ──
+      if (path === '/executor/start-intent') {
+        if (!body || !body.intent_type || !body.target_count) {
+          return respond(res, 400, { ok: false, error: 'Missing intent_type or target_count' });
+        }
+        const payload = {
+          intent_type: body.intent_type,
+          target_count: parseInt(body.target_count) || 1,
+          verify_spec: body.verify_spec || null,
+          timestamp: Date.now(),
+        };
+        fs.writeFileSync(EXECUTOR_INTENT_PATH, JSON.stringify(payload));
+        return respond(res, 200, { ok: true, data: payload });
+      }
+
+      // ── Fase 3: Submit PlanManifest for orchestration ──
+      if (path === '/plan/submit') {
+        if (!body || !body.manifest) {
+          return respond(res, 400, { ok: false, error: 'Missing manifest' });
+        }
+        const payload = { manifest: body.manifest, timestamp: Date.now() };
+        fs.writeFileSync(PLAN_MANIFEST_PATH, JSON.stringify(payload));
+        return respond(res, 200, { ok: true, data: { received: true } });
       }
 
       // ── Controller Mode — POST /controller/mode ──
