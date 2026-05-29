@@ -77,7 +77,8 @@ class QuantifiedIntentExecutor:
         self._active: Optional[_ActiveIntent] = None
         self._fetch_inventory = fetch_inventory or self._noop_fetch
         self._dispatch_intent = dispatch_intent or self._noop_dispatch
-        self._log = log or (lambda s: None)
+        _raw_log = log or (lambda s: None)
+        self._log = lambda s: _raw_log(f"{time.strftime('%H:%M:%S')} {s}")
         self._last_resume_ts: float = 0.0
         self._resume_debounce_s: float = 5.0  # guard against rapid re-dispatch spam
 

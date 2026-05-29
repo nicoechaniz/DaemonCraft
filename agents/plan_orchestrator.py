@@ -32,6 +32,7 @@ if str(_repo_root) not in sys.path:
 
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
+import time
 
 from agents.plan_schema import PlanManifest, SubPlan, VerifySpec, VerifyType
 from agents.plan_executor import QuantifiedIntentExecutor, get_executor
@@ -71,7 +72,8 @@ class PlanOrchestrator:
     ):
         self._executor = executor or get_executor()
         self._dispatch_intent = dispatch_intent or self._noop_dispatch
-        self._log = log or (lambda s: None)
+        _raw_log = log or (lambda s: None)
+        self._log = lambda s: _raw_log(f"{time.strftime('%H:%M:%S')} {s}")
         self._last_manifest: Optional[PlanManifest] = None
         self._subplan_states: dict[int, _SubPlanState] = {}  # keyed by order
 
