@@ -58,6 +58,9 @@ _last_l4_turn_ts = 0  # updated by wake_body() when L4 gets a turn
 # Fase 2: Quantified Intent Executor (cross-layer resume after L2 preemption)
 _executor = None
 
+# Fase 3: PlanOrchestrator (PlanManifest execution with VerifySpec guard + depends_on)
+_orchestrator = None
+
 
 def _emit_metric(kind: str, **fields) -> None:
     """Append a JSON line to ~/.hermes/metrics/<cast>/<date>.jsonl. Best-effort.
@@ -392,6 +395,7 @@ def _build_body_session(status: dict, reason: str = "idle") -> dict:
         "runner_reflex": runner_reflex,
         "runner_activity": runner_activity,
         "executor_state": _executor.get_state() if _executor else {"active": False},
+        "orchestrator_state": _orchestrator.get_last_result() if _orchestrator else {"active": False},
     }
 
 
@@ -922,6 +926,17 @@ def main():
         global _executor
         _executor = _exec
         print("[loop] QuantifiedIntentExecutor initialized", flush=True)
+
+        # Fase 3: PlanOrchestrator (additive, safe if plan_schema changes)
+        from agents.plan_orchestrator import PlanOrchestrator
+        _orch = PlanOrchestrator(
+            executor=_exec,  # share the same executor instance
+            dispatch_intent=lambda intent: call_embodied(intent),
+            log=lambda s: _log_event("orchestrator", msg=s),
+        )
+        global _orchestrator
+        _orchestrator = _orch
+        print("[loop] PlanOrchestrator initialized (Fase 3)", flush=True)
     except Exception as e:
         # Additive; do not break existing loop if runner deps (requests/yaml) or package missing
         print(f"[loop] RunnerThread + EventPoller not started (optional): {e}", flush=True)

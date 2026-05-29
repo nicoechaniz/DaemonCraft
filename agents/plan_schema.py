@@ -299,3 +299,78 @@ def save_plan(plan: Plan, path: Path | str | None = None) -> bool:
     single-shot intent execution. See load_plan() for context.
     """
     return False
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Fase 3: Plan Decomposition — PlanManifest / SubPlan (Hermes-owned strategic layer)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class SubPlan:
+    """
+    One atomic sub-plan within a PlanManifest.
+
+    The 'intent' is a concrete embodied intent string (e.g. "mine 64 oak_log"
+    or "goto 100 64 -200") that will be dispatched via QuantifiedIntentExecutor
+    + embodied service (Gemma-Andy).
+
+    'verify' is MANDATORY — this is the anti-hallucination guard per GePeTo contract.
+    No SubPlan may be created or executed without a machine-checkable VerifySpec.
+    Hermes (LLM) MUST supply a valid verify when calling mc_plan_decompose.
+    """
+    intent: str
+    verify: VerifySpec
+    order: int
+    depends_on: list[int] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "intent": self.intent,
+            "verify": self.verify.to_dict(),
+            "order": self.order,
+            "depends_on": list(self.depends_on),
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> SubPlan:
+        if "verify" not in d:
+            raise ValueError("SubPlan requires 'verify' (VerifySpec) — anti-hallucination guard")
+        return cls(
+            intent=d["intent"],
+            verify=VerifySpec.from_dict(d["verify"]),
+            order=int(d.get("order", 0)),
+            depends_on=list(d.get("depends_on", [])),
+        )
+
+
+@dataclass
+class PlanManifest:
+    """
+    High-level plan owned by Hermes/Steve (L4+ strategic). Decomposed via
+    mc_plan_decompose tool call. Executed by PlanOrchestrator which delegates
+    individual sub-plans to QuantifiedIntentExecutor (Fase 2) + embodied layer.
+
+    Every sub-plan carries its own VerifySpec. The orchestrator rejects manifests
+    missing any verify (validate_manifest).
+    """
+    goal: str
+    sub_plans: list[SubPlan] = field(default_factory=list)
+    estimated_time_s: int = 300
+    abort_on_failure: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "goal": self.goal,
+            "sub_plans": [sp.to_dict() for sp in self.sub_plans],
+            "estimated_time_s": self.estimated_time_s,
+            "abort_on_failure": self.abort_on_failure,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> PlanManifest:
+        return cls(
+            goal=d["goal"],
+            sub_plans=[SubPlan.from_dict(sp) for sp in d.get("sub_plans", [])],
+            estimated_time_s=int(d.get("estimated_time_s", 300)),
+            abort_on_failure=bool(d.get("abort_on_failure", True)),
+        )
