@@ -1005,6 +1005,13 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 7):
             turn_count += 1
             now = time.time()
 
+            # Print new bot actions every tick (reflects LLM tool calls regardless of loop path)
+            new_actions = fetch_new_actions()
+            for a in new_actions:
+                act = a.get("action", "?")
+                status = a.get("status", "?")
+                print(f"[loop] ACTION #{turn_count}: {act} ({status})", flush=True)
+
             # ── Controller Mode: no-op in lab, claim autonomous if needed ──
             if now - _last_lease_refresh > 30:
                 _last_lease_refresh = now
