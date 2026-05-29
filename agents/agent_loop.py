@@ -173,6 +173,30 @@ def fetch_bot_inventory() -> dict:
         return {}
 
 
+# Track seen actions to report new LLM decisions in real time
+_seen_actions: set = set()
+
+def fetch_new_actions() -> list[dict]:
+    """Fetch bot actions since last check. Returns list of new action dicts."""
+    global _seen_actions
+    try:
+        data = _get_json("/actions")
+        actions = data.get("data", {}).get("actions", [])
+        new_actions = []
+        for a in actions:
+            # Use (time, action) as unique key
+            key = (a.get("time", 0), a.get("action", ""))
+            if key not in _seen_actions:
+                _seen_actions.add(key)
+                new_actions.append(a)
+        # Trim seen set to avoid unbounded growth
+        if len(_seen_actions) > 500:
+            _seen_actions = set(sorted(_seen_actions)[-200:])
+        return new_actions
+    except Exception:
+        return []
+
+
 # ══════════════════════════════════════════════════════════════════════════════════════════════════════════
 # Singleton Session — Context Stream + Event Queue
 # ══════════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -1086,6 +1110,13 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 7):
                             tools_str = ", ".join(tools) if tools else "none"
                             text_preview = text[:120] + "..." if len(text) > 120 else text
                             print(f"[loop] LLM #{turn_count}: tools=[{tools_str}] text=\"{text_preview}\"", flush=True)
+
+                    # Print new bot actions (reflects LLM tool calls in real time)
+                    new_actions = fetch_new_actions()
+                    for a in new_actions:
+                        act = a.get("action", "?")
+                        status = a.get("status", "?")
+                        print(f"[loop] ACTION: {act} ({status})", flush=True)
 
                     # Singleton Session: export context stream
                     export_context_stream(
