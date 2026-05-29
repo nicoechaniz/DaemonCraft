@@ -167,6 +167,8 @@ export class MotionController {
         const pt = pos.offset(dx, h, dz);
         const blk = b.blockAt(pt);
         if (blk && blk.name !== 'air' && blk.name !== 'cave_air' && blk.name !== 'void_air' && blk.boundingBox === 'block') {
+          // Leaves are passable — don't treat them as obstacles
+          if (blk.name.includes('leaves') || blk.name === 'bamboo') continue;
           return true;
         }
       }
@@ -425,6 +427,22 @@ export class MotionController {
       session.recoveryAttempt++;
       session.state = SESSION_STATE.REPLANNING;
       this._log(`stuck detected (attempt ${session.recoveryAttempt}) — restarting via motion controller`);
+
+      // If blocking block is easily mineable (leaves, dirt, etc.), mine it first
+      const blocked = this._classifyBlocked();
+      if (blocked && blocked !== 'unknown') {
+        const p = this.bot.entity.position;
+        const yaw = this.bot.entity.yaw;
+        const fwdDx = -Math.sin(yaw), fwdDz = Math.cos(yaw);
+        const mineBlock = this.bot.blockAt(p.offset(fwdDx, 1.5, fwdDz));
+        if (mineBlock && mineBlock.name !== 'air' && mineBlock.name !== 'cave_air') {
+          const easyBlocks = ['leaves', 'dirt', 'grass_block', 'sand', 'gravel', 'short_grass', 'tall_grass', 'fern', 'dead_bush', 'snow', 'vine', 'moss_carpet', 'bamboo'];
+          if (easyBlocks.some(n => mineBlock.name.includes(n)) || mineBlock.hardness < 0.5) {
+            this._log(`mining blocking block: ${mineBlock.name}`);
+            try { await this.bot.dig(mineBlock, { forceLook: true }); } catch {}
+          }
+        }
+      }
 
       // Restart through goto/follow so _walkToBlockCenter runs before the new path.
       const gd = session.goalDescriptor;
