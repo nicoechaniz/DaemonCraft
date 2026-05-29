@@ -52,6 +52,7 @@ export class MotionController {
     this._stuckCount = 0;
     this._session = null; // active MotionSession or null
     this._sessionGeneration = 0; // monotonic counter
+    this._teleportedAt = 0;  // suppress new goals for 2s after teleport
     this._recoveryEnabled = false; // recovery FSM disabled — stuck restarts use centering + goto/follow
     this._pendingGotoCleanup = null; // cleanup for active goto/gotoNear promise
     
@@ -210,6 +211,13 @@ export class MotionController {
     // Reset fast stuck window
     this._resetFastStuckWindow();
 
+    // Reject new goals within 2s of teleport — prevents flee/attack race
+    const sinceTeleport = Date.now() - this._teleportedAt;
+    if (sinceTeleport < 2000) {
+      this._log(`goto rejected: ${sinceTeleport}ms since teleport`);
+      return;
+    }
+
     const goal = new goals.GoalBlock(Math.floor(x), Math.floor(y), Math.floor(z));
     this.bot.pathfinder.setGoal(goal);
     return new Promise((resolve) => {
@@ -334,6 +342,12 @@ export class MotionController {
     try { this.bot.stopDigging(); } catch {}
     try { this.bot.clearControlStates(); } catch {}
     this._clearControls();
+  }
+
+  /** Mark teleport — suppress new movement goals for 2s to prevent race with flee/attack. */
+  markTeleported() {
+    this._teleportedAt = Date.now();
+    this._log('teleported — suppressing new goals for 2s');
   }
 
   /**

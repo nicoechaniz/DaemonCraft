@@ -765,7 +765,10 @@ async function createBotImpl() {
         if (dist > 5) {
           // Teleported — nuclear stop: motion, pathfinder, control states, events, mutex
           try {
-            if (bot && bot.motion) { bot.motion.stop().catch(() => {}); }
+            if (bot && bot.motion) {
+              bot.motion.markTeleported();
+              bot.motion.stop().catch(() => {});
+            }
             if (bot && bot.pathfinder) { bot.pathfinder.setGoal(null); }
             if (bot) { bot.clearControlStates(); }
           } catch (e) { log(`Teleport stop error: ${e.message || e}`); }
