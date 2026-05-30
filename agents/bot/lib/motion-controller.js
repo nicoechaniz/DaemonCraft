@@ -9,6 +9,10 @@
 import pathfinderPkg from 'mineflayer-pathfinder';
 const { goals } = pathfinderPkg;
 
+// ── Tunable constants ────────────────────────────────────────────
+const MAX_STUCK_RECOVERY_ATTEMPTS = parseInt(process.env.MC_MAX_STUCK_ATTEMPTS || '10', 10);
+// ──────────────────────────────────────────────────────────────────
+
 const FAST_STUCK_CHECK_INTERVAL_MS = 200;
 const FAST_STUCK_MIN_PROGRESS_M = 0.5;
 const FAST_STUCK_TRIGGER_MS = 200;
@@ -53,12 +57,14 @@ export class MotionController {
     this._session = null; // active MotionSession or null
     this._sessionGeneration = 0; // monotonic counter
     this._teleportedAt = 0;  // suppress new goals for 2s after teleport
+    this._stuckRestartCount = 0;  // persists across session restarts — reset on new goto
     this._recoveryEnabled = false; // recovery FSM disabled — stuck restarts use centering + goto/follow
     this._pendingGotoCleanup = null; // cleanup for active goto/gotoNear promise
     
     bot.on('goal_reached', () => {
       this._stuckCount = 0;
       this._sameSpotCount = 0;
+      this._stuckRestartCount = 0;
       this._lastCheckPos = null;
       this._stuckCheckT0 = 0;
     });
@@ -218,6 +224,8 @@ export class MotionController {
       return;
     }
 
+    this._stuckRestartCount = 0;  // new goal, reset stuck counter
+
     const goal = new goals.GoalBlock(Math.floor(x), Math.floor(y), Math.floor(z));
     this.bot.pathfinder.setGoal(goal);
     return new Promise((resolve) => {
@@ -233,6 +241,7 @@ export class MotionController {
       const onTimeout = () => {
         this.bot.removeListener('goal_reached', onReached);
         this._pendingGotoCleanup = null;
+        try { this.bot.pathfinder.setGoal(null); } catch {}
         const p = this.bot.entity.position;
         session.state = SESSION_STATE.FAILED;
         this._session = null;
@@ -264,6 +273,7 @@ export class MotionController {
 
     // Reset fast stuck window
     this._resetFastStuckWindow();
+    this._stuckRestartCount = 0;  // new goal, reset stuck counter
 
     const goal = new goals.GoalNear(Math.floor(x), Math.floor(y), Math.floor(z), range);
     this.bot.pathfinder.setGoal(goal);
@@ -280,6 +290,7 @@ export class MotionController {
       const onTimeout = () => {
         this.bot.removeListener('goal_reached', onReached);
         this._pendingGotoCleanup = null;
+        try { this.bot.pathfinder.setGoal(null); } catch {}
         const p = this.bot.entity.position;
         session.state = SESSION_STATE.FAILED;
         this._session = null;
@@ -309,6 +320,7 @@ export class MotionController {
     this._session = session;
     this._sessionGeneration++;
     this._resetFastStuckWindow();
+    this._stuckRestartCount = 0;  // new goal, reset stuck counter
 
     this.bot.pathfinder.setGoal(new goals.GoalFollow(entity, distance), true);
     // Follow is continuous — no await. Session stays active until stop() or failure.
@@ -330,6 +342,7 @@ export class MotionController {
 
     this._stuckCount = 0;
     this._sameSpotCount = 0;
+    this._stuckRestartCount = 0;
 
     // Resolve pending goto promise immediately (N1 fix)
     if (this._pendingGotoCleanup) {
@@ -416,15 +429,17 @@ export class MotionController {
     if (!session || session.state !== SESSION_STATE.STUCK_DETECTED) return;
     if (session.hardCancelled || session.cancelRequested) return;
     if (!this._recoveryEnabled) {
-      if (session.recoveryAttempt >= 3) {
-        this._log(`stuck restart limit reached (${session.recoveryAttempt}) — giving up`);
+      if (this._stuckRestartCount >= MAX_STUCK_RECOVERY_ATTEMPTS) {
+        this._log(`stuck restart limit reached (${this._stuckRestartCount}/${MAX_STUCK_RECOVERY_ATTEMPTS}) — giving up`);
         session.state = SESSION_STATE.FAILED;
         this._session = null;
+        try { this.bot.pathfinder.setGoal(null); } catch {}
+        this._stuckRestartCount = 0;
         return;
       }
-      session.recoveryAttempt++;
+      this._stuckRestartCount++;
       session.state = SESSION_STATE.REPLANNING;
-      this._log(`stuck detected (attempt ${session.recoveryAttempt}) — restarting via motion controller`);
+      this._log(`stuck detected (attempt ${this._stuckRestartCount}/${MAX_STUCK_RECOVERY_ATTEMPTS}) — restarting via motion controller`);
 
       // If blocking block is easily mineable (leaves, dirt, etc.), mine it first
       const blocked = this._classifyBlocked();
@@ -460,6 +475,8 @@ export class MotionController {
       }
 
       // Restart through goto/follow so _walkToBlockCenter runs before the new path.
+      // Save stuck counter before goto/gotoNear/follow reset it to 0.
+      const savedStuckCount = this._stuckRestartCount;
       const gd = session.goalDescriptor;
       if (gd && gd.type === 'block') {
         this.goto(gd.x, gd.y, gd.z);
@@ -468,6 +485,7 @@ export class MotionController {
       } else if (gd && gd.type === 'follow' && gd.entity) {
         this.follow(gd.entity, gd.distance || 2);
       }
+      this._stuckRestartCount = savedStuckCount;  // restore after goto's synchronous reset
       return;
     }
 

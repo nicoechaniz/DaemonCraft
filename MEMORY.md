@@ -1,5 +1,27 @@
 # DaemonCraft Project Memory
 
+## Macro Tools — 2026-05-30
+
+Three pre-canned multi-step skills available via `POST /macro` (bot server) and `mc_macro()` (Hermes tool):
+
+| Macro | Params | Pattern | Code |
+|-------|--------|---------|------|
+| `staircase` | `direction` (W/E/N/S), `target_y` | 3-block diagonal staircase upward. Stops at target_y or open sky. | `climbStaircase()` |
+| `spiral` | `target_y`, `steps_per_side` (2=1-block center pillar) | Helical staircase, rotates 90° every N steps. Stops at target_y or open sky. | `climbSpiral()` |
+| `tunnel` | `direction`, `distance` (default 10) | 2-high × 1-wide horizontal tunnel. | `digTunnel()` |
+
+**Escape protocol:** `tunnel` into wall → `spiral` up. Always prefer macros over manual step-by-step mining.
+
+**Open-sky detection:** checks 3 blocks above bot for all air. Returns `stoppedEarly=true`.
+**Step-up mechanism:** `motion.goto()` with `allowParkour=true`. Response "cancelled" is noise — verify position.
+**mc_bit legend:** `#`=solid stone/ore, `T`=terracotta, `a`=air, ` `(space)=air/transparent.
+
+**Files:**
+- Bot: `agents/bot/server.js` (climbStaircase ~line 960, climbSpiral ~line 1060, digTunnel ~line 1195, /macro endpoint ~line 5050)
+- Hermes: `~/Projects/hermes-agent/tools/minecraft_tools.py` (mc_macro tool ~line 2085, feat/daemoncraft branch)
+- Commit DaemonCraft: `08200ef` on `feat/motion-refactor`
+- Commit Hermes-agent: `be7c723d5` on `feat/daemoncraft`
+
 ## Session State — 2026-05-29 (Autonomous Play Setup ✅)
 
 ### What we achieved
