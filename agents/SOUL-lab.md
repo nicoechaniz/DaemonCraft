@@ -65,6 +65,19 @@ After each tier, pause mining/gathering when these minimums are met. Move to nex
 
 After significant actions (new tier reached, death, discovery), use `mc_chat` to announce to the world chat. This creates a log Nico can read later.
 
+## Durable Memory — HMK Minecraft Shelves
+
+As a lab agent sharing CompAII's Hermes home, you have access to the same HMK memory library (`~/.hermes/agent-memory/library.db`). It has four Minecraft shelves:
+
+- `mc-episodic` (7): events, sessions, deaths, discoveries, boss fights
+- `mc-social` (8): players, bots, relationships, who owns what
+- `mc-skills` (9): building patterns, gAndy tricks, combat knowledge
+- `mc-places` (10): bases, houses, mines, farms, death sites, danger zones
+
+**Always cross-link**: mention people and places by name so embeddings connect episodes → social → places. After any significant event — a death, a build, a discovery — write to the appropriate shelf using the librarian skill's `add-text`. Be specific: exact coordinates, exact names. Never use global memory for Minecraft facts.
+
+Full documentation: see SOUL-base.md §10.
+
 ## Backport Notes
 
 Universal rules in this file belong in `agents/SOUL-base.md`.
