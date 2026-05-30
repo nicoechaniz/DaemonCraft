@@ -284,7 +284,9 @@ let recentFragments = [];
 // Rolling buffer of recent action outcomes for loop detection
 let actionHistory = []; // { action, status, time }
 const MAX_ACTION_HISTORY = 200;
-let lastJudge = null; // mailbox for judgeAction() results, read by GET /judge/last
+let lastJudge = null; // backward compat — most recent judge entry
+let judgeRing = []; // ring buffer of last N judge entries (max 10)
+const MAX_JUDGE_RING = 10;
 let agentLog = []; // { turn, time, prompt, response, tool_calls, error }
 const MAX_AGENT_LOG = 50;
 let agentHeartbeat = { nextTurnIn: null, turnInProgress: false }; // countdown for dashboard
@@ -1387,8 +1389,12 @@ async function judgeAction(intent, actionFn) {
     position_delta: { dx: Math.round(dx * 10) / 10, dy: Math.round(dy * 10) / 10, dz: Math.round(dz * 10) / 10 },
     captured_at_tick: after.tick,
     error: error || null,
+    initiator: intent.initiator || 'l4_agent', // who requested this action: l2_runner, l3_loop, l4_agent
+    consumed_by_l4: false,
   };
   lastJudge = entry;
+  judgeRing.push(entry);
+  if (judgeRing.length > MAX_JUDGE_RING) judgeRing.shift();
   return { judge: entry, value };
 }
 
@@ -4539,6 +4545,25 @@ const httpServer = http.createServer(async (req, res) => {
       // Post-action judge — returns the most recent judgeAction() result
       if (path === '/judge/last') {
         return respond(res, 200, { ok: true, data: lastJudge || null });
+      }
+
+      // Judge ring buffer — all unconsumed entries (for L4 agent)
+      if (path === '/judge/pending') {
+        const pending = judgeRing.filter(j => !j.consumed_by_l4);
+        return respond(res, 200, { ok: true, data: pending, total_ring: judgeRing.length });
+      }
+
+      // Consume judge entries by tick — L4 marks them as read
+      if (path === '/judge/consume' && req.method === 'POST') {
+        const ticks = body?.ticks || [];
+        let consumed = 0;
+        for (const j of judgeRing) {
+          if (ticks.includes(j.captured_at_tick) && !j.consumed_by_l4) {
+            j.consumed_by_l4 = true;
+            consumed++;
+          }
+        }
+        return respond(res, 200, { ok: true, consumed, remaining: judgeRing.filter(j => !j.consumed_by_l4).length });
       }
 
       // Screenshot via prismarine-viewer + puppeteer

@@ -534,20 +534,31 @@ def _build_body_session(status: dict, reason: str = "idle") -> dict:
     except Exception:
         pass
 
-    # ── Last judge from /judge/last (post-action feedback) ──
+    # ── Judge ring buffer — read pending entries, consume L3's own ──
     last_judge = None
+    pending_judges = []
     try:
-        jr = _get_json("/judge/last")
+        jr = _get_json("/judge/pending")
         if jr and jr.get("ok") and jr.get("data"):
-            j = jr["data"]
-            last_judge = {
-                "action": j.get("action"),
-                "outcome": j.get("outcome"),
-                "confidence": j.get("confidence"),
-                "reason": j.get("reason_code"),
-                "delta": j.get("position_delta"),
-                "tick": j.get("captured_at_tick"),
-            }
+            pending = jr["data"]
+            # L3 consumes only entries it initiated (tagged l3_loop)
+            l3_ticks = [j["captured_at_tick"] for j in pending if j.get("initiator") == "l3_loop"]
+            if l3_ticks:
+                _post_json("/judge/consume", {"ticks": l3_ticks})
+            # Pass all pending entries (including L4's) to body_session
+            pending_judges = pending
+            if pending_judges:
+                # last_judge = most recent for backward compat
+                most_recent = pending_judges[-1]
+                last_judge = {
+                    "action": most_recent.get("action"),
+                    "outcome": most_recent.get("outcome"),
+                    "confidence": most_recent.get("confidence"),
+                    "reason": most_recent.get("reason_code"),
+                    "delta": most_recent.get("position_delta"),
+                    "tick": most_recent.get("captured_at_tick"),
+                    "initiator": most_recent.get("initiator"),
+                }
     except Exception:
         pass
 
@@ -570,6 +581,7 @@ def _build_body_session(status: dict, reason: str = "idle") -> dict:
         "orchestrator_state": _orchestrator.get_last_result() if _orchestrator else {"active": False},
         "scene_graph": scene_graph,
         "last_judge": last_judge,
+        "pending_judges": pending_judges,
     }
 
 
