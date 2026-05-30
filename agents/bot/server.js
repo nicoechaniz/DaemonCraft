@@ -987,14 +987,23 @@ async function climbStaircase(bot, direction, targetY) {
     const curZ = Math.floor(bot.entity.position.z);
 
     // ── Check for open sky / surface ─────────────────────────
-    const skyCheck = [
-      bot.blockAt(new Vec3(curX, curY + 1, curZ)),
-      bot.blockAt(new Vec3(curX, curY + 2, curZ)),
-      bot.blockAt(new Vec3(curX, curY + 3, curZ)),
-    ];
-    const allAir = skyCheck.every(b => !b || b.name === 'air' || b.name === 'cave_air' || b.name === 'void_air');
-    if (allAir) {
-      log(`[staircase] Reached open sky at Y=${curY}`);
+    // Same criteria as /scene: 96-block air column + 2 open cardinals
+    let skyHeadroom = 0;
+    for (let i = 1; i <= 96; i++) {
+      const cb = bot.blockAt(new Vec3(curX, curY + i, curZ));
+      if (!cb || cb.name === 'air' || cb.name === 'cave_air' || cb.name === 'void_air') skyHeadroom++;
+      else break;
+    }
+    // Check cardinals around current position
+    const skyCardinals = ['north','south','east','west'];
+    let openDirs = 0;
+    for (const d of skyCardinals) {
+      const dd = CARDINAL_DIRS[d];
+      const b2 = bot.blockAt(new Vec3(curX + dd.dx, curY + 1, curZ + dd.dz));
+      if (!b2 || b2.name === 'air' || b2.name === 'cave_air' || b2.name === 'void_air') openDirs++;
+    }
+    if (skyHeadroom >= 96 && openDirs >= 2) {
+      log(`[staircase] Reached surface at Y=${curY} (headroom=${skyHeadroom}, openCardinals=${openDirs})`);
       break;
     }
 
@@ -1098,15 +1107,22 @@ async function climbSpiral(bot, targetY, stepsPerSide = 3) {
     const curZ = Math.floor(bot.entity.position.z);
 
     // ── Check for open sky / surface ─────────────────────────
-    // If all blocks above the bot are air, we've reached open sky — stop.
-    const skyCheck = [
-      bot.blockAt(new Vec3(curX, curY + 1, curZ)),
-      bot.blockAt(new Vec3(curX, curY + 2, curZ)),
-      bot.blockAt(new Vec3(curX, curY + 3, curZ)),
-    ];
-    const allAir = skyCheck.every(b => !b || b.name === 'air' || b.name === 'cave_air' || b.name === 'void_air');
-    if (allAir) {
-      log(`[spiral] Reached open sky at Y=${curY}`);
+    // Same criteria as /scene: 96-block air column + 2 open cardinals
+    let skyHeadroom = 0;
+    for (let i = 1; i <= 96; i++) {
+      const cb = bot.blockAt(new Vec3(curX, curY + i, curZ));
+      if (!cb || cb.name === 'air' || cb.name === 'cave_air' || cb.name === 'void_air') skyHeadroom++;
+      else break;
+    }
+    const skyCardinals = ['north','south','east','west'];
+    let openDirs = 0;
+    for (const d of skyCardinals) {
+      const dd = CARDINAL_DIRS[d];
+      const b2 = bot.blockAt(new Vec3(curX + dd.dx, curY + 1, curZ + dd.dz));
+      if (!b2 || b2.name === 'air' || b2.name === 'cave_air' || b2.name === 'void_air') openDirs++;
+    }
+    if (skyHeadroom >= 96 && openDirs >= 2) {
+      log(`[spiral] Reached surface at Y=${curY} (headroom=${skyHeadroom}, openCardinals=${openDirs})`);
       break;
     }
 
