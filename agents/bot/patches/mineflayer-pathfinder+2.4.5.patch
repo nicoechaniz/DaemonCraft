@@ -61,16 +61,21 @@ index b38bd30..ad82720 100644
        bot.setControlState('sprint', true)
      } else if (physics.canStraightLine(path)) {
 diff --git a/node_modules/mineflayer-pathfinder/lib/movements.js b/node_modules/mineflayer-pathfinder/lib/movements.js
-index a7e3505..82bb123 100644
+index a7e3505..4e59c62 100644
 --- a/node_modules/mineflayer-pathfinder/lib/movements.js
 +++ b/node_modules/mineflayer-pathfinder/lib/movements.js
-@@ -427,6 +427,10 @@ class Movements {
+@@ -427,6 +427,15 @@ class Movements {
      cost2 += this.safeOrBreak(blockC2, toBreak2)
      if (blockD2.height - block0.height > 1.2) cost2 += this.safeOrBreak(blockD2, toBreak2)
  
 +    // Bounding box guard: bot cannot cut corners around solid blocks.
 +    // If either cardinal adjacent block is physical, the diagonal is too tight.
 +    if (blockC1.physical || blockC2.physical) return
++
++    // Same guard at head height (y+1): bot's head/shoulders clip into
++    // diagonal blocks like leaves, logs, and overhangs that are clear
++    // at feet level but solid one block up.
++    if (blockB1.physical || blockB2.physical) return
 +
      if (cost1 < cost2) {
        cost += cost1
