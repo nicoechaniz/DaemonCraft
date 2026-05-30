@@ -703,6 +703,13 @@ message_lock = threading.Lock()
 ws_connected = threading.Event()
 turn_in_progress = threading.Event()
 
+_controller_mode = "lab"  # default to lab (safe); refreshed from /controller/mode
+_controller_mode_lock = threading.Lock()
+
+def _is_lab_mode() -> bool:
+    with _controller_mode_lock:
+        return _controller_mode == "lab"
+
 STANDBY_FILE = os.getenv("STANDBY_FILE", "")
 
 
@@ -1018,6 +1025,9 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 7):
                 try:
                     mode_data = _get_json("/controller/mode")
                     current = mode_data.get("data", {}).get("mode")
+                    if current:
+                        with _controller_mode_lock:
+                            _controller_mode = current
                     if current != "lab" and current != "autonomous":
                         _post_json("/controller/mode", {"mode": "autonomous"})
                 except Exception:
@@ -1047,6 +1057,12 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 7):
                         tick=turn_count,
                         events_raw=events_raw,
                     )
+                    if _is_lab_mode():
+                        if hazard != "No immediate threat":
+                            print(f"[loop] LAB MODE — hazard logged, no autonomous action", flush=True)
+                        send_agent_heartbeat(next_turn_in=interval, turn_in_progress=False)
+                        _IDLE_HEARTBEAT_COUNT = 0
+                        continue
                     wake_body("hazard_critical", detail=hazard)
                     # Poll shared state even during hazards (cross-layer pipeline)
                     _poll_shared_state()
@@ -1062,6 +1078,11 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 7):
                 max_hp = status.get("maxHealth", 20)
                 if detect_rapid_health_drop(health, max_hp):
                     print(f"[loop] RAPID HEALTH DROP: {health}/{max_hp}", flush=True)
+                    if _is_lab_mode():
+                        print(f"[loop] LAB MODE — health drop logged, no autonomous action", flush=True)
+                        send_agent_heartbeat(next_turn_in=interval, turn_in_progress=False)
+                        _IDLE_HEARTBEAT_COUNT = 0
+                        continue
                     _defend_against_ranged(status)
                     # Stream export + event consumption on every tick
                     events_raw = read_and_clear_event_queue()
@@ -1093,6 +1114,22 @@ def run_agent_loop(profile_name: str, initial_prompt: str, interval: int = 7):
                 # Fase 3: sync orchestrator progress (executor → orchestrator state)
                 if _orchestrator:
                     _orchestrator.sync_progress()
+
+                if _is_lab_mode():
+                    # Export context for CLI user but do NOT trigger LLM
+                    try:
+                        status = fetch_bot_status()
+                        export_context_stream(
+                            status=status, nearby=fetch_bot_nearby(),
+                            inventory=fetch_bot_inventory(),
+                            bot_plan=fetch_plan(),
+                            events_consumed=0,
+                            tick=turn_count,
+                        )
+                    except Exception:
+                        pass
+                    send_agent_heartbeat(next_turn_in=interval, turn_in_progress=False)
+                    continue
                 print(f"[loop] Turn {turn_count} — idle heartbeat...", flush=True)
                 turn_in_progress.set()
                 send_agent_heartbeat(next_turn_in=None, turn_in_progress=True)
