@@ -4418,13 +4418,19 @@ const httpServer = http.createServer(async (req, res) => {
         const by = Math.floor(py);
         const bz = Math.floor(pz);
         let headroom_blocks = 0;
-        for (let i = 1; i <= 32; i++) {
+        for (let i = 1; i <= 96; i++) {
           const blk = b.blockAt(new Vec3(bx, by + i, bz));
           const isAir = !blk || blk.name === 'air' || blk.name === 'cave_air' || blk.name === 'void_air';
           if (isAir) headroom_blocks++;
           else break;
         }
-        const is_surface = headroom_blocks >= 3;
+        // Surface: headroom to sky + at least 2 cardinal directions open at feet level
+        const openCardinals =
+          (blocks_cardinal.north && !blocks_cardinal.north.solid ? 1 : 0) +
+          (blocks_cardinal.south && !blocks_cardinal.south.solid ? 1 : 0) +
+          (blocks_cardinal.east  && !blocks_cardinal.east.solid  ? 1 : 0) +
+          (blocks_cardinal.west  && !blocks_cardinal.west.solid  ? 1 : 0);
+        const is_surface = headroom_blocks >= 96 && openCardinals >= 2;
 
         // risks: lava/water at feet level (and eye) in 4 horiz directions
         const risks = [];
