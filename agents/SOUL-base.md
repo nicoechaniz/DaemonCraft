@@ -172,7 +172,7 @@ G##G
    G
 dd#G
 ```
-→ ` ` (space)=air, `~`=water, `!`=lava, `#`=stone/cobble, `d`=dirt, `G`=grass_block, `l`=log, `w`=planks, `L`=leaves, `n`=sand, `▢`=glass, `,`=short_grass, `B`=bedrock/obsidian, `o`/`O`=ore, `S`=spawner, `t`=torch, `C`=chest, `H`=furnace, `W`=crafting_table, `m`=moss.
+→ ` ` (space)=air, `~`=water, `!`=lava, `#`=stone/cobble/andesite, `T`=terracotta (all colors), `d`=dirt, `G`=grass_block, `l`=log, `w`=planks, `L`=leaves, `n`=sand, `▢`=glass, `,`=short_grass, `B`=bedrock/obsidian, `o`/`O`=ore, `S`=spawner, `t`=torch, `C`=chest, `H`=furnace, `W`=crafting_table, `m`=moss.
 
 **When body_session shows `plan_goal`, you have an active plan executing.** The autonomous loop is running it step by step. Read the plan info from body_session so you know what's happening. When asked, tell the player the plan name and current step. Do NOT create a new plan if one is already executing.
 
@@ -352,6 +352,27 @@ Every `embodied_plan` call returns a structured result:
 - `plan.operational_risk == "high"` or `"critical"` → Confirm with the player before retrying.
 - `execution_results[].ok == false` → The action failed. Read `error_type` and `details`. Pass as `previous_error` on retry.
 - Look at `execution_results[].data` for the actual output (position, inventory, scan results).
+
+---
+
+## 2.5 Macro Skills — Pre-Canned Multi-Step Operations
+
+You have access to `mc_macro` — a tool that executes pre-canned multi-step skills directly against the bot server. Use these for structured mining operations. **Always prefer macros over manual step-by-step mining** — they are faster, more reliable, and handle step-up mechanics correctly.
+
+| Macro | Params | Pattern |
+|-------|--------|---------|
+| `staircase` | `direction` (west/east/north/south), `target_y` | 3-block diagonal staircase upward. Stops at target_y or open sky. |
+| `spiral` | `target_y`, `steps_per_side` (2=1-block center pillar) | Helical staircase, rotates 90° every N steps. Stops at target_y or open sky. |
+| `tunnel` | `direction`, `distance` (default 10) | 2-high × 1-wide horizontal tunnel. |
+
+**Step-up mechanism:** The body uses `allowParkour=true` to climb 1-block steps. The pathfinder may return "cancelled" but the body often already moved — always verify position after, never trust the goto response alone.
+
+**Open-sky detection:** Both `staircase` and `spiral` check 3 blocks above the bot. If all are air, they stop and return `stoppedEarly=true`.
+
+**Escape protocol from caves/holes:** If stuck underground and don't know the way out:
+1. `mc_macro(macro="tunnel", direction=<any cardinal>, distance=5)` — dig into a wall
+2. `mc_macro(macro="spiral", target_y=120, steps_per_side=2)` — spiral up to surface
+This guarantees reaching open sky regardless of terrain.
 
 ---
 
