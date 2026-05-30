@@ -4427,17 +4427,6 @@ const httpServer = http.createServer(async (req, res) => {
           blocks_cardinal[dir] = { type, solid };
         }
 
-        // ── blocks_above: what's directly above the bot (y+1, y+2, y+3) ──
-        const blocks_above = [];
-        for (let i = 1; i <= 3; i++) {
-          const ab = b.blockAt(new Vec3(bx, by + i, bz));
-          blocks_above.push({
-            y: by + i,
-            type: ab ? ab.name : 'air',
-            solid: ab ? (ab.boundingBox !== 'empty') : false,
-          });
-        }
-
         // entities: self excluded, nearest 5, minimal fields
         const rawEntities = [];
         for (const [id, e] of Object.entries(b.entities || {})) {
@@ -4458,9 +4447,21 @@ const httpServer = http.createServer(async (req, res) => {
         for (let i = 1; i <= 96; i++) {
           const blk = b.blockAt(new Vec3(bx, by + i, bz));
           const isAir = !blk || blk.name === 'air' || blk.name === 'cave_air' || blk.name === 'void_air';
-          if (isAir) headroom_blocks++;
+        if (isAir) headroom_blocks++;
           else break;
         }
+
+        // ── blocks_above: what's directly above the bot (y+1, y+2, y+3) ──
+        const blocks_above = [];
+        for (let i = 1; i <= 3; i++) {
+          const ab = b.blockAt(new Vec3(bx, by + i, bz));
+          blocks_above.push({
+            y: by + i,
+            type: ab ? ab.name : 'air',
+            solid: ab ? (ab.boundingBox !== 'empty') : false,
+          });
+        }
+
         // Surface: headroom to sky + at least 2 cardinal directions open at feet level
         const openCardinals =
           (blocks_cardinal.north && !blocks_cardinal.north.solid ? 1 : 0) +
