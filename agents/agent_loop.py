@@ -755,7 +755,7 @@ message_lock = threading.Lock()
 ws_connected = threading.Event()
 turn_in_progress = threading.Event()
 
-_controller_mode = "lab"  # default to lab (safe); refreshed from /controller/mode
+_controller_mode = "autonomous"  # default to autonomous; safe default was lab, but we run 24/7 now
 _controller_mode_lock = threading.Lock()
 
 def _is_lab_mode() -> bool:

@@ -292,7 +292,7 @@ const MAX_AGENT_LOG = 50;
 let agentHeartbeat = { nextTurnIn: null, turnInProgress: false }; // countdown for dashboard
 
 // Controller Mode — explicit, not automagic. "lab" = no autonomous turns.
-let controllerMode = "lab"; // hardcoded — config persistence being debugged
+let controllerMode = "autonomous"; // default autonomous for 24/7 operation; overridable via POST /controller/mode
 
 // ═══════════════════════════════════════════════════════════════════
 // Phase 1 Reactive Runner — event producers (debounced edge detectors)
