@@ -1,5 +1,68 @@
 # DaemonCraft Project Memory
 
+## Session 2026-05-30 — Scene Verification Framework + Macro Tools (world-aware branch)
+
+### Branches
+- **`feat/motion-refactor`**: macro tools (staircase, spiral, tunnel) + stuck counter fix
+- **`world-aware`** (12 commits): scene verification, judge, 3D perception, surface detection, tunnel fixes
+
+### What we built
+
+**Macro Tools** (`feat/motion-refactor`, 3 commits):
+- `POST /macro` endpoint → `climbStaircase()`, `climbSpiral()`, `digTunnel()`
+- Hermes tool: `mc_macro(macro, direction?, target_y, steps_per_side?, distance?)`
+- Escape protocol: `tunnel` into wall → `spiral` up
+
+**Scene Verification Framework** (`world-aware`, 12 commits):
+- `GET /scene` → structured + narrative perception (Grok build)
+- `blocks_above` field: y+1, y+2, y+3 above bot (catches tree canopies, ceilings)
+- `is_surface`: 96-block air column + 2 open cardinals (distinguishes deep holes from surface)
+- `judgeAction()`: wraps goto/dig/place/fill/attack/collect/follow, captures before/after position, classifies outcome (success|partial_step_up|blocked|no_progress|displaced|preempted|error)
+- `GET /judge/last` — mailbox for last action verdict
+- Heartbeat enrichment: `scene_graph` + `last_judge` in body_session
+- Trust hierarchy in SOUL-base.md §2.6: scene_graph > judge
+- Lab mode guard in agent_loop.py
+
+**Key fixes:**
+- Stuck counter: save/restore `_stuckRestartCount` across `goto()` calls in `_handleStuck`
+- Tunnel direction: signed delta check (was counting any movement as success)
+- Tunnel mining: now clears feet-level block too (was only y+1 and y+2)
+- Surface detection in macros: uses same 96-block + 2-cardinal criteria as /scene
+- `fill` added to judgeIntents
+
+### Key learnings
+1. **Tool responses lie.** "Placed 16/16" ≠ 16 visible blocks. "Navigation cancelled" ≠ no movement. Always verify with mc_bit/mc_perceive.
+2. **scene_graph is a single Y slice.** It tells you what's at your current Y, not above. Always scan full volume (y-1 to y+5) before building.
+3. **gAndy times out if already executing.** Earlier plan wasn't cancelled before re-calling. Need auto-cancel (card t_c518b077).
+4. **3D perception is essential.** Built a house through a tree canopy because I only scanned ground level. `blocks_above` now catches this.
+5. **The judge works but needs richer taxonomy.** Currently success|blocked|no_progress|etc. Forum review recommended wrong_axis, overshot, partial, displaced, preempted (not yet implemented).
+6. **Position crouch on backstep.** Old recovery logic had it; stripped in refactor. Bot falls off edges. Side-quest.
+
+### Git state
+- `feat/motion-refactor`: 08200ef (macros) + dec95cd (SOUL backport) + c673f95 (combat fix)
+- `world-aware`: 12 commits from 9c03cb6 (lab guard) to 15bc98b (judge fill)
+- Hermes-agent `feat/daemoncraft`: be7c723d5 (mc_macro tool)
+
+### Files modified (world-aware)
+- `agents/bot/server.js`: /scene, /judge/last, judgeAction(), macros, surface detection
+- `agents/agent_loop.py`: lab mode guard, heartbeat scene_graph + last_judge projection
+- `agents/SOUL-base.md`: 3D perception rule, trust hierarchy §2.6, macro tools
+- `agents/bot/lib/motion-controller.js`: stuck counter fix
+- `~/.hermes/SOUL_daemoncraft.md`: macro tools, mc_bit legend, 3D perception rule
+
+### To continue after /new
+- Test escape protocol: tunnel into wall → spiral to surface
+- Test building with proper 3D scanning
+- Implement forum recommendations: richer judge taxonomy, 3×4×3 grid in scene_graph
+- Fix gAndy auto-cancel (card t_c518b077)
+- Side-quest: crouch on backstep
+- Kanban: 5 active cards under epic t_ca3d27e9
+
+### Scenegraph legend (mc_bit full format)
+`#`=stone/ore/andesite, `T`=terracotta, `a`=air, ` `(space)=air/transparent,
+`G`=grass_block, `d`=dirt, `L`=leaves, `l`=log, `.`=short_grass, `,`=leaf_litter,
+`w`=planks, `~`=water, `!`=lava
+
 ## Macro Tools — 2026-05-30
 
 Three pre-canned multi-step skills available via `POST /macro` (bot server) and `mc_macro()` (Hermes tool):
