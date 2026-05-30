@@ -4427,6 +4427,17 @@ const httpServer = http.createServer(async (req, res) => {
           blocks_cardinal[dir] = { type, solid };
         }
 
+        // ── blocks_above: what's directly above the bot (y+1, y+2, y+3) ──
+        const blocks_above = [];
+        for (let i = 1; i <= 3; i++) {
+          const ab = b.blockAt(new Vec3(bx, by + i, bz));
+          blocks_above.push({
+            y: by + i,
+            type: ab ? ab.name : 'air',
+            solid: ab ? (ab.boundingBox !== 'empty') : false,
+          });
+        }
+
         // entities: self excluded, nearest 5, minimal fields
         const rawEntities = [];
         for (const [id, e] of Object.entries(b.entities || {})) {
@@ -4485,6 +4496,7 @@ const httpServer = http.createServer(async (req, res) => {
           position,
           facing,
           blocks_cardinal,
+          blocks_above,
           entities,
           risks,
           is_surface,
