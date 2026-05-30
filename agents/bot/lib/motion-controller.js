@@ -60,6 +60,7 @@ export class MotionController {
     this._stuckRestartCount = 0;  // persists across session restarts — reset on new goto
     this._recoveryEnabled = false; // recovery FSM disabled — stuck restarts use centering + goto/follow
     this._pendingGotoCleanup = null; // cleanup for active goto/gotoNear promise
+    this._handlingStuck = false; // guard against re-entrant _handleStuck calls
     
     bot.on('goal_reached', () => {
       this._stuckCount = 0;
@@ -90,8 +91,13 @@ export class MotionController {
             this._log(`fast stuck: moved ${moved.toFixed(2)}m in ${(FAST_STUCK_CHECK_INTERVAL_MS/1000).toFixed(1)}s (<${FAST_STUCK_MIN_PROGRESS_M}m), direction=${blocked}`);
             this._stuckCheckT0 = 0;
             s.state = SESSION_STATE.STUCK_DETECTED;
-            // Call stub (Phase 1: just log + mark FAILED; no FSM/recovery yet)
-            this._handleStuck(s);
+            // Guard against re-entrant _handleStuck calls (async, fire-and-forget).
+            // Without this, the 200ms interval fires a second _handleStuck while
+            // the first is still mining — the second's goto restart cancels the first's dig.
+            if (!this._handlingStuck) {
+              this._handlingStuck = true;
+              this._handleStuck(s).finally(() => { this._handlingStuck = false; });
+            }
           }
         } else {
           this._stuckCheckT0 = 0;
