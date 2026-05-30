@@ -1,5 +1,13 @@
 # DaemonCraft Project Memory
 
+## Session 2026-05-30 — Auto-Cancel Fix (t_c518b077)
+
+### Card F: Auto-cancel gAndy plans on new embodied_plan call
+- **Problem**: second `embodied_plan` timeout because bot's `currentTask` still `running` from fire-and-forget actions of previous plan
+- **Fix**: `_cancel_bot_task()` in `embodied_plan_tool.py` (hermes-agent feat/daemoncraft) — sends `POST /task/cancel` to bot before every new intent (fire-and-forget, 2s timeout)
+- **Deployed**: `~/.hermes/hermes-agent/tools/embodied_plan_tool.py`
+- **Kanban**: t_c518b077 (done)
+
 ## Session 2026-05-30 — Scene Verification Framework + Macro Tools (world-aware branch)
 
 ### Judge Mailbox Expansion (May 30, late session)
