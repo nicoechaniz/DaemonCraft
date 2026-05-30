@@ -1221,11 +1221,17 @@ async function digTunnel(bot, direction, distance) {
     const curY = Math.floor(bot.entity.position.y);
     const curZ = Math.floor(bot.entity.position.z);
 
-    // ── Mine 2 blocks ──────────────────────────────────────
+    // ── Mine 2-3 blocks (feet level + head level) ─────────
+    // For horizontal tunnel, we also need the block at feet level cleared
     const targets = [
+      { x: curX + dir.dx, y: curY,     z: curZ + dir.dz, label: 'feet' },
       { x: curX + dir.dx, y: curY + 1, z: curZ + dir.dz, label: 'eyes' },
-      { x: curX + dir.dx, y: curY + 2, z: curZ + dir.dz, label: 'above-eyes' },
     ];
+    // Add headroom block only if there's a solid ceiling directly above
+    const aboveBlock = bot.blockAt(new Vec3(curX + dir.dx, curY + 2, curZ + dir.dz));
+    if (aboveBlock && aboveBlock.name !== 'air' && aboveBlock.name !== 'cave_air' && aboveBlock.name !== 'void_air') {
+      targets.push({ x: curX + dir.dx, y: curY + 2, z: curZ + dir.dz, label: 'above-eyes' });
+    }
 
     for (const t of targets) {
       const block = bot.blockAt(new Vec3(t.x, t.y, t.z));
