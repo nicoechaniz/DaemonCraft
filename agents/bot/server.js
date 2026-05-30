@@ -1253,10 +1253,12 @@ async function digTunnel(bot, direction, distance) {
       // cancellation is fine
     }
 
-    // Verify forward movement
-    const dx2 = Math.abs(bot.entity.position.x - beforeX);
-    const dz2 = Math.abs(bot.entity.position.z - beforeZ);
-    if (dx2 > 0.3 || dz2 > 0.3) {
+    // Verify forward movement in the intended direction
+    const dx2 = bot.entity.position.x - beforeX;
+    const dz2 = bot.entity.position.z - beforeZ;
+    const movedCorrectDir = (dir.dx < 0 && dx2 < -0.3) || (dir.dx > 0 && dx2 > 0.3) ||
+                            (dir.dz < 0 && dz2 < -0.3) || (dir.dz > 0 && dz2 > 0.3);
+    if (movedCorrectDir) {
       steps++;
     } else {
       // Nudge
@@ -1264,9 +1266,11 @@ async function digTunnel(bot, direction, distance) {
       await sleep(400);
       bot.setControlState('forward', false);
       await sleep(100);
-      const dx3 = Math.abs(bot.entity.position.x - beforeX);
-      const dz3 = Math.abs(bot.entity.position.z - beforeZ);
-      if (dx3 > 0.3 || dz3 > 0.3) steps++;
+      const dx3 = bot.entity.position.x - beforeX;
+      const dz3 = bot.entity.position.z - beforeZ;
+      const nudgeOK = (dir.dx < 0 && dx3 < -0.3) || (dir.dx > 0 && dx3 > 0.3) ||
+                      (dir.dz < 0 && dz3 < -0.3) || (dir.dz > 0 && dz3 > 0.3);
+      if (nudgeOK) steps++;
     }
 
     if (steps >= distance) break;
