@@ -283,7 +283,8 @@ let recentFragments = [];
 
 // Rolling buffer of recent action outcomes for loop detection
 let actionHistory = []; // { action, status, time }
-const MAX_ACTION_HISTORY = 100;
+const MAX_ACTION_HISTORY = 200;
+let lastJudge = null; // mailbox for judgeAction() results, read by GET /judge/last
 let agentLog = []; // { turn, time, prompt, response, tool_calls, error }
 const MAX_AGENT_LOG = 50;
 let agentHeartbeat = { nextTurnIn: null, turnInProgress: false }; // countdown for dashboard
@@ -1283,6 +1284,86 @@ async function digTunnel(bot, direction, distance) {
     endPos,
     message: `Tunneled ${steps} blocks ${direction} (target ${distance}).`,
   };
+}
+
+/**
+ * Post-action judge — wraps an action, captures before/after state,
+ * classifies the outcome, and stores the result in the lastJudge mailbox.
+ *
+ * @param {object}   intent    - { action, target?, targetY?, direction? }
+ * @param {function} actionFn  - async function that performs the action
+ */
+async function judgeAction(intent, actionFn) {
+  const b = ensureBot();
+  const before = {
+    tick: (b.time && typeof b.time.age === 'number') ? b.time.age : Date.now(),
+    pos: { x: b.entity.position.x, y: b.entity.position.y, z: b.entity.position.z },
+  };
+  let error = null;
+  let value;
+  try {
+    value = await actionFn();
+  } catch (e) {
+    error = e.message;
+  }
+  await sleep(50); // let physics settle
+  const after = {
+    tick: (b.time && typeof b.time.age === 'number') ? b.time.age : Date.now(),
+    pos: { x: b.entity.position.x, y: b.entity.position.y, z: b.entity.position.z },
+  };
+
+  const dx = after.pos.x - before.pos.x;
+  const dy = after.pos.y - before.pos.y;
+  const dz = after.pos.z - before.pos.z;
+  const moved = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+  let outcome, confidence, reason_code;
+  const runnerActive = bodyMutex && bodyMutex.getStatus().mode === 3; // REFLEX
+
+  if (error) {
+    outcome = 'error';
+    confidence = 'high';
+    reason_code = 'EXCEPTION';
+  } else if (runnerActive) {
+    outcome = 'preempted';
+    confidence = 'high';
+    reason_code = 'RUNNER_ACTIVE';
+  } else if (moved < 0.05) {
+    outcome = 'no_progress';
+    confidence = 'high';
+    reason_code = 'NO_MOVEMENT';
+  } else if (dy > 0.3 && intent.action === 'goto') {
+    outcome = 'success';  // step-up counted as success
+    confidence = 'medium';
+    reason_code = 'STEP_UP';
+  } else if (dy < -0.5) {
+    outcome = 'displaced';
+    confidence = 'high';
+    reason_code = 'FELL';
+  } else if (moved > 0.05) {
+    outcome = 'success';
+    confidence = 'high';
+    reason_code = 'MOVED';
+  } else {
+    outcome = 'no_progress';
+    confidence = 'low';
+    reason_code = 'UNKNOWN';
+  }
+
+  const entry = {
+    action: intent.action,
+    intent: intent.target ? { x: intent.target.x, y: intent.target.y, z: intent.target.z } : null,
+    outcome,
+    confidence,
+    reason_code,
+    position_before: before.pos,
+    position_after: after.pos,
+    position_delta: { dx: Math.round(dx * 10) / 10, dy: Math.round(dy * 10) / 10, dz: Math.round(dz * 10) / 10 },
+    captured_at_tick: after.tick,
+    error: error || null,
+  };
+  lastJudge = entry;
+  return { judge: entry, value };
 }
 
 // List visible entities by type with distances
@@ -4410,6 +4491,11 @@ const httpServer = http.createServer(async (req, res) => {
         return respond(res, 200, { ok: true, data: { structured, narrative } });
       }
 
+      // Post-action judge — returns the most recent judgeAction() result
+      if (path === '/judge/last') {
+        return respond(res, 200, { ok: true, data: lastJudge || null });
+      }
+
       // Screenshot via prismarine-viewer + puppeteer
       if (path === '/screenshot') {
         const width = parseInt(url.searchParams.get('width') || '1280');
@@ -5309,7 +5395,25 @@ const httpServer = http.createServer(async (req, res) => {
 
       actionInProgress = true;
       try {
-        const result = await actionFn(body);
+        // Wrap judgeable actions with judgeAction() for post-action feedback
+        const judgeIntents = new Set(['goto', 'gotoNear', 'dig', 'place', 'attack', 'collect', 'follow']);
+        let result;
+        if (judgeIntents.has(actionName)) {
+          const intent = {
+            action: actionName,
+            target: (body.x != null) ? { x: body.x, y: body.y, z: body.z } : null,
+            direction: body.direction || null,
+            targetY: body.target_y || null,
+          };
+          // judgeAction runs the action AND captures before/after
+          const { judge, value } = await judgeAction(intent, () => actionFn(body));
+          result = value;
+          if (typeof result === 'object' && result !== null) {
+            result._judge = judge;
+          }
+        } else {
+          result = await actionFn(body);
+        }
         actionHistory.push({ action: actionName, status: 'done', time: Date.now() });
         if (actionHistory.length > MAX_ACTION_HISTORY) actionHistory.shift();
         broadcastDashboard('actions', actionHistory.slice(-50));

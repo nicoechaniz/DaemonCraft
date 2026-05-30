@@ -513,6 +513,43 @@ def _build_body_session(status: dict, reason: str = "idle") -> dict:
     # Nearby hostiles with positions
     hostiles = combat_data.get("hostiles") or []
 
+    # ── Scene graph from /scene endpoint (compact projection) ──
+    scene_graph = None
+    try:
+        scene_resp = _get_json("/scene")
+        if scene_resp and scene_resp.get("ok"):
+            s = scene_resp.get("data", {}).get("structured", {})
+            if s:
+                scene_graph = {
+                    "pos": s.get("position"),
+                    "face": s.get("facing"),
+                    "around": {k: v["type"] for k, v in s.get("blocks_cardinal", {}).items()},
+                    "surface": s.get("is_surface"),
+                    "headroom": s.get("headroom_blocks"),
+                    "entities": len(s.get("entities", [])),
+                    "risks": s.get("risks", []),
+                    "tick": s.get("tick"),
+                }
+    except Exception:
+        pass
+
+    # ── Last judge from /judge/last (post-action feedback) ──
+    last_judge = None
+    try:
+        jr = _get_json("/judge/last")
+        if jr and jr.get("ok") and jr.get("data"):
+            j = jr["data"]
+            last_judge = {
+                "action": j.get("action"),
+                "outcome": j.get("outcome"),
+                "confidence": j.get("confidence"),
+                "reason": j.get("reason_code"),
+                "delta": j.get("position_delta"),
+                "tick": j.get("captured_at_tick"),
+            }
+    except Exception:
+        pass
+
     return {
         "heartbeat_reason": reason,
         "mode": task.get("status") if task else "idle",
@@ -530,6 +567,8 @@ def _build_body_session(status: dict, reason: str = "idle") -> dict:
         "runner_activity": runner_activity,
         "executor_state": _executor.get_state() if _executor else {"active": False},
         "orchestrator_state": _orchestrator.get_last_result() if _orchestrator else {"active": False},
+        "scene_graph": scene_graph,
+        "last_judge": last_judge,
     }
 
 

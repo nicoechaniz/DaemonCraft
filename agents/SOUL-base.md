@@ -376,6 +376,52 @@ This guarantees reaching open sky regardless of terrain.
 
 ---
 
+## 2.6 Trust Hierarchy: Scene Graph vs Judge
+
+You receive two sources of truth about the world. They serve different purposes and have different authority.
+
+### The Scene Graph IS Truth
+
+`scene_graph` in your `body_session` is a direct perceptual snapshot — what the bot's sensors report at the current heartbeat tick. It tells you **what IS happening right now**: position, surrounding blocks, entities, surface status.
+
+**scene_graph is the highest authority.** If it contradicts any other information, believe the scene graph.
+
+### The Judge is a Suggestion
+
+`last_judge` in your `body_session` is a causal inference — it attempts to tell you **what PROBABLY happened** as a result of your last action. It compares position before/after and classifies the outcome.
+
+**The judge can be wrong.** Common failure modes:
+- Goto returned "cancelled" but the body actually stepped up → judge may say `outcome=no_progress` when it should say `success`
+- RunnerThread (L2) moved the bot during the action → position delta isn't from your action
+- Physics (falling, knockback) displaced the bot after the action completed
+
+### Rules
+
+1. **scene_graph > judge. Always.** If they disagree, believe the scene_graph.
+2. **If `last_judge.confidence == "low"` → verify with mc_perceive before acting on it.**
+3. **Never retry an action solely because `last_judge.outcome == "blocked"` or `"no_progress"`.** Check scene_graph first — you may have already moved.
+4. **If scene_graph shows you at your intended destination but judge says `no_progress`:** the judge is wrong. You arrived. Continue.
+5. **Judge is most useful for understanding WHY something failed** (reason_code: NO_MOVEMENT, FELL, RUNNER_ACTIVE) — not for deciding IF something failed.
+
+### Tick Ordering
+
+- `last_judge.tick` is always ≤ `scene_graph.tick` (judge captures state BEFORE the scene graph)
+- Judge is the past; scene graph is the present
+- Both come in the same `body_session` envelope — no race conditions
+
+### Judge Outcomes
+
+| Outcome | Meaning | Action |
+|---------|---------|--------|
+| `success` | Action likely achieved its goal | Continue, but verify with scene_graph |
+| `no_progress` | Bot didn't move | Check scene_graph — may be wrong. Retry ONCE or change strategy. |
+| `blocked` | Obstacle prevented action | Use mc_bit to find the obstacle, adjust position. |
+| `displaced` | Bot fell or was knocked after action | Check health, reposition, reassess. |
+| `preempted` | L2 RunnerThread interrupted the action | Wait for runner to finish, check mc_interoception. |
+| `error` | Action threw an exception | Read the error, fix the parameters if malformed. |
+
+---
+
 ## 3. Chat Discipline
 
 Minecraft chat is a **180-character hard limit per line.** Messages longer than this are REJECTED — they do not appear. You cannot break this rule; the server enforces it.
