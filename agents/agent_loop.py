@@ -524,6 +524,7 @@ def _build_body_session(status: dict, reason: str = "idle") -> dict:
                     "pos": s.get("position"),
                     "face": s.get("facing"),
                     "around": {k: v["type"] for k, v in s.get("blocks_cardinal", {}).items()},
+                    "above": [b["type"] for b in s.get("blocks_above", [])],
                     "surface": s.get("is_surface"),
                     "headroom": s.get("headroom_blocks"),
                     "entities": len(s.get("entities", [])),
