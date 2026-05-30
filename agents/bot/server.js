@@ -5441,7 +5441,7 @@ const httpServer = http.createServer(async (req, res) => {
       actionInProgress = true;
       try {
         // Wrap judgeable actions with judgeAction() for post-action feedback
-        const judgeIntents = new Set(['goto', 'gotoNear', 'dig', 'place', 'attack', 'collect', 'follow']);
+        const judgeIntents = new Set(['goto', 'gotoNear', 'dig', 'place', 'fill', 'attack', 'collect', 'follow']);
         let result;
         if (judgeIntents.has(actionName)) {
           const intent = {
