@@ -1,5 +1,48 @@
 # DaemonCraft Project Memory
 
+## Session 2026-05-30 — Major: Two Houses, Pathfinder Fixes, Orchestrator Verify, Persistent Autonomous
+
+### State at session end
+- **Tag**: v0.4.0-best-state (world-aware branch, 12+ commits)
+- **Two houses built** in mesa: House 1 (X:548-555, Z:-336 to -329), House 2 (X:562-569, Z:-336 to -329)
+- **Controller mode**: persistent autonomous (both agent_loop.py and server.js default to "autonomous")
+- **Bot gear**: full netherite armor + axe, cooked_beef 37
+- **Orchestrator**: running with real verify conditions against bot API
+
+### Key fixes delivered
+1. **Card F (t_c518b077)**: Auto-cancel gAndy before new embodied_plan. `_cancel_bot_task()` in embodied_plan_tool.py sends fire-and-forget POST /task/cancel before every intent.
+2. **Stuck re-entry guard**: `_handlingStuck` flag prevents concurrent `_handleStuck` calls cancelling each other's mining.
+3. **Head-height diagonal guard**: `getMoveDiagonal` now rejects diagonals where cardinal blocks at y+1 are physical. Prevents shoulder-clipping into leaves.
+4. **Orchestrator verify fix**: `sync_progress` now calls `_verify_condition()` against bot API before marking sub-plans done. New `/block` endpoint on bot server. Previously blindly trusted executor=cleared.
+5. **Persistent autonomous mode**: Both agent_loop.py and server.js default to "autonomous". Survives restarts.
+
+### Build patterns learned
+- fill_volume only fills AIR gaps — doesn't replace existing blocks
+- mine_block (gAndy) mines globally — not within footprint coordinates
+- Previous_error retry with correct block name works
+- PlanManifest verify types must be lowercase
+- Orchestrator needs autonomous mode — but dispatches still work in lab mode
+
+### HMK Memory Shelves (populated this session)
+- mc-episodic: two-houses-built-world-aware-branch
+- mc-social: NicoElViejoGamer
+- mc-skills: building-patterns-world-aware, hmk-memory-update-discipline
+- mc-places: house-1-west-terracotta, house-2-east-yellow-terracotta
+- Rule: ONE authoritative entry per topic, replace or archive old versions
+
+### SOUL templates updated
+- SOUL-base.md §10: HMK Minecraft shelves documentation
+- SOUL-lab.md: short HMK reference
+- SOUL_daemoncraft.md: full HMK with cross-linking rules and writing discipline
+
+### gAndy building observations
+- Works well with fill_volume for walls (air targets)
+- Struggles with mine_block (global targeting)
+- Needs precise coordinate format: [X,Y,Z] not X:Y:Z
+- previous_error with correct block name enables material substitution
+- Timeout is HTTP only — gAndy continues executing in background
+- Orchestrator dispatched walls successfully (yellow/red/orange terracotta mix)
+
 ## Session 2026-05-30 — Auto-Cancel Fix (t_c518b077)
 
 ### Card F: Auto-cancel gAndy plans on new embodied_plan call
