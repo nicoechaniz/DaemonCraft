@@ -4277,8 +4277,137 @@ const httpServer = http.createServer(async (req, res) => {
       }
 
       if (path === '/scene') {
-        const range = parseInt(url.searchParams.get('range') || '16');
-        return respond(res, 200, { ok: true, data: buildSceneSummary({ range: Math.min(range, 24) }) });
+        const b = ensureBot();
+        const pos = b.entity.position;
+        const px = pos.x, py = pos.y, pz = pos.z;
+
+        // tick (game age if available, else timestamp)
+        const tick = (b.time && typeof b.time.age === 'number') ? b.time.age : Date.now();
+
+        // position as whole numbers (matches observed usage)
+        const position = {
+          x: Math.round(px),
+          y: Math.round(py),
+          z: Math.round(pz),
+        };
+
+        // facing: snap yaw to 4 cardinal using Math.round as specified
+        let yaw = b.entity.yaw || 0;
+        yaw = ((yaw % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+        if (yaw > Math.PI) yaw -= 2 * Math.PI;
+        const i = Math.round(yaw / (Math.PI / 2));
+        const normI = ((i % 4) + 4) % 4;
+        const FACINGS = ['east', 'south', 'west', 'north'];
+        const facing = FACINGS[normI];
+
+        // 6-dir cardinal blocks (exactly as specified)
+        const DIRS = {
+          north: { dx: 0, dy: 0, dz: -1 },
+          south: { dx: 0, dy: 0, dz: 1 },
+          east:  { dx: 1, dy: 0, dz: 0 },
+          west:  { dx: -1, dy: 0, dz: 0 },
+          up:    { dx: 0, dy: 1, dz: 0 },
+          down:  { dx: 0, dy: -1, dz: 0 },
+        };
+        const blocks_cardinal = {};
+        for (const [dir, d] of Object.entries(DIRS)) {
+          const bx = px + d.dx;
+          const by = py + d.dy;
+          const bz = pz + d.dz;
+          const blk = b.blockAt(new Vec3(bx, by, bz));
+          const type = blk ? blk.name : 'air';
+          const solid = blk ? (blk.boundingBox !== 'empty') : false;
+          blocks_cardinal[dir] = { type, solid };
+        }
+
+        // entities: self excluded, nearest 5, minimal fields
+        const rawEntities = [];
+        for (const [id, e] of Object.entries(b.entities || {})) {
+          if (e === b.entity || !e.position) continue;
+          const dist = pos.distanceTo(e.position);
+          const name = e.username || e.name || e.displayName || e.mobType || 'unknown';
+          const type = e.type || (e.username ? 'player' : 'mob');
+          rawEntities.push({ name, type, distance: Math.round(dist * 10) / 10 });
+        }
+        rawEntities.sort((a, c) => a.distance - c.distance);
+        const entities = rawEntities.slice(0, 5);
+
+        // headroom: consecutive air above (y+1, y+2, ...)
+        const bx = Math.floor(px);
+        const by = Math.floor(py);
+        const bz = Math.floor(pz);
+        let headroom_blocks = 0;
+        for (let i = 1; i <= 32; i++) {
+          const blk = b.blockAt(new Vec3(bx, by + i, bz));
+          const isAir = !blk || blk.name === 'air' || blk.name === 'cave_air' || blk.name === 'void_air';
+          if (isAir) headroom_blocks++;
+          else break;
+        }
+        const is_surface = headroom_blocks >= 3;
+
+        // risks: lava/water at feet level (and eye) in 4 horiz directions
+        const risks = [];
+        const feetY = Math.floor(py);
+        const riskDirs = ['north', 'south', 'east', 'west'];
+        for (const dir of riskDirs) {
+          const d = DIRS[dir];
+          const rx = bx + d.dx;
+          const rz = bz + d.dz;
+          for (let dy = 0; dy <= 1; dy++) {
+            const rblk = b.blockAt(new Vec3(rx, feetY + dy, rz));
+            if (rblk && (rblk.name === 'lava' || rblk.name === 'flowing_lava' ||
+                         rblk.name === 'water' || rblk.name === 'flowing_water')) {
+              risks.push(`${dir}_hazard`);
+              break;
+            }
+          }
+        }
+        const standBlk = b.blockAt(new Vec3(bx, feetY, bz));
+        if (standBlk && (standBlk.name.includes('lava') || standBlk.name.includes('water'))) {
+          risks.push('standing_in_fluid');
+        }
+
+        const structured = {
+          tick,
+          position,
+          facing,
+          blocks_cardinal,
+          entities,
+          risks,
+          is_surface,
+          headroom_blocks,
+        };
+
+        // deterministic narrative (template, no extra fields)
+        const x = position.x, y = position.y, z = position.z;
+        let narrative = `You are at (${x},${y},${z}) facing ${facing}.`;
+        const solidList = [];
+        const openDirs = [];
+        for (const dir of ['north', 'south', 'east', 'west', 'up']) {
+          const info = blocks_cardinal[dir];
+          let label = dir;
+          if (dir === 'up') label = 'above';
+          if (info.solid) {
+            solidList.push(`${info.type} ${label}`);
+          } else {
+            openDirs.push(dir === 'up' ? 'above' : dir);
+          }
+        }
+        if (solidList.length > 0) {
+          narrative += ` Solid ${solidList.join(' and ')}`;
+        }
+        if (openDirs.length > 0) {
+          if (solidList.length > 0) narrative += ', ';
+          else narrative += ' ';
+          const openPhrase = openDirs.length === 1
+            ? (openDirs[0] === 'above' ? 'open air above' : `open air to the ${openDirs[0]}`)
+            : 'open air to the ' + openDirs.slice(0, -1).join(', ') + ' and ' + openDirs[openDirs.length-1];
+          narrative += `${openPhrase}.`;
+        } else if (solidList.length > 0) {
+          narrative += '.';
+        }
+
+        return respond(res, 200, { ok: true, data: { structured, narrative } });
       }
 
       // Screenshot via prismarine-viewer + puppeteer
