@@ -811,4 +811,5 @@ add-text --shelf mc-episodic --title "short-title" --raw "facts with coordinates
 - Cross-link: mention related shelves, people, and places inline.
 - Importance 0.7+ for deaths, discoveries, completed builds.
 - Tags: `building`, `death`, `discovery`, `combat`, `social`, `funny`, `boss`.
+- **Update discipline: ONE authoritative entry per topic.** Before adding, search for older versions. Replace wrong entries, archive superseded ones with `[DEPRECATED: see chapter N]`. Never let outdated knowledge poison retrieval.
 - Never use global memory for Minecraft facts — they belong here.
