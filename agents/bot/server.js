@@ -239,6 +239,9 @@ for (let i = 2; i < process.argv.length; i++) {
 
 // Pathfinder settings from unified config
 const PATHFINDER_CFG = unifiedConfig.pathfinder || {};
+if (PATHFINDER_CFG.max_stuck_attempts != null) {
+  process.env.MC_MAX_STUCK_ATTEMPTS = String(PATHFINDER_CFG.max_stuck_attempts);
+}
 
 // Chat settings from unified config
 const CHAT_CFG = unifiedConfig.chat || {};
@@ -632,6 +635,8 @@ async function createBotImpl() {
       moves.allowSprinting = true; // PATHFINDER_CFG.allow_sprinting ?? false;
       moves.canDig = PATHFINDER_CFG.can_dig ?? true;
       moves.allowParkour = PATHFINDER_CFG.allow_parkour ?? true;
+      moves.allow1by1towers = PATHFINDER_CFG.allow_1by1_towers ?? false;
+      moves.scaffoldingBlocks = PATHFINDER_CFG.scaffolding_blocks ?? [];
       bot.pathfinder.setMovements(moves);
 
       // MotionController owns all pathfinding state
@@ -656,11 +661,14 @@ async function createBotImpl() {
         }
       }, 5000);
 
-      // Auto-disguise as Allay — Pamplinas is always the daemoncito
-      setTimeout(() => {
-        bot.chat('/disguise allay');
-        log('Auto-disguised as Allay');
-      }, 3000);
+      // Auto-disguise disabled — being a mob breaks PvP=false protection.
+      // To re-enable, set BOT_DISGUISE=allay in env.
+      if (process.env.BOT_DISGUISE) {
+        setTimeout(() => {
+          bot.chat(`/disguise ${process.env.BOT_DISGUISE}`);
+          log(`Auto-disguised as ${process.env.BOT_DISGUISE}`);
+        }, 3000);
+      }
 
       // Configure auto-eat: eat to recover health. Minecraft regen needs hunger>=18 + saturation>0.
       // Eat when hunger drops below 18 to keep saturation high and health regenerating.
@@ -757,12 +765,13 @@ async function createBotImpl() {
 
       // Teleport detection — cancel navigation when forcibly moved by server
       let lastPos = null;
+      const TP_DISTANCE_THRESHOLD = PATHFINDER_CFG.tp_distance_threshold ?? 3;
       bot.on('move', () => {
         if (!bot || !bot.entity || !bot.entity.position) return;
         const pos = bot.entity.position;
         if (!lastPos) { lastPos = pos.clone(); return; }
         const dist = pos.distanceTo(lastPos);
-        if (dist > 5) {
+        if (dist > TP_DISTANCE_THRESHOLD) {
           // Teleported — nuclear stop: motion, pathfinder, control states, events, mutex
           try {
             if (bot && bot.motion) {
@@ -937,58 +946,343 @@ async function createBotImpl() {
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 function fmt(v) { return typeof v === 'number' ? Math.round(v * 10) / 10 : v; }
 
-/** Mine a 1-wide staircase upward to reach targetY.
- *  Algorithm: face a wall, mine head-height block, mine block above it,
- *  jump up one step, repeat until at targetY.
- *  Uses the blocks around the bot — no inventory required.
+/** Cardinal direction → unit vector. West = -X, East = +X, North = -Z, South = +Z. */
+const CARDINAL_DIRS = {
+  west:  { dx: -1, dz:  0 },
+  east:  { dx:  1, dz:  0 },
+  north: { dx:  0, dz: -1 },
+  south: { dx:  0, dz:  1 },
+};
+
+/**
+ * Mine a 1-wide diagonal staircase upward through solid terrain.
+ *
+ * Pattern (3 blocks per step, heading in `direction`):
+ *   1. Block in front of eyes:   (x + dx, y+1, z + dz)
+ *   2. Block above that:         (x + dx, y+2, z + dz)
+ *   3. Block directly above head:(x,      y+2, z)
+ *
+ * Movement: set a pathfinder goal one block forward+up. The pathfinder's
+ * allowParkour handles the 1-block step-up. Fast-stuck may cancel the goto
+ * but the body often already moved — verify position, not the response.
+ *
+ * @param {string} direction  - 'west'|'east'|'north'|'south'
+ * @param {number} targetY    - stop when bot reaches this Y (floor)
+ * @returns {{ steps: number, finalY: number, message: string }}
  */
-async function climbStaircase(bot, targetY) {
+async function climbStaircase(bot, direction, targetY) {
+  const dir = CARDINAL_DIRS[direction];
+  if (!dir) throw new Error(`Invalid direction '${direction}'. Use west/east/north/south.`);
+
   const startY = Math.floor(bot.entity.position.y);
-  if (startY >= targetY) return;
+  if (startY >= targetY) return { steps: 0, finalY: startY, message: `Already at or above Y=${targetY}.` };
 
-  // Pick a direction to dig into (use the bot's current yaw)
-  const yaw = bot.entity.yaw;
-  const dirs = [
-    { dx: 1, dz: 0 },   // south (+x)
-    { dx: 0, dz: 1 },   // west  (+z)
-    { dx: -1, dz: 0 },  // north (-x)
-    { dx: 0, dz: -1 },  // east  (-z)
-  ];
-  const dirIdx = Math.round((yaw % (2 * Math.PI)) / (Math.PI / 2) + 4) % 4;
-  const dir = dirs[dirIdx];
+  let steps = 0;
+  const maxSteps = (targetY - startY) * 2; // safety cap
 
-  for (let step = 0; step < (targetY - startY) * 2; step++) {
+  for (let i = 0; i < maxSteps; i++) {
     const curX = Math.floor(bot.entity.position.x);
     const curY = Math.floor(bot.entity.position.y);
     const curZ = Math.floor(bot.entity.position.z);
 
-    // Mine the block in front at head/chest level
-    const headBlock = bot.blockAt(new Vec3(curX + dir.dx, curY + 1, curZ + dir.dz));
-    if (headBlock && headBlock.name !== 'air' && headBlock.name !== 'cave_air') {
-      await bot.tool.equipForBlock(headBlock);
-      await bot.dig(headBlock, true);
-      await sleep(150);
+    // ── Check for open sky / surface ─────────────────────────
+    const skyCheck = [
+      bot.blockAt(new Vec3(curX, curY + 1, curZ)),
+      bot.blockAt(new Vec3(curX, curY + 2, curZ)),
+      bot.blockAt(new Vec3(curX, curY + 3, curZ)),
+    ];
+    const allAir = skyCheck.every(b => !b || b.name === 'air' || b.name === 'cave_air' || b.name === 'void_air');
+    if (allAir) {
+      log(`[staircase] Reached open sky at Y=${curY}`);
+      break;
     }
 
-    // Mine the block above that (2 blocks up, to make room)
-    const topBlock = bot.blockAt(new Vec3(curX + dir.dx, curY + 2, curZ + dir.dz));
-    if (topBlock && topBlock.name !== 'air' && topBlock.name !== 'cave_air') {
-      await bot.tool.equipForBlock(topBlock);
-      await bot.dig(topBlock, true);
-      await sleep(150);
+    // ── Mine 3 blocks ──────────────────────────────────────
+    const targets = [
+      { x: curX + dir.dx, y: curY + 1, z: curZ + dir.dz, label: 'eyes' },
+      { x: curX + dir.dx, y: curY + 2, z: curZ + dir.dz, label: 'above-eyes' },
+      { x: curX,          y: curY + 2, z: curZ,           label: 'above-head' },
+    ];
+
+    for (const t of targets) {
+      const block = bot.blockAt(new Vec3(t.x, t.y, t.z));
+      if (block && block.name !== 'air' && block.name !== 'cave_air' && block.name !== 'void_air') {
+        try {
+          await bot.tool.equipForBlock(block);
+          await bot.dig(block, true);
+        } catch (e) {
+          log(`[staircase] dig failed at ${t.x},${t.y},${t.z} (${t.label}): ${e.message}`);
+        }
+        await sleep(100);
+      }
     }
 
-    // Jump to the new step
-    bot.setControlState('jump', true);
-    bot.setControlState('forward', true);
-    await sleep(300);
-    bot.setControlState('jump', false);
-    bot.setControlState('forward', false);
-    await sleep(200);
+    // ── Step up ────────────────────────────────────────────
+    const beforeY = bot.entity.position.y;
+    const targetX = curX + dir.dx + 0.5;
+    const targetYstep = curY + 1;
+    const targetZ = curZ + dir.dz + 0.5;
+
+    try {
+      // Use motion.goto — allowParkour handles 1-block step-up.
+      // Fast-stuck may cancel the goto, but the body often already moved.
+      // Ignore the response; verify with position after a short delay.
+      bot.motion.goto(targetX, targetYstep, targetZ);
+      await sleep(600);
+    } catch (e) {
+      // goto may reject on cancellation — that's fine
+    }
+
+    // Verify: did we actually step up?
+    const afterY = bot.entity.position.y;
+    if (Math.floor(afterY) > curY) {
+      steps++;
+    } else {
+      // Retry once with a nudge (walk forward into the step)
+      bot.setControlState('forward', true);
+      await sleep(400);
+      bot.setControlState('forward', false);
+      await sleep(100);
+      if (Math.floor(bot.entity.position.y) > curY) {
+        steps++;
+      }
+      // If still no progress, continue loop — next mine cycle will re-clear
+    }
 
     if (Math.floor(bot.entity.position.y) >= targetY) break;
   }
+
   if (bot.motion) bot.motion.stop().catch(() => {});
+  const finalY = Math.floor(bot.entity.position.y);
+  const stoppedEarly = finalY < targetY;
+  return {
+    steps,
+    finalY,
+    stoppedEarly,
+    message: stoppedEarly
+      ? `Staircase stopped at Y=${finalY} (open sky detected) after ${steps} steps heading ${direction}. Target was ${targetY}.`
+      : `Reached Y=${finalY} (target ${targetY}) in ${steps} steps heading ${direction}.`,
+  };
+}
+
+/** Rotation order for spiral staircase. */
+const SPIRAL_ORDER = ['west', 'north', 'east', 'south'];
+
+/**
+ * Mine a 1-wide spiral (caracol) staircase upward.
+ *
+ * Same 3-block pattern as climbStaircase, but rotates direction 90°
+ * every `stepsPerSide` steps. This creates a helical staircase that
+ * stays within a compact footprint.
+ *
+ * @param {number} targetY      - stop when bot reaches this Y (floor)
+ * @param {number} stepsPerSide - steps before rotating direction (default 3)
+ * @returns {{ steps: number, finalY: number, message: string }}
+ */
+async function climbSpiral(bot, targetY, stepsPerSide = 3) {
+  const startY = Math.floor(bot.entity.position.y);
+  if (startY >= targetY) return { steps: 0, finalY: startY, message: `Already at or above Y=${targetY}.` };
+
+  let dirIdx = 0;          // index into SPIRAL_ORDER
+  let stepsOnSide = 0;     // steps taken on current side
+  let totalSteps = 0;
+  const maxSteps = (targetY - startY) * 3; // spiral wastes some movement, allow more
+
+  for (let i = 0; i < maxSteps; i++) {
+    const direction = SPIRAL_ORDER[dirIdx];
+    const dir = CARDINAL_DIRS[direction];
+
+    const curX = Math.floor(bot.entity.position.x);
+    const curY = Math.floor(bot.entity.position.y);
+    const curZ = Math.floor(bot.entity.position.z);
+
+    // ── Check for open sky / surface ─────────────────────────
+    // If all blocks above the bot are air, we've reached open sky — stop.
+    const skyCheck = [
+      bot.blockAt(new Vec3(curX, curY + 1, curZ)),
+      bot.blockAt(new Vec3(curX, curY + 2, curZ)),
+      bot.blockAt(new Vec3(curX, curY + 3, curZ)),
+    ];
+    const allAir = skyCheck.every(b => !b || b.name === 'air' || b.name === 'cave_air' || b.name === 'void_air');
+    if (allAir) {
+      log(`[spiral] Reached open sky at Y=${curY}`);
+      break;
+    }
+
+    // ── Mine 3 blocks ──────────────────────────────────────
+    const targets = [
+      { x: curX + dir.dx, y: curY + 1, z: curZ + dir.dz, label: 'eyes' },
+      { x: curX + dir.dx, y: curY + 2, z: curZ + dir.dz, label: 'above-eyes' },
+      { x: curX,          y: curY + 2, z: curZ,           label: 'above-head' },
+    ];
+
+    for (const t of targets) {
+      const block = bot.blockAt(new Vec3(t.x, t.y, t.z));
+      if (block && block.name !== 'air' && block.name !== 'cave_air' && block.name !== 'void_air') {
+        try {
+          await bot.tool.equipForBlock(block);
+          await bot.dig(block, true);
+        } catch (e) {
+          log(`[spiral] dig failed at ${t.x},${t.y},${t.z} (${t.label}): ${e.message}`);
+        }
+        await sleep(100);
+      }
+    }
+
+    // ── Step up ────────────────────────────────────────────
+    // Face the cardinal direction so the step-up goes the right way
+    const yawByDir = { west: Math.PI, east: 0, north: -Math.PI/2, south: Math.PI/2 };
+    const targetYaw = yawByDir[direction];
+    await bot.look(targetYaw, 0, true);
+    await sleep(100);
+
+    const targetX = curX + dir.dx + 0.5;
+    const targetYstep = curY + 1;
+    const targetZ = curZ + dir.dz + 0.5;
+
+    try {
+      bot.motion.goto(targetX, targetYstep, targetZ);
+      await sleep(600);
+    } catch (e) {
+      // goto may reject on cancellation — that's fine
+    }
+
+    const afterY = bot.entity.position.y;
+    if (Math.floor(afterY) > curY) {
+      totalSteps++;
+      stepsOnSide++;
+
+      // Rotate direction after stepsPerSide successful steps
+      if (stepsOnSide >= stepsPerSide) {
+        stepsOnSide = 0;
+        dirIdx = (dirIdx + 1) % SPIRAL_ORDER.length;
+      }
+    } else {
+      // Retry nudge
+      bot.setControlState('forward', true);
+      await sleep(400);
+      bot.setControlState('forward', false);
+      await sleep(100);
+      if (Math.floor(bot.entity.position.y) > curY) {
+        totalSteps++;
+        stepsOnSide++;
+        if (stepsOnSide >= stepsPerSide) {
+          stepsOnSide = 0;
+          dirIdx = (dirIdx + 1) % SPIRAL_ORDER.length;
+        }
+      }
+    }
+
+    if (Math.floor(bot.entity.position.y) >= targetY) break;
+  }
+
+  if (bot.motion) bot.motion.stop().catch(() => {});
+  const finalY = Math.floor(bot.entity.position.y);
+  const stoppedEarly = finalY < targetY;
+  return {
+    steps: totalSteps,
+    finalY,
+    stoppedEarly,
+    message: stoppedEarly
+      ? `Spiral stopped at Y=${finalY} (open sky detected) after ${totalSteps} steps. Target was ${targetY}.`
+      : `Spiral reached Y=${finalY} (target ${targetY}) in ${totalSteps} steps.`,
+  };
+}
+
+/**
+ * Mine a 1-wide, 2-high horizontal tunnel in a cardinal direction.
+ *
+ * Pattern (2 blocks per step, heading in `direction` at current Y):
+ *   1. Block in front at eye level: (x + dx, y+1, z + dz)
+ *   2. Block above that:           (x + dx, y+2, z + dz)
+ *
+ * Movement: step forward into the cleared space (same Y level).
+ * Uses motion.goto for the step; verifies position changes.
+ *
+ * @param {string} direction  - 'west'|'east'|'north'|'south'
+ * @param {number} distance   - how many blocks to tunnel
+ * @returns {{ steps: number, startPos: object, endPos: object, message: string }}
+ */
+async function digTunnel(bot, direction, distance) {
+  const dir = CARDINAL_DIRS[direction];
+  if (!dir) throw new Error(`Invalid direction '${direction}'. Use west/east/north/south.`);
+  if (distance <= 0) return { steps: 0, message: 'Distance must be positive.' };
+
+  const startPos = {
+    x: Math.floor(bot.entity.position.x),
+    y: Math.floor(bot.entity.position.y),
+    z: Math.floor(bot.entity.position.z),
+  };
+  let steps = 0;
+
+  for (let i = 0; i < distance * 2; i++) {
+    const curX = Math.floor(bot.entity.position.x);
+    const curY = Math.floor(bot.entity.position.y);
+    const curZ = Math.floor(bot.entity.position.z);
+
+    // ── Mine 2 blocks ──────────────────────────────────────
+    const targets = [
+      { x: curX + dir.dx, y: curY + 1, z: curZ + dir.dz, label: 'eyes' },
+      { x: curX + dir.dx, y: curY + 2, z: curZ + dir.dz, label: 'above-eyes' },
+    ];
+
+    for (const t of targets) {
+      const block = bot.blockAt(new Vec3(t.x, t.y, t.z));
+      if (block && block.name !== 'air' && block.name !== 'cave_air' && block.name !== 'void_air') {
+        try {
+          await bot.tool.equipForBlock(block);
+          await bot.dig(block, true);
+        } catch (e) {
+          log(`[tunnel] dig failed at ${t.x},${t.y},${t.z} (${t.label}): ${e.message}`);
+        }
+        await sleep(100);
+      }
+    }
+
+    // ── Step forward ───────────────────────────────────────
+    const targetX = curX + dir.dx + 0.5;
+    const targetZ = curZ + dir.dz + 0.5;
+
+    const beforeX = bot.entity.position.x;
+    const beforeZ = bot.entity.position.z;
+    try {
+      bot.motion.goto(targetX, curY, targetZ);
+      await sleep(600);
+    } catch (e) {
+      // cancellation is fine
+    }
+
+    // Verify forward movement
+    const dx2 = Math.abs(bot.entity.position.x - beforeX);
+    const dz2 = Math.abs(bot.entity.position.z - beforeZ);
+    if (dx2 > 0.3 || dz2 > 0.3) {
+      steps++;
+    } else {
+      // Nudge
+      bot.setControlState('forward', true);
+      await sleep(400);
+      bot.setControlState('forward', false);
+      await sleep(100);
+      const dx3 = Math.abs(bot.entity.position.x - beforeX);
+      const dz3 = Math.abs(bot.entity.position.z - beforeZ);
+      if (dx3 > 0.3 || dz3 > 0.3) steps++;
+    }
+
+    if (steps >= distance) break;
+  }
+
+  if (bot.motion) bot.motion.stop().catch(() => {});
+  const endPos = {
+    x: Math.floor(bot.entity.position.x),
+    y: Math.floor(bot.entity.position.y),
+    z: Math.floor(bot.entity.position.z),
+  };
+  return {
+    steps,
+    startPos,
+    endPos,
+    message: `Tunneled ${steps} blocks ${direction} (target ${distance}).`,
+  };
 }
 
 // List visible entities by type with distances
@@ -4798,6 +5092,57 @@ const httpServer = http.createServer(async (req, res) => {
           broadcastDashboard('task', currentTask);
         });
         return respond(res, 200, { ok: true, task_id: taskId, status: 'started', state: briefState() });
+      }
+
+      // ── Macro endpoint: pre-canned multi-step skills (staircase, spiral, bridge, etc.) ──
+      if (path === '/macro') {
+        const { macro, direction, target_y, steps_per_side } = body || {};
+        if (!macro) return respond(res, 400, { ok: false, error: "Missing 'macro' field. Available: staircase, spiral" });
+        const b = ensureBot();
+
+        if (macro === 'staircase') {
+          if (!direction || !CARDINAL_DIRS[direction]) {
+            return respond(res, 400, { ok: false, error: "Missing or invalid 'direction'. Use: west, east, north, south" });
+          }
+          if (target_y == null || typeof target_y !== 'number') {
+            return respond(res, 400, { ok: false, error: "Missing 'target_y' (number)" });
+          }
+          try {
+            const result = await climbStaircase(b, direction, target_y);
+            return respond(res, 200, { ok: true, ...result, state: briefState() });
+          } catch (e) {
+            return respond(res, 500, { ok: false, error: e.message });
+          }
+        }
+
+        if (macro === 'spiral') {
+          if (target_y == null || typeof target_y !== 'number') {
+            return respond(res, 400, { ok: false, error: "Missing 'target_y' (number)" });
+          }
+          const sps = steps_per_side != null ? parseInt(steps_per_side) : 3;
+          try {
+            const result = await climbSpiral(b, target_y, sps);
+            return respond(res, 200, { ok: true, ...result, state: briefState() });
+          } catch (e) {
+            return respond(res, 500, { ok: false, error: e.message });
+          }
+        }
+
+        if (macro === 'tunnel') {
+          if (!direction || !CARDINAL_DIRS[direction]) {
+            return respond(res, 400, { ok: false, error: "Missing or invalid 'direction'. Use: west, east, north, south" });
+          }
+          const dist = body.distance != null ? parseInt(body.distance) : 10;
+          if (dist <= 0) return respond(res, 400, { ok: false, error: "distance must be positive" });
+          try {
+            const result = await digTunnel(b, direction, dist);
+            return respond(res, 200, { ok: true, ...result, state: briefState() });
+          } catch (e) {
+            return respond(res, 500, { ok: false, error: e.message });
+          }
+        }
+
+        return respond(res, 400, { ok: false, error: `Unknown macro '${macro}'. Available: staircase, spiral, tunnel` });
       }
 
       // Synchronous action: POST /action/ACTION (still supported for quick stuff)
