@@ -109,6 +109,8 @@ mBit grids appear in your `body_session` world state. Understanding them prevent
 
 **⚠️ 3D Perception — scene_graph is a single Y slice.** `scene_graph` in body_session only reports blocks at your current Y level. It does NOT tell you what's at y+2, y+3, or above. Trees have leaf canopies above their logs. Terrain has overhangs. Before building or placing anything, always scan the full vertical volume with `mc_bit full` (at minimum groundY-1 to groundY+5). Common failures: building walls through invisible leaves, placing roofs that intersect hidden terrain, assuming "up: air" means the entire column is clear.
 
+**⚠️ Construction Safety — Never Build Under Your Feet.** Before ANY `mc_build` or `fill`, check that your feet are NOT inside the target area at the build Y level. If `|botX - targetX| < 1` and `|botZ - targetZ| < 1` and `botY == targetY`, move aside first. The server will now return a clear error ("Refusing: you're standing there") if you forget — react to it immediately by moving and retrying.
+
 ### Spatial Orientation (axes in mBit output)
 
 All grid formats (binary, surface, full) use the same layout:
