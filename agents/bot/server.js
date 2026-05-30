@@ -2925,6 +2925,14 @@ async collect({ block, count = 1 }) {
       throw new Error(`Can't place ${blockName} at ${x}, ${y}, ${z}: target space is occupied by ${existing.name}. Dig that block first or choose an empty adjacent space.`);
     }
 
+    // Refuse to place where the bot is standing — can't place at your own feet
+    const bx = Math.floor(b.entity.position.x);
+    const by = Math.floor(b.entity.position.y);
+    const bz = Math.floor(b.entity.position.z);
+    if (bx === x && bz === z && (by === y || by === y + 1)) {
+      throw new Error(`Refusing to place ${blockName} at ${x}, ${y}, ${z}: that's where you're standing. Move aside first with mc_move(action="goto", ...).`);
+    }
+
     await b.equip(item, 'hand');
 
     // Approach if far
@@ -2987,6 +2995,23 @@ async collect({ block, count = 1 }) {
     }
     if (have < openPositions.length) {
       throw new Error(`Can't fill ${openPositions.length} open spaces with ${blockName}: only have ${have}. Need ${openPositions.length - have} more, or reduce the fill area.`);
+    }
+
+    // Warn if bot is standing inside the fill volume — can't place where you stand
+    const bx = Math.floor(b.entity.position.x);
+    const by = Math.floor(b.entity.position.y);
+    const bz = Math.floor(b.entity.position.z);
+    const botInVolume = bx >= minX && bx <= maxX && bz >= minZ && bz <= maxZ && by >= minY && by <= maxY;
+    if (botInVolume) {
+      const cardinalDirs = [{ dx: 1, dz: 0, name: 'east' }, { dx: -1, dz: 0, name: 'west' }, { dx: 0, dz: 1, name: 'south' }, { dx: 0, dz: -1, name: 'north' }];
+      const suggestions = cardinalDirs
+        .filter(d => {
+          const neighbor = b.blockAt(new Vec3(bx + d.dx, by, bz + d.dz));
+          return neighbor && (neighbor.name === 'air' || neighbor.name === 'cave_air');
+        })
+        .map(d => `${d.name} to (${bx + d.dx}, ${by}, ${bz + d.dz})`);
+      const hint = suggestions.length ? ` Move ${suggestions[0]} first.` : ' Step back to a safe position first.';
+      return { result: `Refusing to fill: bot is standing inside the target volume at (${bx}, ${by}, ${bz}).${hint}`, _warn: 'bot_in_volume' };
     }
 
     let placed = 0;
