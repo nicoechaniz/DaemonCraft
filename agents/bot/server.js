@@ -2992,6 +2992,7 @@ async collect({ block, count = 1 }) {
     let placed = 0;
     let noSupport = 0;
     let failed = 0;
+    let notMaterialized = 0;
     for (const pos of openPositions) {
       const item = b.inventory.items().find(i => i.name === blockName);
       if (!item) throw new Error(`Out of ${blockName} after placing ${placed}/${openPositions.length}. ${inventoryHint(b.inventory.items())}`);
@@ -3009,7 +3010,14 @@ async collect({ block, count = 1 }) {
           try {
             // Use _genericPlace instead of placeBlock to avoid blockUpdate timeout
             await b._genericPlace(ref, new Vec3(-dx, -dy, -dz), { swingArm: 'right', forceLook: true });
-            placed++;
+            // Verify placement actually materialized — _genericPlace can silently fail
+            await new Promise(r => setTimeout(r, 200));
+            const placedBlock = b.blockAt(new Vec3(pos.x, pos.y, pos.z));
+            if (placedBlock && placedBlock.name !== 'air' && placedBlock.name !== 'cave_air') {
+              placed++;
+            } else {
+              notMaterialized++;
+            }
           } catch {
             failed++;
           }
@@ -3021,6 +3029,7 @@ async collect({ block, count = 1 }) {
     const details = [];
     if (noSupport) details.push(`${noSupport} skipped: no adjacent support block`);
     if (failed) details.push(`${failed} failed during placement`);
+    if (notMaterialized) details.push(`${notMaterialized} did not materialize`);
     const suffix = details.length ? ` (${details.join('; ')})` : '';
     return { result: `Placed ${placed}/${openPositions.length} ${blockName} blocks (${hollow ? 'hollow' : 'solid'})${suffix}` };
   },
