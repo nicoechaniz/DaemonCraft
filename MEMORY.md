@@ -13,6 +13,15 @@
 - Kanban: t_e9c77126, t_8fbb9157 (completed)
 - mc_move SOUL fix: `action="goto"` is REQUIRED — SOUL_daemoncraft.md updated
 
+### Construction Reliability Fixes (May 30, final session)
+- **place_fill lied**: reported "36/36 placed" but only 9 materialized. Root cause: `_genericPlace` can silently fail; `place_fill` had no verification unlike `place()`.
+- **Fix**: Added 200ms wait + `blockAt()` verification in `place_fill`. Now reports "did not materialize" for blocks that silently failed.
+- **Bot-in-volume detection**: Both `place()` and `place_fill` now refuse if bot is standing inside the target area. Clear error: "Refusing: you're standing there. Move X first."
+- **SOUL rules**: Construction Safety section added to SOUL_daemoncraft + backported to SOUL-base — never build where you stand, verify position first.
+- **6x6 base successfully built**: 36/36 orange_terracotta, verified with mc_bit. Takeaway: `fill` → `mc_bit verify` is the mandatory pattern.
+- **mc_build place** silently fails (no feedback). Underlying issue: `_fmt` judge change not picked up by running session (module caching).
+- Commits DaemonCraft: 347452f (verify fill), 8077a9a (bot-in-volume), e525664 (SOUL rules)
+
 ### Branches
 - **`feat/motion-refactor`**: macro tools (staircase, spiral, tunnel) + stuck counter fix
 - **`world-aware`** (12 commits): scene verification, judge, 3D perception, surface detection, tunnel fixes
