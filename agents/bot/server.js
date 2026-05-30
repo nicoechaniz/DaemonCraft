@@ -4228,6 +4228,28 @@ const httpServer = http.createServer(async (req, res) => {
         return respond(res, 200, { ok: true, data: getFullState() });
       }
 
+      // Simple block check for verify conditions (orchestrator sync_progress)
+      if (path === '/block') {
+        const params = new URLSearchParams(req.url.split('?')[1] || '');
+        const x = parseInt(params.get('x'));
+        const y = parseInt(params.get('y'));
+        const z = parseInt(params.get('z'));
+        if (isNaN(x) || isNaN(y) || isNaN(z)) {
+          return respond(res, 400, { ok: false, error: 'Missing x,y,z params' });
+        }
+        const b = ensureBot();
+        const block = b.blockAt(new Vec3(x, y, z));
+        return respond(res, 200, {
+          ok: true,
+          data: {
+            x, y, z,
+            name: block?.name || 'air',
+            solid: block?.boundingBox === 'block',
+            physical: block?.physical ?? false,
+          }
+        });
+      }
+
       // Aliases for /bot/* consistency
       if (path === '/bot/status') {
         return respond(res, 200, { ok: true, data: getFullState() });

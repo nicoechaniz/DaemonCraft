@@ -32,7 +32,10 @@ if str(_repo_root) not in sys.path:
 
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
+import os
+import json
 import time
+import urllib.request
 
 from agents.plan_schema import PlanManifest, SubPlan, VerifySpec, VerifyType
 from agents.plan_executor import QuantifiedIntentExecutor, get_executor
@@ -46,9 +49,9 @@ class _SubPlanState:
     result: Optional[dict] = None
     error: Optional[dict] = None
 
-
 class PlanOrchestrator:
     """
+
     Orchestrates a PlanManifest.
 
     Typical usage (from agent_loop or strategic layer):
@@ -69,6 +72,7 @@ class PlanOrchestrator:
         executor: Optional[QuantifiedIntentExecutor] = None,
         dispatch_intent: Optional[Callable[[str], dict]] = None,
         log: Optional[Callable[[str], None]] = None,
+        bot_api_url: Optional[str] = None,
     ):
         self._executor = executor or get_executor()
         self._dispatch_intent = dispatch_intent or self._noop_dispatch
@@ -76,6 +80,7 @@ class PlanOrchestrator:
         self._log = lambda s: _raw_log(f"{time.strftime('%H:%M:%S')} {s}")
         self._last_manifest: Optional[PlanManifest] = None
         self._subplan_states: dict[int, _SubPlanState] = {}  # keyed by order
+        self._bot_api_url = bot_api_url or os.environ.get("MC_API_URL", "")
 
     # ──────────────────────────────────────────────────────────────────────
     # Validation (anti-hallucination)
@@ -225,27 +230,98 @@ class PlanOrchestrator:
             "total": total,
         }
 
+    def _verify_condition(self, verify: VerifySpec) -> bool:
+        """Check a verify condition against the bot API. Returns True if condition is met."""
+        if verify is None or not verify.type:
+            return False
+
+        try:
+            if verify.type == VerifyType.BLOCK_PLACED:
+                x, y, z = getattr(verify, 'x', None), getattr(verify, 'y', None), getattr(verify, 'z', None)
+                if x is None or y is None or z is None:
+                    return False
+                url = f"{self._bot_api_url}/block?x={x}&y={y}&z={z}"
+                with urllib.request.urlopen(url, timeout=3) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                block = data.get("data", {})
+                name = block.get("name", "air")
+                # Door blocks sometimes report as their placed variant; accept any non-air
+                expected = getattr(verify, 'block', '')
+                if expected and name == 'air':
+                    return False
+                return name != 'air'
+
+            elif verify.type == VerifyType.AREA_CLEAR:
+                x1, y1, z1 = getattr(verify, 'x1', None), getattr(verify, 'y1', None), getattr(verify, 'z1', None)
+                x2, y2, z2 = getattr(verify, 'x2', None), getattr(verify, 'y2', None), getattr(verify, 'z2', None)
+                if x1 is None:
+                    return False
+                # Spot-check: check corners and center of the area
+                checks = [(x1,y1,z1), (x2,y1,z1), (x1,y1,z2), (x2,y1,z2),
+                          ((x1+x2)//2, y1, (z1+z2)//2)]
+                for cx, cy, cz in checks:
+                    url = f"{self._bot_api_url}/block?x={cx}&y={cy}&z={cz}"
+                    with urllib.request.urlopen(url, timeout=3) as resp:
+                        data = json.loads(resp.read().decode("utf-8"))
+                    if data.get("data", {}).get("name", "air") != "air":
+                        return False
+                return True
+
+            elif verify.type == VerifyType.POSITION_REACHED:
+                tx, ty, tz = getattr(verify, 'target_x', None), getattr(verify, 'target_y', None), getattr(verify, 'target_z', None)
+                if tx is None:
+                    return False
+                url = f"{self._bot_api_url}/status"
+                with urllib.request.urlopen(url, timeout=3) as resp:
+                    status = json.loads(resp.read().decode("utf-8"))
+                pos = status.get("data", {}).get("position", {})
+                bx, by, bz = int(pos.get("x", 0)), int(pos.get("y", 0)), int(pos.get("z", 0))
+                return abs(bx - tx) <= 1 and abs(by - ty) <= 1 and abs(bz - tz) <= 1
+
+            elif verify.type == VerifyType.INVENTORY_HAS:
+                item = getattr(verify, 'item', '')
+                count = getattr(verify, 'count', 1)
+                url = f"{self._bot_api_url}/inventory"
+                with urllib.request.urlopen(url, timeout=3) as resp:
+                    inv = json.loads(resp.read().decode("utf-8"))
+                cats = inv.get("data", {}).get("categories", {})
+                for cat_items in cats.values():
+                    for entry in cat_items:
+                        if entry.get("name") == item and entry.get("count", 0) >= count:
+                            return True
+                return False
+
+        except Exception as e:
+            self._log(f"[verify] check failed for {verify.type.value}: {e}")
+            return False
+
+        return True
+
     def sync_progress(self) -> dict[str, Any] | None:
         """Called from heartbeat to sync executor state → orchestrator state.
 
-        If the executor cleared its active intent (verify passed via
-        _check_executor_resume), mark the dispatched sub-plan as done.
-        Returns update dict or None if nothing changed.
+        If the executor cleared its active intent, verify each dispatched
+        sub-plan against the bot API BEFORE marking it as done. Previously
+        we blindly trusted executor=cleared means success — but the executor
+        can clear because it exhausted retries, not because the work was done.
         """
         if not self._last_manifest:
             return None
 
-        # If executor has no active intent but we have dispatched sub-plans,
-        # the executor must have completed (verified via _check_executor_resume)
         if not self._executor.has_active_intent():
             changed = False
             for order, state in self._subplan_states.items():
                 if state.status == "dispatched":
-                    state.status = "done"
-                    self._log(f"[orchestrator] sync: order={order} → done (executor cleared)")
+                    sp = self._last_manifest.sub_plans[order] if order < len(self._last_manifest.sub_plans) else None
+                    verify = sp.verify if sp else None
+                    if verify and self._verify_condition(verify):
+                        state.status = "done"
+                        self._log(f"[orchestrator] sync: order={order} → done (verified: {verify.type.value})")
+                    else:
+                        state.status = "failed"
+                        self._log(f"[orchestrator] sync: order={order} → failed (verify failed: {verify.type.value if verify else 'no-verify'})")
                     changed = True
             if changed:
-                # If all sub-plans are done, clear executor to stop idle re-dispatch
                 all_done = all(s.status == "done" for s in self._subplan_states.values())
                 if all_done:
                     self._executor.clear()

@@ -1298,6 +1298,7 @@ def main():
             executor=_exec,  # share the same executor instance
             dispatch_intent=lambda intent: call_embodied(intent),
             log=lambda s: _log_event("orchestrator", msg=s),
+            bot_api_url=MC_API_URL,
         )
         global _orchestrator
         _orchestrator = _orch
