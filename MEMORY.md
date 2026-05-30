@@ -2,6 +2,17 @@
 
 ## Session 2026-05-30 — Scene Verification Framework + Macro Tools (world-aware branch)
 
+### Judge Mailbox Expansion (May 30, late session)
+- **Problem**: Single-slot judge mailbox was drained by L3 agent_loop before L4 could read it
+- **Solution**: Ring buffer (max 10) with initiator field (l2_runner, l3_loop, l4_agent)
+- L3 reads `/judge/pending` and only consumes entries with initiator=l3_loop, leaves L4 entries
+- Gateway auto-consumes L4 entries on wake_up via `/judge/consume`
+- New endpoints: GET `/judge/pending`, POST `/judge/consume`
+- `_fmt()` in minecraft_tools.py now includes `_judge` field in output
+- Files: server.js (ring buffer + endpoints), agent_loop.py (pending + selective consume), daemoncraft.py (auto-consume), minecraft_tools.py (_fmt judge)
+- Kanban: t_e9c77126, t_8fbb9157 (completed)
+- mc_move SOUL fix: `action="goto"` is REQUIRED — SOUL_daemoncraft.md updated
+
 ### Branches
 - **`feat/motion-refactor`**: macro tools (staircase, spiral, tunnel) + stuck counter fix
 - **`world-aware`** (12 commits): scene verification, judge, 3D perception, surface detection, tunnel fixes
