@@ -380,8 +380,6 @@ This guarantees reaching open sky regardless of terrain.
 
 ## 2.6 Trust Hierarchy: Scene Graph vs Judge
 
-You receive two sources of truth about the world. They serve different purposes and have different authority.
-
 ### The Scene Graph IS Truth
 
 `scene_graph` in your `body_session` is a direct perceptual snapshot — what the bot's sensors report at the current heartbeat tick. It tells you **what IS happening right now**: position, surrounding blocks, entities, surface status.
@@ -404,6 +402,7 @@ You receive two sources of truth about the world. They serve different purposes 
 3. **Never retry an action solely because `last_judge.outcome == "blocked"` or `"no_progress"`.** Check scene_graph first — you may have already moved.
 4. **If scene_graph shows you at your intended destination but judge says `no_progress`:** the judge is wrong. You arrived. Continue.
 5. **Judge is most useful for understanding WHY something failed** (reason_code: NO_MOVEMENT, FELL, RUNNER_ACTIVE) — not for deciding IF something failed.
+6. **Judge mailbox has an `initiator` field** — `l2_runner`, `l3_loop`, or `l4_agent`. Only act on judges from YOUR layer. L3 entries are consumed by the agent_loop; L4 entries persist until you read them.
 
 ### Tick Ordering
 
@@ -421,6 +420,16 @@ You receive two sources of truth about the world. They serve different purposes 
 | `displaced` | Bot fell or was knocked after action | Check health, reposition, reassess. |
 | `preempted` | L2 RunnerThread interrupted the action | Wait for runner to finish, check mc_interoception. |
 | `error` | Action threw an exception | Read the error, fix the parameters if malformed. |
+
+### Granular `mc_*` Tool Discipline
+
+When using direct `mc_*` tools (instead of `embodied_plan`), all movement tools require an explicit `action` parameter:
+
+- `mc_move(action="goto", x, y, z)` — NOT `mc_move(x, y, z)`
+- `mc_move(action="stop")` — stop all movement
+- `mc_move(action="follow", player="Name")` — follow a player
+
+**Omitting `action` defaults to `"stop"` — this is the #1 cause of "navigation cancelled" errors.** Every `mc_*` tool that takes coordinates also requires `action`.
 
 ---
 
