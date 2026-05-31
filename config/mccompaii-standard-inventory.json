@@ -1,0 +1,40 @@
+{
+  "_description": "Standard inventory for McCompaii autonomous agent. Apply on cast spawn via scripts/restore-mccompaii-inventory.sh",
+  "_version": "1.0.0",
+  "_last_updated": "2026-05-31",
+  "armor": {
+    "head": "netherite_helmet[unbreakable={}]",
+    "chest": "netherite_chestplate[unbreakable={}]",
+    "legs": "netherite_leggings[unbreakable={}]",
+    "feet": "netherite_boots[unbreakable={}]"
+  },
+  "tools": {
+    "pickaxe": "netherite_pickaxe[unbreakable={}]",
+    "axe": "netherite_axe[unbreakable={}]",
+    "shovel": "netherite_shovel[unbreakable={}]",
+    "sword": "netherite_sword[unbreakable={}]",
+    "hoe": "netherite_hoe[unbreakable={}]"
+  },
+  "inventory": {
+    "cooked_beef": 192,
+    "torch": 192,
+    "white_bed": 1,
+    "crafting_table": 1,
+    "furnace": 1,
+    "coal": 64,
+    "cobblestone": 64,
+    "oak_planks": 64,
+    "dirt": 64
+  },
+  "offhand": "shield",
+  "_notes": [
+    "3 stacks cooked_beef = never hungry",
+    "3 stacks torches = light every path",
+    "Bed = portable save point (sleeping bag pattern)",
+    "Crafting table + furnace = self-sufficient crafting anywhere",
+    "Coal = smelt ores, cook raw meat, craft more torches",
+    "Cobblestone + planks + dirt = path building materials",
+    "All tools/armor unbreakable — never needs replacement",
+    "Shield in offhand for extra defense (switch to torch when placing)"
+  ]
+}
