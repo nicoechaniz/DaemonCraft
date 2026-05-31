@@ -376,23 +376,16 @@ export class MotionController {
   async requestMutexCancel(requester) {
     const session = this._session;
     if (!session) return;
-    session.cancelRequested = true;
 
     if (session.state === SESSION_STATE.RECOVERY_ATOMIC) {
       this._log(`cancel requested by ${requester} during recovery — deferring`);
       return;
     }
 
-    // Normal cancel path (not in atomic recovery)
-    session.hardCancelled = true;
-
-    // Resolve pending goto promise immediately (N1 fix)
-    if (this._pendingGotoCleanup) {
-      const cleanup = this._pendingGotoCleanup;
-      this._pendingGotoCleanup = null;
-      cleanup();
-    }
-
+    // Normal cancel: stop movement but do NOT resolve the goto promise.
+    // The goto should continue after the runner releases the mutex.
+    // Only clear controls + stop pathfinder — let the goto timeout/complete naturally.
+    session.cancelRequested = true;
     try { this.bot.pathfinder.setGoal(null); } catch {}
     this._clearControls();
   }
