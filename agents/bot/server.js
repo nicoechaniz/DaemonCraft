@@ -284,6 +284,10 @@ let recentFragments = [];
 // Rolling buffer of recent action outcomes for loop detection
 let actionHistory = []; // { action, status, time }
 const MAX_ACTION_HISTORY = 200;
+let lastAttackTargetId = null;
+let lastAttackAt = 0;
+const STICKY_TARGET_MS = 3000;
+const STICKY_TARGET_MAX_DIST = 4;
 let lastJudge = null; // backward compat — most recent judge entry
 let judgeRing = []; // ring buffer of last N judge entries (max 10)
 const MAX_JUDGE_RING = 10;
@@ -635,7 +639,7 @@ async function createBotImpl() {
 
       // Configure pathfinder
       const moves = new Movements(bot);
-      moves.allowSprinting = true; // PATHFINDER_CFG.allow_sprinting ?? false;
+      moves.allowSprinting = PATHFINDER_CFG.allow_sprinting ?? false;
       moves.canDig = PATHFINDER_CFG.can_dig ?? true;
       moves.allowParkour = PATHFINDER_CFG.allow_parkour ?? true;
       moves.allow1by1towers = PATHFINDER_CFG.allow_1by1_towers ?? false;
@@ -2014,7 +2018,6 @@ function getFullState() {
 function getInventory() {
   const b = ensureBot();
   const items = b.inventory.items();
-  if (items.length === 0) return { items: [], summary: 'empty' };
 
   const categories = {};
   items.forEach(item => {
@@ -2031,7 +2034,33 @@ function getInventory() {
     categories[cat].push({ name: n, count: item.count });
   });
 
-  return { categories, totalSlots: items.length };
+  // Include equipped armor and offhand (slots outside inventory.items() range)
+  const armorSlots = [
+    { slot: 5, type: 'helmet' },
+    { slot: 6, type: 'chestplate' },
+    { slot: 7, type: 'leggings' },
+    { slot: 8, type: 'boots' },
+  ];
+  armorSlots.forEach(({ slot, type }) => {
+    const item = b.inventory.slots[slot];
+    if (item) {
+      if (!categories['armor']) categories['armor'] = [];
+      categories['armor'].push({ name: item.name, count: item.count, equipped: true, slot_type: type });
+    }
+  });
+  const offhand = b.inventory.slots[45];
+  if (offhand) {
+    let cat = 'other';
+    const n = offhand.name;
+    if (n.includes('sword') || n.includes('bow') || n === 'crossbow' || n === 'trident') cat = 'weapons';
+    else if (n === 'shield') cat = 'armor';
+    else if (n.includes('pickaxe') || n.includes('_axe') || n.includes('shovel') || n.includes('hoe')) cat = 'tools';
+    if (!categories[cat]) categories[cat] = [];
+    categories[cat].push({ name: n, count: offhand.count, equipped: true, slot_type: 'offhand' });
+  }
+
+  const totalSlots = items.length + armorSlots.filter(a => b.inventory.slots[a.slot]).length + (offhand ? 1 : 0);
+  return { categories, totalSlots };
 }
 
 function getNearby(radius = 32) {
@@ -2849,7 +2878,16 @@ async collect({ block, count = 1 }) {
     let entity;
     const wanted = (target || '').toLowerCase();
     const isGenericTarget = !wanted || wanted === 'hostile' || wanted === 'mob' || wanted === 'entity';
-    if (!isGenericTarget) {
+
+    // Sticky target: if we attacked an entity recently and it's still alive/nearby, keep hitting it
+    let sticky = null;
+    if (lastAttackTargetId && Date.now() - lastAttackAt < STICKY_TARGET_MS) {
+      sticky = attackable.find(e => e.id === lastAttackTargetId && distToBot(e) <= STICKY_TARGET_MAX_DIST && e.isValid !== false);
+    }
+
+    if (sticky) {
+      entity = sticky;
+    } else if (!isGenericTarget) {
       // Prefer exact target type, then substring matches, always nearest first.
       const exact = attackable.filter(e => nameOf(e) === wanted).sort(byDistance);
       const partial = attackable
@@ -2874,6 +2912,8 @@ async collect({ block, count = 1 }) {
     // Face the entity before attacking — looks natural
     await b.lookAt(entity.position.offset(0, entity.height || 1.6, 0));
     await b.attack(entity);
+    lastAttackTargetId = entity.id;
+    lastAttackAt = Date.now();
     return { result: `Attacked ${entity.name || target} (${fmt(entity.position.distanceTo(b.entity.position))}m away)` };
   },
 
@@ -5615,6 +5655,39 @@ setInterval(() => {
     broadcastDashboard('status', state);
   } catch {}
 }, 2000);
+
+// Ensure torch is always in offhand for lighting
+setInterval(async () => {
+  try {
+    const b = bot;
+    if (!b || !b.inventory || !b.entity) return;
+
+    // Already holding torch — nothing to do
+    if (b.inventory.slots[45] && b.inventory.slots[45].name === 'torch') return;
+
+    // Find torch in main inventory
+    const torch = b.inventory.items().find(item => item.name === 'torch');
+    if (!torch) return;
+
+    // Don't replace shield if hostiles are nearby (combat safety)
+    const hasShield = b.inventory.slots[45] && b.inventory.slots[45].name === 'shield';
+    if (hasShield) {
+      const pos = b.entity.position;
+      const hostilesNear = Object.values(b.entities).some(e =>
+        e !== b.entity &&
+        e.position &&
+        e.position.distanceTo(pos) < 8 &&
+        HOSTILE_NAMES.some(h => (e.name || '').includes(h))
+      );
+      if (hostilesNear) return;
+    }
+
+    await b.equip(torch, 'off-hand');
+    log('[offhand] Equipped torch');
+  } catch {
+    // Ignore equip errors (e.g. mid-action)
+  }
+}, 5000);
 
 // ═══════════════════════════════════════════════════════════════════
 // Startup

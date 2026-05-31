@@ -94,24 +94,26 @@ tail -n 0 -F "${LOG_DIR}/${AGENT}_agent.log" 2>/dev/null \
       fi
     done &
 
-# ── Layer 4: LLM Autonomous Decisions (gateway log + agent log) ──
+# ── Layer 4: LLM Autonomous Decisions (gateway + agent + bot logs) ──
 HERMES_LOG="$HOME/.hermes/logs/agent.log"
 GATEWAY_LOG="$HOME/.hermes/logs/gateway.log"
+BOT_LOG="${LOG_DIR}/${AGENT}_bot.log"
 PREVIEW=30  # Lines to show on startup (avoid replaying entire log history)
 
 # Track last seen position — start near the end so we only show recent history
 LAST_GW=$(($(wc -l < "$GATEWAY_LOG" 2>/dev/null || echo 0) - PREVIEW))
 LAST_AG=$(($(wc -l < "$HERMES_LOG" 2>/dev/null || echo 0) - PREVIEW))
+LAST_BOT=$(($(wc -l < "$BOT_LOG" 2>/dev/null || echo 0) - PREVIEW))
 [ "$LAST_GW" -lt 0 ] && LAST_GW=0
 [ "$LAST_AG" -lt 0 ] && LAST_AG=0
+[ "$LAST_BOT" -lt 0 ] && LAST_BOT=0
 
 while true; do
-  # Gateway: show wake-up prompts and heartbeat classifications
+  # ── Gateway: show wake-up prompts and heartbeat classifications ──
   if [ -f "$GATEWAY_LOG" ]; then
     NEW_LINES=$(tail -n +$((LAST_GW + 1)) "$GATEWAY_LOG" 2>/dev/null)
     if [ -n "$NEW_LINES" ]; then
       echo "$NEW_LINES" | grep -i "daemoncraft.*wake-up\|Heartbeat classified\|Wake-up reason\|chat.*queued\|agent_response" 2>/dev/null | while IFS= read -r line; do
-        # Extract meaningful parts
         if echo "$line" | grep -q "Wake-up reason:"; then
           reason=$(echo "$line" | sed 's/.*Wake-up reason: //' | cut -c1-120)
           echo -e "${MAG}[LLM]${NC} wake: ${reason}"
@@ -121,28 +123,68 @@ while true; do
         elif echo "$line" | grep -q "inbound message.*daemoncraft"; then
           msg=$(echo "$line" | sed "s/.*msg='//" | sed "s/'$//" | cut -c1-150)
           echo -e "${MAG}[LLM]${NC} prompt: ${msg}..."
+        elif echo "$line" | grep -q "response ready.*daemoncraft"; then
+          info=$(echo "$line" | sed 's/.*response ready: //' | cut -c1-100)
+          echo -e "${MAG}[LLM]${NC} → ${info}"
         fi
       done
       LAST_GW=$(wc -l < "$GATEWAY_LOG")
     fi
   fi
 
-  # Agent log: show tool calls from autonomous session
+  # ── Agent log: show tool calls + turn summaries ──
   if [ -f "$HERMES_LOG" ]; then
     NEW_LINES=$(tail -n +$((LAST_AG + 1)) "$HERMES_LOG" 2>/dev/null)
     if [ -n "$NEW_LINES" ]; then
-      echo "$NEW_LINES" | grep -i "tool_executor\|conversation_loop: API" 2>/dev/null | grep -v "20260529_165725" | while IFS= read -r line; do
+      echo "$NEW_LINES" | grep -i "tool_executor\|conversation_loop: API\|Turn ended" 2>/dev/null | while IFS= read -r line; do
         if echo "$line" | grep -q "tool_executor.*completed"; then
           tool=$(echo "$line" | sed 's/.*tool //' | sed 's/ completed.*//' | cut -c1-60)
           echo -e "${MAG}[LLM]${NC} tool: ${tool}"
         elif echo "$line" | grep -q "API call"; then
           call=$(echo "$line" | sed 's/.*API call //' | cut -c1-80)
           echo -e "${GRAY}[LLM]${NC}   ${call}"
+        elif echo "$line" | grep -q "Turn ended"; then
+          # Extract key info: reason, model, response_len, tool_turns
+          reason=$(echo "$line" | grep -oP 'reason=\K[^ ]+' | cut -c1-30)
+          model=$(echo "$line" | grep -oP 'model=\K[^ ]+' | cut -c1-20)
+          resp_len=$(echo "$line" | grep -oP 'response_len=\K[0-9]+')
+          tool_turns=$(echo "$line" | grep -oP 'tool_turns=\K[0-9]+')
+          echo -e "${MAG}[LLM]${NC} turn done: ${resp_len}chars model=${model} tools=${tool_turns} (${reason})"
         fi
       done
       LAST_AG=$(wc -l < "$HERMES_LOG")
     fi
   fi
+
+  # ── Bot log: extract LLM response text from /agent/log ──
+  if [ -f "$BOT_LOG" ]; then
+    NEW_LINES=$(tail -n +$((LAST_BOT + 1)) "$BOT_LOG" 2>/dev/null)
+    if [ -n "$NEW_LINES" ]; then
+      echo "$NEW_LINES" | grep '\[req-body\].*"turn":.*"response":' | while IFS= read -r line; do
+        # Extract the JSON body (everything after the timestamp + space)
+        body=$(echo "$line" | sed 's/^.*\[req-body\] [^ ]* //')
+        # Parse response field
+        response=$(echo "$body" | python3 -c "
+import sys, json
+try:
+    d = json.loads(sys.stdin.read())
+    r = d.get('response', '')
+    tc = d.get('tool_calls', [])
+    if r:
+        print(r.replace('\n', ' ')[:300])
+    if tc:
+        names = [t.get('name', '?') for t in tc]
+        print('  [tools: ' + ', '.join(names) + ']')
+except: pass
+" 2>/dev/null)
+        if [ -n "$response" ]; then
+          echo -e "${MAG}[LLM]${NC} 💬 ${response}"
+        fi
+      done
+      LAST_BOT=$(wc -l < "$BOT_LOG")
+    fi
+  fi
+
   sleep 2
 done &
 

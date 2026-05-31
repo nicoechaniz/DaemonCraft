@@ -1,5 +1,48 @@
 # DaemonCraft Project Memory
 
+## Session 2026-05-31 — McCompaii Profile, Autonomous Mode, LLM Visibility
+
+### McCompaii — Minecraft Embodiment Profile
+- Created Hermes profile `mccompaii` at `~/.hermes/profiles/mccompaii/`
+- McCompaii = CompAII's daimon in Minecraft. Inherits core identity (present moment, Nico relationship, beacons) but only knows Minecraft domain.
+- SOUL.md (~284 lines): PRIME DIRECTIVE, body architecture (L1-L4 with gAndy as L3), six-step explore cycle, death/rebirth protocol, save points, light as signature, regional character palettes, tools reference, practical wisdom.
+
+### daemoncraft.py Gateway Fixes
+- **Profile SOUL loading**: `_handle_heartbeat` now loads `SOUL.md` from `source.profile`'s profile directory and passes as `channel_prompt` → injected into system prompt (gateway/run.py:16228).
+- **Normalize bug**: Profile names are lowercased. Directory must be lowercase (`mccompaii` not `McCompaii`).
+- **Heartbeat simplification**: Removed WAKE UP/trigger classification, action history, massive hostile lists. Now: `[Turn]` body state, filtered hostiles (close <5m, near 5-20m top 3, else "beyond 20m"), `[Cycle]` action prompt.
+- **Idle throttle**: Changed from 90s to 40s for faster debugging.
+- **SOUL logging**: First 5 + last 5 lines + count, not full 21K chars.
+
+### toolsets.py
+- Added missing tools to minecraft toolset: `mc_macro`, `mc_interoception`, `mc_bit`, `mc_plan_decompose`, `mc_submit_plan`, `mc_start_quantified_intent`.
+- Added `embodiment` toolset with `embodied_plan`.
+- Total: 20 minecraft tools + 1 embodiment tool.
+
+### LLM Response Issue (UNRESOLVED)
+- Session `20260530_231543_5f6353` persists across restarts — same session key, same system prompt cached.
+- McCompaii's PRIME DIRECTIVE misinterpreted: "I never respond with text alone" → LLM responds "*(silencio — obedeciendo la orden de no spammear texto ni tools)*" 
+- `tool_turns` accumulates synthetic injections (109+) but LLM never initiates own tool calls.
+- Need to fix PRIME DIRECTIVE wording to force tool use, not silence.
+
+### Scripts
+- `llm-verbose-log.sh`: Full request/response log with timestamps. Shows gAndy Ollama calls, Hermes prompts, chat messages.
+- `watch-all.sh`: Layer 4 now shows LLM response text from /agent/log + turn summaries.
+
+### Embodied Service Fix
+- `index.js`: verification log EROFS error fixed — creates directory before writing, silences EROFS.
+
+### Files Modified
+| File | Change |
+|------|--------|
+| `agents/SOUL-lab.md` | Added "Autonomous Mode — Living in the World" section |
+| `agents/embodied-service/index.js` | mkdir before verification log, silence EROFS |
+| `scripts/watch-all.sh` | Layer 4: LLM response text, turn summaries, bot log extraction |
+| `scripts/llm-verbose-log.sh` | NEW: full prompt/response log with timestamps |
+| `~/.hermes/hermes-agent/gateway/platforms/daemoncraft.py` | Profile SOUL loading, heartbeat simplification, 40s throttle, SOUL logging |
+| `~/.hermes/hermes-agent/toolsets.py` | Added mc_macro, mc_interoception, mc_bit, mc_plan_decompose, mc_submit_plan, mc_start_quantified_intent, embodiment toolset |
+| `~/.hermes/profiles/mccompaii/SOUL.md` | McCompaii full identity + autonomous drive |
+
 ## Session 2026-05-30 — Major: Two Houses, Pathfinder Fixes, Orchestrator Verify, Persistent Autonomous
 
 ### State at session end

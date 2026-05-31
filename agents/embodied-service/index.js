@@ -32,7 +32,8 @@ import {
   DEFAULT_ALLOWED_TOOLS,
   DEFAULT_DEADLINE_SECONDS,
 } from "./lib/defaults.js";
-import { appendFile } from "node:fs/promises";
+import { appendFile, mkdir } from "node:fs/promises";
+import path from "node:path";
 
 const PORT = Number(process.env.EMBODIED_SERVICE_PORT || 7790);
 
@@ -42,10 +43,15 @@ const VERIFICATION_LOG_PATH = process.env.VERIFICATION_LOG_PATH
 
 async function writeVerificationLog(entry) {
   try {
+    const dir = path.dirname(VERIFICATION_LOG_PATH);
+    await mkdir(dir, { recursive: true });
     await appendFile(VERIFICATION_LOG_PATH, JSON.stringify(entry) + "\n");
   } catch (err) {
     // Fire-and-forget: never fail the intent for logging issues.
-    logEvent({ event: "verification_log_failed", error: err.message });
+    // EROFS is expected in some sandboxed environments — silently skip.
+    if (err.code !== "EROFS") {
+      logEvent({ event: "verification_log_failed", error: err.message });
+    }
   }
 }
 
