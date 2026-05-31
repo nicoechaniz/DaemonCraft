@@ -2893,8 +2893,8 @@ async collect({ block, count = 1 }) {
 
   async eat() {
     const b = ensureBot();
-    const foods = b.inventory.items().filter(i => mcData.foodsByName?.[i.name]);
-    if (foods.length === 0) throw new Error(`No food in inventory. ${inventoryHint(b.inventory.items())} Find animals/crops or ask another agent for food.`);
+    const foods = b.inventory.items().filter(i => mcData.foodsByName?.[i.name] && !BANNED_FOOD.includes(i.name));
+    if (foods.length === 0) throw new Error(`No edible food in inventory (rotten flesh and other harmful items excluded). ${inventoryHint(b.inventory.items())} Find animals/crops or ask another agent for food.`);
     foods.sort((a, c) => (mcData.foodsByName[c.name]?.foodPoints || 0) - (mcData.foodsByName[a.name]?.foodPoints || 0));
     await b.equip(foods[0], 'hand');
     await b.consume();

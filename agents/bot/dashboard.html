@@ -1315,6 +1315,18 @@ function loadVoiceState() {
     voiceEnabled = localStorage.getItem('dc_voice_enabled') === 'true';
   } catch {}
   updateVoiceButton();
+  // Auto-unlock audio context on page load if voice was already ON
+  // Without this, browser blocks autoplay after reload until user clicks toggle
+  if (voiceEnabled) {
+    setTimeout(() => {
+      const player = document.getElementById('tts-player');
+      if (player) {
+        player.volume = 0;
+        player.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+        player.play().then(() => { player.pause(); player.volume = 1.0; }).catch(() => {});
+      }
+    }, 500);
+  }
 }
 
 function saveVoiceState() {
