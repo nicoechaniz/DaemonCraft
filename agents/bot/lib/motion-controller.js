@@ -482,6 +482,8 @@ export class MotionController {
 
       // Restart through goto/follow so _walkToBlockCenter runs before the new path.
       // Save stuck counter before goto/gotoNear/follow reset it to 0.
+      // Random yaw jitter: prevents exact repetition loops on step-ups and narrow paths.
+      this.bot.look(this.bot.entity.yaw + (Math.random() - 0.5) * 1.0, 0, true);
       const savedStuckCount = this._stuckRestartCount;
       const gd = session.goalDescriptor;
       if (gd && gd.type === 'block') {
