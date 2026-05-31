@@ -5571,7 +5571,7 @@ const httpServer = http.createServer(async (req, res) => {
           };
           // judgeAction runs the action AND captures before/after
           // Hard timeout: no action can hang forever. Preemptible ops get 30s, goto gets 120s.
-          const actionTimeouts = { dig: 30_000, collect: 30_000, place: 30_000, fill: 60_000, attack: 15_000, follow: 120_000, goto: 120_000, gotoNear: 120_000 };
+          const actionTimeouts = { dig: 30_000, collect: 30_000, place: 30_000, fill: 60_000, attack: 15_000, follow: 30_000, goto: 30_000, gotoNear: 30_000 };
           const hardTimeout = actionTimeouts[actionName] || 30_000;
           const timedAction = Promise.race([
             judgeAction(intent, () => actionFn(body)),
