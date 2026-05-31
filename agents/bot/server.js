@@ -2512,16 +2512,7 @@ async collect({ block, count = 1 }) {
     // so comparing against feet would let through blocks at the bot's new lower level.
     const botPos = b.entity.position;
     const botFeetY = Math.floor(botPos.y);
-    const botUnderfoot = botFeetY - 1;  // the single block we stand on
-
-    const safe = found.filter(pos => {
-      // Skip ONLY the block directly under our feet — never dig ourselves in
-      if (Math.abs(pos.x - Math.floor(botPos.x)) < 1 &&
-          Math.abs(pos.z - Math.floor(botPos.z)) < 1 &&
-          pos.y === botUnderfoot) return false;
-      // All other blocks are fair game — including those below us on slopes
-      return true;
-    }).sort((a, b) => b.y - a.y);
+    const safe = found.sort((a, b) => b.y - a.y);
 
     if (safe.length === 0) throw new Error(
       `Found ${found.length} ${block}, but all are below your feet. ` +
@@ -2538,15 +2529,6 @@ async collect({ block, count = 1 }) {
         // rather than standing directly on it (which triggers the under-foot safety filter).
         if (b.entity.position.distanceTo(pos) > 4.5) {
           if (b.motion) await b.motion.gotoNear(pos.x + 1, pos.y, pos.z, 3);
-        }
-
-        // Safety: never mine the block directly under our feet
-        const nowFeet = Math.floor(b.entity.position.y) - 1;
-        const dxf = Math.abs(pos.x - Math.floor(b.entity.position.x));
-        const dzf = Math.abs(pos.z - Math.floor(b.entity.position.z));
-        if (dxf === 0 && dzf === 0 && pos.y === nowFeet) {
-          log(`[collect] Skipping ${block} at ${pos.x},${pos.y},${pos.z} — directly under bot`);
-          continue;
         }
 
         await b.dig(target, true);
@@ -2603,14 +2585,6 @@ async collect({ block, count = 1 }) {
     if (!target || target.name === 'air' || target.name === 'cave_air') {
       const actual = target ? target.name : 'nothing (out of world)';
       throw new Error(`No mineable block at ${x}, ${y}, ${z} — it's ${actual}. Check coordinates or use mc_perceive(type="nearby") to scan.`);
-    }
-    // Safety: don't dig the block directly under your feet
-    const botPos = b.entity.position;
-    const botFeetX = Math.floor(botPos.x);
-    const botFeetY = Math.floor(botPos.y) - 1; // block we are standing ON
-    const botFeetZ = Math.floor(botPos.z);
-    if (x === botFeetX && y === botFeetY && z === botFeetZ) {
-      throw new Error(`Refusing to dig block at ${x},${y},${z}: that's the block under my feet. Move aside first with mc_move(action="goto", ...).`);
     }
     await b.tool.equipForBlock(target);
     if (b.entity.position.distanceTo(target.position) > 4.5) {
@@ -5573,9 +5547,18 @@ const httpServer = http.createServer(async (req, res) => {
           };
           // judgeAction runs the action AND captures before/after
           const { judge, value } = await judgeAction(intent, () => actionFn(body));
-          result = value;
+          result = value || {};
           if (typeof result === 'object' && result !== null) {
             result._judge = judge;
+          }
+          // If judge recorded an error, the action failed — report it
+          if (judge && judge.outcome === 'error') {
+            return respond(res, 400, {
+              ok: false,
+              error: judge.error || 'Action failed',
+              _judge: judge,
+              state: briefState()
+            });
           }
         } else {
           result = await actionFn(body);

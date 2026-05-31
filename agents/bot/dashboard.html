@@ -607,7 +607,7 @@ function renderStatus(data) {
     <div class="stat-row"><span class="stat-label">Health</span><span class="stat-value ${healthClass}">${data.health} / 20</span></div>
     <div class="stat-row"><span class="stat-label">Food</span><span class="stat-value">${data.food} / 20</span></div>
     <div class="stat-row"><span class="stat-label">Position</span><span class="stat-value">${data.position?.x ?? '?'}, ${data.position?.y ?? '?'}, ${data.position?.z ?? '?'}</span></div>
-    <div class="stat-row"><span class="stat-label">Holding</span><span class="stat-value">${data.holding || 'hand'}</span></div>
+    <div class="stat-row"><span class="stat-label">Holding</span><span class="stat-value">${data.holding?.name || data.holding || 'hand'}</span></div>
     <div class="stat-row"><span class="stat-label">Time</span><span class="stat-value">${data.isDay ? '☀️ Day' : '🌙 Night'} ${timeStr}</span></div>
     <div class="stat-row"><span class="stat-label">Connected</span><span class="stat-value">${data.connected !== false ? '✅' : '❌'}</span></div>
   `;

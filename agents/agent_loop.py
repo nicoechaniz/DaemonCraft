@@ -513,6 +513,18 @@ def _build_body_session(status: dict, reason: str = "idle") -> dict:
     # Nearby hostiles with positions
     hostiles = combat_data.get("hostiles") or []
 
+    # ── Death tracking ──
+    deaths_total = 0
+    last_death = None
+    try:
+        deaths_resp = _get_json("/deaths")
+        if deaths_resp and deaths_resp.get("ok"):
+            dd = deaths_resp.get("data", {})
+            deaths_total = dd.get("total", 0)
+            last_death = dd.get("last_death")
+    except Exception:
+        pass
+
     # ── Scene graph from /scene endpoint (compact projection) ──
     scene_graph = None
     try:
@@ -582,6 +594,8 @@ def _build_body_session(status: dict, reason: str = "idle") -> dict:
         "scene_graph": scene_graph,
         "last_judge": last_judge,
         "pending_judges": pending_judges,
+        "deaths": deaths_total,
+        "last_death": last_death,
     }
 
 

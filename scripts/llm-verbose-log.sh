@@ -8,6 +8,7 @@
 #   ~/.hermes/logs/agent.log       — API calls
 #   Bot log                         — /agent/log + /chat/send (full text)
 #   journalctl embodied-service    — gAndy Ollama calls
+#   Minecraft server log            — /tell commands from McCompaii (narration)
 
 set -e
 
@@ -17,6 +18,7 @@ BOT_LOG="$HOME/.local/share/daemoncraft/${CAST}/logs/${AGENT}_bot.log"
 HERMES_LOG="$HOME/.hermes/logs/agent.log"
 GATEWAY_LOG="$HOME/.hermes/logs/gateway.log"
 STATE_DB="$HOME/.hermes/state.db"
+MC_LOG="$HOME/Projects/DaemonCraft/server/data/logs/latest.log"
 
 # Colors
 CYN='\033[0;36m'; MAG='\033[0;35m'; YLW='\033[1;33m'
@@ -115,9 +117,11 @@ done &
 LAST_GW=$(($(wc -l < "$GATEWAY_LOG" 2>/dev/null || echo 0) - PREVIEW))
 LAST_HL=$(($(wc -l < "$HERMES_LOG" 2>/dev/null || echo 0) - PREVIEW))
 LAST_BOT=$(($(wc -l < "$BOT_LOG" 2>/dev/null || echo 0) - PREVIEW))
+LAST_MC=$(($(wc -l < "$MC_LOG" 2>/dev/null || echo 0) - PREVIEW))
 [ "$LAST_GW" -lt 0 ] && LAST_GW=0
 [ "$LAST_HL" -lt 0 ] && LAST_HL=0
 [ "$LAST_BOT" -lt 0 ] && LAST_BOT=0
+[ "$LAST_MC" -lt 0 ] && LAST_MC=0
 
 while true; do
   # ── Gateway log ──
@@ -210,6 +214,24 @@ except: pass
       LAST_BOT=$(wc -l < "$BOT_LOG")
     fi
   fi
+
+  # ── Minecraft server log: /tell narration ──
+  if [ -f "$MC_LOG" ]; then
+    NEW=$(tail -n +$((LAST_MC + 1)) "$MC_LOG" 2>/dev/null)
+    if [ -n "$NEW" ]; then
+      echo "$NEW" | grep "CompAII issued server command: /tell" 2>/dev/null | while IFS= read -r line; do
+        ts_line="$(ts)"
+        # Extract the message after "/tell world:CompAII "
+        msg=$(echo "$line" | sed 's/.*\/tell world:CompAII //')
+        # Skip system/steer messages
+        if echo "$msg" | grep -qv "⏩ Steered\|Body heartbeat\|System:"; then
+          echo -e "${GRN}[McCompaii ${ts_line}]${NC} ${msg}"
+        fi
+      done
+      LAST_MC=$(wc -l < "$MC_LOG")
+    fi
+  fi
+
   sleep 2
 done &
 
