@@ -2016,28 +2016,66 @@ Debugging runner combat: bot attacks slimes but appears to flee from zombies.
   - zombie: runner-debug → ATTACK zombie; bot log → `Attacked zombie (2–2.9m away)`.
   - no new `invalid_entity_attacked` kick during verification.
 
-## Session 2026-05-31 — Forum Synthesis, Death Interrupt, Standard Inventory, Full Deploy
+## Session 2026-05-31 — Forum Synthesis, Death Interrupt, Recovery Re-enabled, Full Deploy
 
-### Major deliverables
-- **Forum review** (Claude+Grok): 5 gaps identified, 6-step fix plan, synthesis in `docs/McCompaii-Autonomous-Behavior.md`
-- **GAP #1-5 fixes deployed**: REG_KEY + stopDigging + ON_ABORT, auto-eat gated, L4 judge verdict in prompt, interoception block
-- **Death interrupt**: gateway kills in-progress turn immediately on death, bypasses all guards
-- **BANNED_FOOD**: eat() now filters rotten_flesh/etc (commit 0b1cc53)
-- **TTS**: voice=es-MX-JorgeNeural, auto-unlock on page reload, queued messages skipped
-- **Standard inventory**: `config/mccompaii-standard-inventory.json` + `scripts/restore-mccompaii-inventory.sh`
-- **SOUL rewrites**: Stuck Protocol, Night Protocol (fearless), Death=free teleport, Path building (flatten first)
-- **Dashboard**: TTS auto-unlock fix
+### Critical fix — Recovery FSM re-enabled
+- `_recoveryEnabled` was set to `false` in commit `d9dba4e` (May 28) for pathfinder debugging and **never re-enabled**.
+- This left the bot with ZERO automatic stuck recovery — no step, lateral, or mine recovery.
+- Re-enabled in `aa4d731`. Recovery FSM (from `bcd9388` Phase 2): crouch backstep → jump forward (step), strafe away (lateral), mine block (mine).
 
-### Key files
-- `docs/McCompaii-Autonomous-Behavior.md` — complete L1-L4 behavior reference
-- `config/mccompaii-standard-inventory.json` — canonical loadout
-- `scripts/restore-mccompaii-inventory.sh` — inventory restore script
+### Movement fix — Goto promises not cancelled by runner
+- `requestMutexCancel()` was resolving goto promises with "Navigation cancelled" every time L2 runner claimed mutex. Since runner attacks constantly, every goto was killed.
+- Fix in `c48833c`: runner stops pathfinder + clears controls, but does NOT resolve goto promise. Goto continues after runner releases mutex.
 
-### Commits
+### Death interrupt
+- Gateway detects death BEFORE `_classify_heartbeat_event`, sends `/agent/interrupt`, bypasses all guards.
+- `[DEATH]` context injected into prompt with respawn position.
+- `session_epoch` in `daemoncraft.py` forces fresh session on each gateway restart.
+
+### SOUL rewrites (McCompaii profile)
+- **Stuck Protocol**: surface recovery (gAndy → opposite direction → mine → staircase) + underground (tunnel → spiral)
+- **NICO IS A SPECTATOR**: injected into heartbeat prompt. Never wait, never follow, never change plans for Nico.
+- **Night Protocol**: stripped all mob references. "Combat is not my job."
+- **Death**: free teleport, laugh it off, keep exploring.
+- **Torch discipline**: 10-13 blocks apart, never cluster.
+- **Path building**: flatten earth first, upgrade materials later. Carve INTO terrain, never on top.
+- **House respect**: always use doors, never break walls, terracotta houses are home.
+
+### daemoncraft.py changes
+- Hostile injection REMOVED from heartbeat prompt
+- Health/food/holding/runner stripped from prompt — position only
+- Body activity as `[Body]` — info, not problem
+- `_inject_embodied_world_state` call REMOVED (was flooding gAndy with scans)
+- Session convergence: Minecraft chat injected into world session with internal=True when lab mode
+- TTS skip filter: "queued" + "⏳" added
+- Voice: es-MX-JorgeNeural
+
+### Hard timeouts on all actions
+- dig/collect/place/goto/gotoNear/follow: 30s, fill: 60s, attack: 15s
+- ON_ABORT in `_cancelCurrent()`: fire-and-forget (not blocking with await)
+
+### Standard inventory
+- `config/mccompaii-standard-inventory.json` + `scripts/restore-mccompaii-inventory.sh`
+- Full netherite armor+tools, 3 stacks beef, 3 stacks torches, bed, table, furnace, building materials
+- Spawn: terracotta houses (555, 119, -333), world spawn set, bed placed and slept in
+
+### Current known issues
+- Pathfinder returns "Navigation cancelled" even when bot moves — misleading message
+- McCompaii sometimes ignores tool-calling directive and generates text-only (Kimi k2.6 behavior)
+- "Queued for the next turn" messages still appear — turn backlog during long tool calls
+- Double sessions may still occur — session_epoch added but needs verification
+
+### Commits today
 ```
-a63b1ee docs: complete autonomous behavior reference
-738ac41 feat: standard inventory config + restore script
+aa4d731 fix: re-enable recovery FSM — was disabled since May 28
+c48833c fix: don't cancel goto promises on runner mutex preemption
+328d569 fix: fire-and-forget ON_ABORT in _cancelCurrent, add hard timeout to /action
 125bac5 feat: forum synthesis — close L4 loop, real cancellation, auto-eat gate, interoception
 0b1cc53 fix: filter BANNED_FOOD in eat(), auto-unlock TTS audio on page load
 0296517 docs: mutex audit handoff
 ```
+
+### Architecture docs
+- `docs/McCompaii-Autonomous-Behavior.md` — complete L1-L4 reference
+- `~/wiki/entities/mccompaii-tts.md` — TTS configuration
+- `HANDOFF-mutex-audit.md` — original audit findings
