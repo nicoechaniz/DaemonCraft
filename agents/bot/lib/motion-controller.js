@@ -58,7 +58,7 @@ export class MotionController {
     this._sessionGeneration = 0; // monotonic counter
     this._teleportedAt = 0;  // suppress new goals for 2s after teleport
     this._stuckRestartCount = 0;  // persists across session restarts — reset on new goto
-    this._recoveryEnabled = false; // recovery FSM disabled — stuck restarts use centering + goto/follow
+    this._recoveryEnabled = true; // step/lateral/mine recovery FSM — re-enabled after pathfinder debug
     this._pendingGotoCleanup = null; // cleanup for active goto/gotoNear promise
     this._handlingStuck = false; // guard against re-entrant _handleStuck calls
     
