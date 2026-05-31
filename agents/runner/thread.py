@@ -322,7 +322,7 @@ class RunnerThread(threading.Thread):
                   f"has_weapon={has_weapon} has_food={has_food} health={health} "
                   f"threshold={p['combat']['threshold']}", flush=True)
 
-            # Prefer eat over flee if health low + food available (let auto-eat plugin or explicit eat recover)
+            # Prefer eat over flee if health low + food available (routes via explicit /action/eat which claims BodyMutex atomic; auto-eat plugin gated by ENABLE_AUTO_EAT_PLUGIN)
             if health < 8 and has_food:
                 if entity_type:
                     self._flee_steps[entity_type] = 0

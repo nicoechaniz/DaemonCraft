@@ -8,10 +8,21 @@
  * Unregistered actions default to 'preemptible'.
  */
 
+// REG_KEY normalizes URL action names (dig, place, collect, place_fill) to registry keys
+// (mine_block, place_block) so mutex protection and ON_ABORT apply uniformly.
+export const REG_KEY = (name) => ({dig:'mine_block', place:'place_block', place_fill:'place_block', collect:'mine_block'}[name] || name);
+
+const PLACE_BLOCK_DEF = { tag: 'atomic',      safeYield: null,         maxMs: 400 };
+const MINE_BLOCK_DEF  = { tag: 'preemptible', safeYield: 'post_dig',   maxMs: null };
+
 export const ACTION_REGISTRY = {
   'goto':          { tag: 'preemptible', safeYield: 'on_ground', maxMs: null },
-  'place_block':   { tag: 'atomic',      safeYield: null,         maxMs: 400 },
-  'mine_block':    { tag: 'preemptible', safeYield: 'post_dig',   maxMs: null },
+  'place_block':   PLACE_BLOCK_DEF,
+  'place':         PLACE_BLOCK_DEF,
+  'place_fill':    PLACE_BLOCK_DEF,
+  'mine_block':    MINE_BLOCK_DEF,
+  'dig':           MINE_BLOCK_DEF,
+  'collect':       MINE_BLOCK_DEF,
   'attack_entity': { tag: 'preemptible', safeYield: 'on_ground',  maxMs: null },
   'jump':          { tag: 'atomic',      safeYield: null,         maxMs: 300 },
   'use_item':      { tag: 'atomic',      safeYield: null,         maxMs: 200 },
@@ -69,4 +80,4 @@ export const ON_ABORT = {
 };
 
 // Default export for convenience in dynamic imports
-export default { ACTION_REGISTRY, ON_ABORT };
+export default { ACTION_REGISTRY, ON_ABORT, REG_KEY };

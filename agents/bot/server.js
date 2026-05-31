@@ -40,6 +40,7 @@
  *   MC_USERNAME   Bot username (default: HermesBot)
  *   MC_AUTH       Auth type: offline|microsoft (default: offline)
  *   API_PORT      HTTP API port (default: 3001)
+ *   ENABLE_AUTO_EAT_PLUGIN  If set to 'false', disables mineflayer-auto-eat plugin (default: enabled for backwards compat; set false to route all eating through L2 runner /action/eat + BodyMutex)
  */
 
 import fs from 'fs';
@@ -87,7 +88,7 @@ import {
 } from './lib/action_feedback.js';
 import { MotionController } from './lib/motion-controller.js';
 import { BodyMutex } from './lib/mutex.js';
-import { ACTION_REGISTRY, ON_ABORT } from './lib/action-registry.js';
+import { ACTION_REGISTRY, ON_ABORT, REG_KEY } from './lib/action-registry.js';
 import { HOSTILE_NAMES, WEAPONS, BANNED_FOOD, isHostileName, equipBestWeapon } from './lib/combat-data.js';
 // mine-photo removed — prismarine-viewer + puppeteer replaced it (see line 253).
 // The package was broken on Node 22 (fs.globSync at module load) and the
@@ -634,7 +635,9 @@ async function createBotImpl() {
       bot.loadPlugin(pathfinder);
       // bot.loadPlugin(pvpPlugin); // disabled — breaks pathfinder
       bot.loadPlugin(armorManager);
-      bot.loadPlugin(autoEatLoader);
+      if (process.env.ENABLE_AUTO_EAT_PLUGIN !== 'false') {
+        bot.loadPlugin(autoEatLoader);
+      }
       bot.loadPlugin(collectBlock);
 
       // Configure pathfinder
@@ -680,13 +683,15 @@ async function createBotImpl() {
       // Configure auto-eat: eat to recover health. Minecraft regen needs hunger>=18 + saturation>0.
       // Eat when hunger drops below 18 to keep saturation high and health regenerating.
       // If health is below 19, prioritize high-saturation food for faster healing.
-      bot.autoEat.options = {
-        priority: 'foodPoints',
-        minHunger: 18,
-        minHealth: 19,
-        bannedFood: BANNED_FOOD,
-        returnToLastItem: true,
-      };
+      if (process.env.ENABLE_AUTO_EAT_PLUGIN !== 'false') {
+        bot.autoEat.options = {
+          priority: 'foodPoints',
+          minHunger: 18,
+          minHealth: 19,
+          bannedFood: BANNED_FOOD,
+          returnToLastItem: true,
+        };
+      }
 
       // ── Reactive Events ──────────────────────────────
 
@@ -1322,7 +1327,7 @@ async function digTunnel(bot, direction, distance) {
  * Post-action judge — wraps an action, captures before/after state,
  * classifies the outcome, and stores the result in the lastJudge mailbox.
  *
- * @param {object}   intent    - { action, target?, targetY?, direction? }
+ * @param {object}   intent    - { action, target?, targetY?, direction?, initiator? }
  * @param {function} actionFn  - async function that performs the action
  */
 async function judgeAction(intent, actionFn) {
@@ -1392,6 +1397,7 @@ async function judgeAction(intent, actionFn) {
     position_after: after.pos,
     position_delta: { dx: Math.round(dx * 10) / 10, dy: Math.round(dy * 10) / 10, dz: Math.round(dz * 10) / 10 },
     captured_at_tick: after.tick,
+    ts: Date.now(),  // wall-time ms for seconds_ago in L4 verdict (GAP #5)
     error: error || null,
     initiator: intent.initiator || 'l4_agent', // who requested this action: l2_runner, l3_loop, l4_agent
     consumed_by_l4: false,
@@ -5102,6 +5108,22 @@ const httpServer = http.createServer(async (req, res) => {
             try { b.clearControlStates(); } catch {} // TODO: route through motion.requestReflex(requester)
             try { b.stopDigging(); } catch {}
           }
+          // Fire ON_ABORT for consistency with mutex._cancelCurrent() real cancellation path.
+          // (stopDigging already invoked above via motion.stop or direct; this covers place_block recovery etc.)
+          // Non-blocking (fire-and-forget with 750ms cap) so /stop responds promptly.
+          if (bodyMutex) {
+            const tag = bodyMutex.getStatus ? bodyMutex.getStatus().actionTag : null;
+            if (tag) {
+              const abortKey = REG_KEY(tag);
+              const abortFn = ON_ABORT[abortKey];
+              if (abortFn && b) {
+                Promise.race([
+                  abortFn(b, { targetPos: null }),
+                  new Promise((r) => setTimeout(r, 750))
+                ]).catch(() => {});
+              }
+            }
+          }
           if (bodyMutex && typeof bodyMutex.emergencyStop === 'function') {
             // Also escalate to mutex hard stop (records event)
             await bodyMutex.emergencyStop(requester || 'action/stop');
@@ -5522,8 +5544,9 @@ const httpServer = http.createServer(async (req, res) => {
       // (those with maxMs = atomic short ops), claim via BodyMutex before running.
       // Movement/navigation use MotionController session as their claim.
       // Unregistered actions default to preemptible (no explicit claim here).
+      // Use REG_KEY to normalize dig/place/collect/place_fill -> mine_block/place_block for coverage.
       let mutexClaimed = false;
-      const actionDef = ACTION_REGISTRY[actionName];
+      const actionDef = ACTION_REGISTRY[REG_KEY(actionName)];
       if (actionDef && actionDef.tag === 'atomic' && bodyMutex) {
         // atomic actions claim via BodyMutex (preemptible ones do not)
         const claimResult = await bodyMutex.claimCritical('action:' + actionName, actionName, actionDef.maxMs);
@@ -5544,6 +5567,7 @@ const httpServer = http.createServer(async (req, res) => {
             target: (body.x != null) ? { x: body.x, y: body.y, z: body.z } : null,
             direction: body.direction || null,
             targetY: body.target_y || null,
+            initiator: 'l4_agent',  // Hermes tools (mc_mine/mc_build etc) are L4-initiated; runner/L2 bypass /action
           };
           // judgeAction runs the action AND captures before/after
           const { judge, value } = await judgeAction(intent, () => actionFn(body));
@@ -5572,6 +5596,21 @@ const httpServer = http.createServer(async (req, res) => {
         if (mutexClaimed && bodyMutex) {
           try { await bodyMutex.release('action:' + actionName); } catch {}
         }
+        // Also invoke relevant ON_ABORT for preemptible paths (dig/collect via mine_block)
+        // and on error/abort paths (e.g. actionFn threw mid-dig). Uses REG_KEY normalization.
+        // Bounded 750ms timeout prevents blocking HTTP handler; mirrors the mutex._cancelCurrent contract.
+        // Atomic deadline math (in claimCritical) now uses performance.now() for monotonicity.
+        try {
+          const b = bot; // module-scoped; defensive, ON_ABORT handlers are null-safe anyway
+          const abortKey = REG_KEY(actionName);
+          const abortFn = ON_ABORT[abortKey];
+          if (abortFn && b) {
+            await Promise.race([
+              abortFn(b, { targetPos: null }),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('ON_ABORT timeout')), 750))
+            ]).catch(() => {});
+          }
+        } catch {}
       }
     }
 

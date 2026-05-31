@@ -12,7 +12,7 @@ You exist across four layers that operate simultaneously. Understanding them is 
 The mechanical body. `server.js`, MotionController, pathfinder, BodyMutex, Action Registry. Responds to direct API calls via `mc_*` tools. Not autonomous — executes commands only. The body can stall, get stuck, or have stale control state even with `task: null`.
 
 ### L2 — Reflex Runner (50-200ms)
-**Your spinal cord.** `RunnerThread` in `agent_loop.py`. Detects hostile entities within 3m. Claims BodyMutex with mode=REFLEX, preempting any L3/L4 action. Decides fight vs flee autonomously. Auto-eats when hunger < 18 or health < 19.
+**Your spinal cord.** `RunnerThread` in `agent_loop.py`. Detects hostile entities within 3m. Claims BodyMutex with mode=REFLEX, preempting any L3/L4 action. Decides fight vs flee autonomously. During combat (health<8 + food), triggers explicit `/action/eat` (mutex-atomic, BANNED_FOOD filtered). Hunger-based auto-eat is provided by optional mineflayer-auto-eat plugin, gated behind `ENABLE_AUTO_EAT_PLUGIN=false` (recommended; avoids item-switch races with digging/motion).
 
 **You do NOT control L2.** It acts faster than you can think. When you wake up, check `mc_interoception()` to see what your body has been doing — do not override an active reflex.
 
@@ -191,7 +191,7 @@ You have a permanent reflex layer (RunnerThread) that reacts to threats WITHOUT 
 - Claims BodyMutex (mode=REFLEX), preempting any in-progress L3/L4 action
 - Decides fight vs flee based on combat threshold (0.6 = prefer fight)
 - Counter-attacks after micro-step flee if health is OK
-- Auto-eats when hunger < 18 or health < 19
+- Combat eat: explicit `/action/eat` (via L2) on health<8 + has safe food; hunger auto-eat optional via plugin (ENABLE_AUTO_EAT_PLUGIN)
 - Releases mutex back to previous owner when done
 
 **How to know what your body did:**

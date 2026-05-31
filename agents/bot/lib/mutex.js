@@ -5,6 +5,8 @@
  * and reflex-driven (RunnerThread) behaviors.
  */
 
+import { ON_ABORT, REG_KEY } from './action-registry.js';
+
 const CONTROL_MODE = {
   IDLE: 0,
   GOAL: 1,          // Goal layer (agent_loop / embodied) owns body
@@ -31,7 +33,9 @@ export class BodyMutex {
     }
     // Block if an atomic action (claimed with maxMs deadline) is still in its uninterruptible window.
     // Uses atomicDeadline presence (set for atomic-tagged actions like place_block/jump) rather than actionTag string.
-    if (this.atomicDeadline && Date.now() < this.atomicDeadline) {
+    // Switched to performance.now() for monotonic clock (immune to NTP slew / system clock changes).
+    const now = performance.now();
+    if (this.atomicDeadline && now < this.atomicDeadline) {
       return {
         allowed: false,
         reason: 'atomic_in_progress',
@@ -43,7 +47,7 @@ export class BodyMutex {
     this.owner = requester;
     this.actionTag = actionTag || null;
     this.since = Date.now();
-    this.atomicDeadline = maxMs ? Date.now() + maxMs : 0;
+    this.atomicDeadline = maxMs ? performance.now() + maxMs : 0;
     return { allowed: true };
   }
 
@@ -108,6 +112,16 @@ export class BodyMutex {
       try { await this.bot.motion.requestMutexCancel(this.owner || 'mutex'); } catch {}
     }
     try { this.bot.clearControlStates(); } catch {}
+    try { this.bot.stopDigging?.(); } catch {}
+    const key = this.actionTag;
+    const abortFn = ON_ABORT[key] || ON_ABORT[REG_KEY(key)];
+    if (abortFn) {
+      // Bounded await with 750ms timeout: unbounded ON_ABORT inside mutex critical section is deadlock hazard
+      await Promise.race([
+        abortFn(this.bot, { targetPos: null }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('ON_ABORT timeout')), 750))
+      ]).catch(() => {});
+    }
     // TODO: plugin-specific cleanup (mining, placing, inventory windows, auto-eat, etc.)
     // Future: if (this.bot.collectBlock) ... ; if (this.bot.tool) ...
   }

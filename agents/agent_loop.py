@@ -486,7 +486,7 @@ _HAZARD_COOLDOWN_S = 30
 
 
 def _build_body_session(status: dict, reason: str = "idle") -> dict:
-    """Build enriched body_session with combat data, runner state, and action history."""
+    """Build enriched body_session with combat data, runner state, action history, and L4 verdict feedback (GAP #5)."""
     task = status.get("task")
     pos = status.get("position", {})
 
@@ -549,6 +549,7 @@ def _build_body_session(status: dict, reason: str = "idle") -> dict:
     # ── Judge ring buffer — read pending entries, consume L3's own ──
     last_judge = None
     pending_judges = []
+    l4_verdict = None
     try:
         jr = _get_json("/judge/pending")
         if jr and jr.get("ok") and jr.get("data"):
@@ -571,8 +572,95 @@ def _build_body_session(status: dict, reason: str = "idle") -> dict:
                     "tick": most_recent.get("captured_at_tick"),
                     "initiator": most_recent.get("initiator"),
                 }
+
+            # GAP #5: extract most recent L4-initiated judge verdict for next heartbeat
+            # (only L4 verdicts; L3 consumes its own above; gateway consumes L4 after injection)
+            l4_entries = [j for j in pending_judges if j.get("initiator") == "l4_agent"]
+            if l4_entries:
+                most = l4_entries[-1]
+                now = time.time()
+                ts = most.get("ts")
+                seconds_ago = 0
+                if isinstance(ts, (int, float)) and ts > 0:
+                    # ts is ms (Date.now from JS); convert to seconds
+                    seconds_ago = max(0, round((now * 1000 - ts) / 1000.0))
+                # Compact action label, enrich with pos from intent if present (for prompt display)
+                act = most.get("action") or "?"
+                intent = most.get("intent") or {}
+                if isinstance(intent, dict) and intent.get("x") is not None:
+                    try:
+                        act = f"{act}@{int(intent['x'])},{int(intent['y'])},{int(intent['z'])}"
+                    except Exception:
+                        pass
+                # Delta as compact distance string (euclid approx from dx+dy+dz for display)
+                d = most.get("position_delta") or {}
+                dist = 0.0
+                try:
+                    dist = round(abs(d.get("dx", 0)) + abs(d.get("dy", 0)) + abs(d.get("dz", 0)), 1)
+                except Exception:
+                    dist = 0.0
+                l4_verdict = {
+                    "outcome": most.get("outcome"),
+                    "reason_code": most.get("reason_code"),
+                    "action": act,
+                    "delta": f"{dist}m",
+                    "seconds_ago": seconds_ago,
+                }
     except Exception:
-        pass
+        l4_verdict = None
+
+    # ── Compact body_activity for L4 interoception (dark 90s window visibility) ──
+    # Built from runner_activity + action_history + judges. Empty string on quiet cycles (no noise).
+    # Format example: "L2: 2×attack(zombie), 1×flee(creeper) | Eat: 1 | Stuck: 0 | Preempt: 1 (dig→RUNNER_ACTIVE)"
+    executor_state = _executor.get_state() if _executor else {"active": False}
+    body_activity = ""
+    try:
+        parts = []
+        ra = runner_activity or {}
+        # L2: runner reflexes since last L4 turn (use detail for targets, summary for older aggregates)
+        if ra.get("total", 0) > 0:
+            det = ra.get("detail") or []
+            if det:
+                counts = {}
+                for d in det:
+                    r = d.get("reflex") or "?"
+                    t = d.get("target") or ""
+                    k = f"{r}({t})" if t else r
+                    counts[k] = counts.get(k, 0) + 1
+                l2s = ", ".join(f"{c}×{k}" for k, c in counts.items())
+                parts.append(f"L2: {l2s}")
+            elif ra.get("summary"):
+                parts.append(f"L2: {ra['summary']}")
+        # Eat count as separate callout (critical survival signal)
+        eat_n = sum(1 for d in (ra.get("detail") or []) if d.get("reflex") == "eat")
+        if eat_n > 0:
+            parts.append(f"Eat: {eat_n}")
+        # Stuck: proxy from recent action_history non-success (L3 pathfinder/motion issues)
+        acts = action_history or []
+        stuck_n = sum(1 for a in acts[-5:] if (a.get("status") or "").lower() not in ("done", "ok"))
+        parts.append(f"Stuck: {stuck_n}")
+        # Preempt: L2 runner interrupted an active L3/L4 action (key dark-window signal)
+        preempt_n = 0
+        preempt_ex = ""
+        jlist = pending_judges or []
+        if not jlist and last_judge:
+            jlist = [last_judge]
+        preempts = [j for j in jlist
+                    if (j.get("outcome") == "preempted"
+                        or j.get("reason_code") == "RUNNER_ACTIVE"
+                        or j.get("reason") == "RUNNER_ACTIVE")]
+        preempt_n = len(preempts)
+        if preempt_n > 0:
+            ex = preempts[0]
+            act = ex.get("action") or "?"
+            rc = ex.get("reason_code") or ex.get("reason") or "RUNNER_ACTIVE"
+            preempt_ex = f" ({act}→{rc})"
+            parts.append(f"Preempt: {preempt_n}{preempt_ex}")
+        body_activity = " | ".join(parts)
+        if len(body_activity) > 199:
+            body_activity = body_activity[:196] + "..."
+    except Exception:
+        body_activity = ""
 
     return {
         "heartbeat_reason": reason,
@@ -589,11 +677,13 @@ def _build_body_session(status: dict, reason: str = "idle") -> dict:
         "nearby_hostiles": hostiles,
         "runner_reflex": runner_reflex,
         "runner_activity": runner_activity,
-        "executor_state": _executor.get_state() if _executor else {"active": False},
+        "body_activity": body_activity,
+        "executor_state": executor_state,
         "orchestrator_state": _orchestrator.get_last_result() if _orchestrator else {"active": False},
         "scene_graph": scene_graph,
         "last_judge": last_judge,
         "pending_judges": pending_judges,
+        "l4_verdict": l4_verdict,
         "deaths": deaths_total,
         "last_death": last_death,
     }
