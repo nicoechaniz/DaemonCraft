@@ -5570,7 +5570,14 @@ const httpServer = http.createServer(async (req, res) => {
             initiator: 'l4_agent',  // Hermes tools (mc_mine/mc_build etc) are L4-initiated; runner/L2 bypass /action
           };
           // judgeAction runs the action AND captures before/after
-          const { judge, value } = await judgeAction(intent, () => actionFn(body));
+          // Hard timeout: no action can hang forever. Preemptible ops get 30s, goto gets 120s.
+          const actionTimeouts = { dig: 30_000, collect: 30_000, place: 30_000, fill: 60_000, attack: 15_000, follow: 120_000, goto: 120_000, gotoNear: 120_000 };
+          const hardTimeout = actionTimeouts[actionName] || 30_000;
+          const timedAction = Promise.race([
+            judgeAction(intent, () => actionFn(body)),
+            new Promise((_, reject) => setTimeout(() => reject(new Error(`Action ${actionName} timed out after ${hardTimeout/1000}s`)), hardTimeout))
+          ]);
+          const { judge, value } = await timedAction;
           result = value || {};
           if (typeof result === 'object' && result !== null) {
             result._judge = judge;

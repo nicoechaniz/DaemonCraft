@@ -2015,3 +2015,29 @@ Debugging runner combat: bot attacks slimes but appears to flee from zombies.
   - slime: runner-debug → ATTACK slime; bot log → `Attacked slime (2–3m away)`.
   - zombie: runner-debug → ATTACK zombie; bot log → `Attacked zombie (2–2.9m away)`.
   - no new `invalid_entity_attacked` kick during verification.
+
+## Session 2026-05-31 — Forum Synthesis, Death Interrupt, Standard Inventory, Full Deploy
+
+### Major deliverables
+- **Forum review** (Claude+Grok): 5 gaps identified, 6-step fix plan, synthesis in `docs/McCompaii-Autonomous-Behavior.md`
+- **GAP #1-5 fixes deployed**: REG_KEY + stopDigging + ON_ABORT, auto-eat gated, L4 judge verdict in prompt, interoception block
+- **Death interrupt**: gateway kills in-progress turn immediately on death, bypasses all guards
+- **BANNED_FOOD**: eat() now filters rotten_flesh/etc (commit 0b1cc53)
+- **TTS**: voice=es-MX-JorgeNeural, auto-unlock on page reload, queued messages skipped
+- **Standard inventory**: `config/mccompaii-standard-inventory.json` + `scripts/restore-mccompaii-inventory.sh`
+- **SOUL rewrites**: Stuck Protocol, Night Protocol (fearless), Death=free teleport, Path building (flatten first)
+- **Dashboard**: TTS auto-unlock fix
+
+### Key files
+- `docs/McCompaii-Autonomous-Behavior.md` — complete L1-L4 behavior reference
+- `config/mccompaii-standard-inventory.json` — canonical loadout
+- `scripts/restore-mccompaii-inventory.sh` — inventory restore script
+
+### Commits
+```
+a63b1ee docs: complete autonomous behavior reference
+738ac41 feat: standard inventory config + restore script
+125bac5 feat: forum synthesis — close L4 loop, real cancellation, auto-eat gate, interoception
+0b1cc53 fix: filter BANNED_FOOD in eat(), auto-unlock TTS audio on page load
+0296517 docs: mutex audit handoff
+```

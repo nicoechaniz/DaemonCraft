@@ -113,13 +113,14 @@ export class BodyMutex {
     }
     try { this.bot.clearControlStates(); } catch {}
     try { this.bot.stopDigging?.(); } catch {}
+    // Fire ON_ABORT asynchronously — NEVER block the mutex critical section.
+    // Blocking here stalls the runner for 750ms and breaks movement recovery.
     const key = this.actionTag;
     const abortFn = ON_ABORT[key] || ON_ABORT[REG_KEY(key)];
     if (abortFn) {
-      // Bounded await with 750ms timeout: unbounded ON_ABORT inside mutex critical section is deadlock hazard
-      await Promise.race([
+      Promise.race([
         abortFn(this.bot, { targetPos: null }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('ON_ABORT timeout')), 750))
+        new Promise((r) => setTimeout(r, 750))
       ]).catch(() => {});
     }
     // TODO: plugin-specific cleanup (mining, placing, inventory windows, auto-eat, etc.)
