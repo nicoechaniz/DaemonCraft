@@ -2184,8 +2184,8 @@ c48833c fix: don't cancel goto promises on runner mutex preemption
 5. ✅ **t_063009f4 (verify_block)** — DONE (sub-task of t_dd9f607d). actionVerifyBlock returns {position, block, category, is_solid, is_walkable, is_opaque, metadata}. Fills the 10% gap that type-based CJK leaves.
 6. ✅ **t_f8481d90 (discard narrate + visual inject)** — DONE (soft-discard approach). When NarrateGateTracker detects past-tense narration contradicting last tool result, gateway injects synthetic world state with reminder text + visual pre-process of radius 4 around bot's position_after (fetched from bot server's /blocks?format=visual). Cooldown 30s. 8/8 unit tests pass. Full discard (strip assistant text from history) would require invasive changes to hermes-cli's conversation_loop.py — too invasive for this bloc.
 7. ✅ **t_4c62f48c (geometric macros)** — DONE. 5 new actions: walkable (standable cells with floor check), path_to (pathfinder with 5.5s timeout, fail-fast), corners (NW/NE/SE/SW of walkable area), escape_routes (cardinal directions with distance+blocker+ceiling, best_escape), structure_outline (ceiling-column detector). 11 total actions in dispatcher. Server /navigate updated for async path_to.
-8. **PAUSA para Nico**: confirm if restart (t_97b030a6) or continue. Restart kills the L4 session that's currently in the death-trap-zone chase.
-9. After restart: **t_f34e5174 (mbit3d visualizer)** — consumes the new mapping.
+8. ✅ **t_97b030a6 (restart consolidated)** — DONE. Killed old L4 session, restarted gateway + daemoncraft-cast, bot server.js reloaded with all 8 card implementations. invoke_hook bug fixed. WS reconnected, L4 auto-resumed with new SOULs. Bot at (17.5, 64, -53.5), health 20/20, food 20/20.
+9. ✅ **t_f34e5174 (mbit3d visualizer)** — DONE. mbit-viz3d.html consumes /navigate?action=visual_legend (single source of truth). /blocks returns both text (LLM) and blocks[] with per-block char. Hardcoded CHAR_MAP removed. Tested live: 1166 blocks, 146 chars, chars 禁空灰瓦葉 match server.
 10. **t_4b04d67e (E2E tests L1-L2-L3-L4)** — last step, with everything deployed.
 
 ### Files to read first when resuming
