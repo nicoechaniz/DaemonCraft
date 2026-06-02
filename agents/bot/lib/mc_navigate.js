@@ -723,8 +723,13 @@ export function dispatchNavigate(bot, action, opts) {
     case 'verify_door':        return actionVerifyDoor(bot, opts);
     case 'scan_structure':     return actionScanStructure(bot, opts);
     case 'verify_block':       return actionVerifyBlock(bot, opts);
+    case 'walkable':           return actionWalkable(bot, opts);
+    case 'path_to':            return actionPathTo(bot, opts);
+    case 'corners':            return actionCorners(bot, opts);
+    case 'escape_routes':      return actionEscapeRoutes(bot, opts);
+    case 'structure_outline':  return actionStructureOutline(bot, opts);
     default:
-      throw new Error(`Unknown mc_navigate action: ${action}. Use: identify_cave, identify_interior, find_doors, verify_door, scan_structure, verify_block.`);
+      throw new Error(`Unknown mc_navigate action: ${action}. Use: identify_cave, identify_interior, find_doors, verify_door, scan_structure, verify_block, walkable, path_to, corners, escape_routes, structure_outline.`);
   }
 }
 
@@ -768,5 +773,218 @@ function actionVerifyBlock(bot, opts) {
     is_walkable: _isWalkable(block),
     is_opaque: _isCeiling(block),
     metadata: block.metadata !== undefined ? block.metadata : null,
+  };
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Geometric macros (t_4c62f48c) — pre-processed scan data
+// ──────────────────────────────────────────────────────────────────────
+
+/**
+ * Action: walkable — list of (x, y, z) cells the bot can stand on.
+ * Defaults to a 2-block tall column scan (feet + head) and 8-block radius.
+ * Returns the list of walkable cells sorted by distance.
+ */
+function actionWalkable(bot, opts) {
+  const radius = opts.radius || 8;
+  const pos = opts.position || (bot.entity && bot.entity.position);
+  if (!pos) return { cells: [], reason: 'no_position' };
+  const cx = Math.floor(pos.x), cy = Math.floor(pos.y), cz = Math.floor(pos.z);
+  const cells = [];
+  for (let dx = -radius; dx <= radius; dx++) {
+    for (let dz = -radius; dz <= radius; dz++) {
+      const feet = _getBlock(bot, cx + dx, cy, cz + dz);
+      const head = _getBlock(bot, cx + dx, cy + 1, cz + dz);
+      const floor = _getBlock(bot, cx + dx, cy - 1, cz + dz);
+      if (_isWalkable(feet) && _isWalkable(head) && floor && _isSolid(floor)) {
+        cells.push({ x: cx + dx, y: cy, z: cz + dz });
+      }
+    }
+  }
+  cells.sort((a, b) => {
+    const da = Math.abs(a.x - cx) + Math.abs(a.z - cz);
+    const db = Math.abs(b.x - cx) + Math.abs(b.z - cz);
+    return da - db;
+  });
+  return {
+    count: cells.length,
+    radius,
+    cells: cells.slice(0, 256),  // cap
+  };
+}
+
+/**
+ * Action: path_to — run pathfinder, return waypoints + reachability.
+ * Fail-fast: if pathfinder can't reach the target within timeout, return
+ * {reachable: false, reason: 'unreachable_or_timeout'} with the partial
+ * path so the LLM can adapt.
+ */
+async function actionPathTo(bot, opts) {
+  const { target_x, target_y, target_z } = opts;
+  if (target_x === undefined || target_y === undefined || target_z === undefined) {
+    return { error: 'target_x, target_y, target_z required' };
+  }
+  const radius = opts.radius || 64;
+  const pos = opts.position || (bot.entity && bot.entity.position);
+  if (!pos) return { reachable: false, reason: 'no_position' };
+  if (!bot.pathfinder || typeof bot.pathfinder.getPathTo !== 'function') {
+    return { reachable: false, reason: 'pathfinder_unavailable' };
+  }
+  try {
+    const goal = new (require('vec3').Vec3)(target_x, target_y, target_z);
+    const path = await Promise.race([
+      bot.pathfinder.getPathTo(goal, { timeout: 5000 }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5500)),
+    ]);
+    if (!path || !path.path || path.path.length === 0) {
+      return {
+        reachable: false,
+        reason: 'no_path',
+        start: { x: pos.x, y: pos.y, z: pos.z },
+        target: { x: target_x, y: target_y, z: target_z },
+      };
+    }
+    const waypoints = path.path.map(p => ({ x: p.x, y: p.y, z: p.z }));
+    return {
+      reachable: true,
+      distance_blocks: waypoints.length,
+      waypoints: waypoints.slice(0, 50),  // cap
+      target: { x: target_x, y: target_y, z: target_z },
+    };
+  } catch (e) {
+    return {
+      reachable: false,
+      reason: e.message || 'pathfinder_error',
+      start: { x: pos.x, y: pos.y, z: pos.z },
+      target: { x: target_x, y: target_y, z: target_z },
+    };
+  }
+}
+
+/**
+ * Action: corners — corner blocks of the walkable space around the bot.
+ * Returns the 4 (or more) corner cells of the rectangular walkable area
+ * in the bot's local XZ plane.
+ */
+function actionCorners(bot, opts) {
+  const radius = opts.radius || 8;
+  const pos = opts.position || (bot.entity && bot.entity.position);
+  if (!pos) return { corners: [], reason: 'no_position' };
+  const cx = Math.floor(pos.x), cy = Math.floor(pos.y), cz = Math.floor(pos.z);
+  const walkable = actionWalkable(bot, opts);
+  if (walkable.cells.length === 0) {
+    return { corners: [], reason: 'no_walkable_cells' };
+  }
+  const xs = walkable.cells.map(c => c.x);
+  const zs = walkable.cells.map(c => c.z);
+  return {
+    bounding_box: {
+      x_min: Math.min(...xs), x_max: Math.max(...xs),
+      z_min: Math.min(...zs), z_max: Math.max(...zs),
+    },
+    corners: [
+      { x: Math.min(...xs), y: cy, z: Math.min(...zs) },  // NW
+      { x: Math.max(...xs), y: cy, z: Math.min(...zs) },  // NE
+      { x: Math.max(...xs), y: cy, z: Math.max(...zs) },  // SE
+      { x: Math.min(...xs), y: cy, z: Math.max(...zs) },  // SW
+    ],
+    radius,
+  };
+}
+
+/**
+ * Action: escape_routes — cardinal directions with distance to first blocker,
+ * the blocker type, ceiling check, light level. Use to decide "where can I go?".
+ */
+function actionEscapeRoutes(bot, opts) {
+  const radius = opts.radius || 8;
+  const pos = opts.position || (bot.entity && bot.entity.position);
+  if (!pos) return { routes: {}, reason: 'no_position' };
+  const cx = Math.floor(pos.x), cy = Math.floor(pos.y), cz = Math.floor(pos.z);
+  const cardinal = _scanCardinal(bot, cx, cy, cz, radius);
+  const out = {};
+  for (const [name, info] of Object.entries(cardinal)) {
+    out[name] = {
+      distance: info.dist,
+      blocker: info.blocker,
+      low_ceiling: info.lowCeiling,
+      has_sky_access: name === 'up' ? info.dist >= 5 : null,
+    };
+  }
+  return {
+    radius,
+    routes: out,
+    best_escape: _bestEscape(out),
+  };
+}
+
+function _bestEscape(routes) {
+  // Pick the longest unobstructed escape route.
+  let best = null;
+  for (const [name, info] of Object.entries(routes)) {
+    if (info.blocker === null && info.distance > 0) {
+      if (!best || info.distance > best.distance) {
+        best = { direction: name, distance: info.distance };
+      }
+    }
+  }
+  return best;
+}
+
+/**
+ * Action: structure_outline — bounding boxes of all distinct structures
+ * in the scan radius, classified by type. Use to map a region.
+ */
+function actionStructureOutline(bot, opts) {
+  const radius = opts.radius || 16;
+  const pos = opts.position || (bot.entity && bot.entity.position);
+  if (!pos) return { structures: [], reason: 'no_position' };
+  const cx = Math.floor(pos.x), cy = Math.floor(pos.y), cz = Math.floor(pos.z);
+  // Scan a 3D volume and find clusters of solid blocks. Simple
+  // approach: bin blocks by (x, z) column and find columns with
+  // ceilings → "structures".
+  const scan = _scanVolume(bot, cx - radius, cy, cz - radius, cx + radius, cy + 5, cz + radius);
+  const structures = [];
+  // Find all "ceiling" columns (have solid block above, have 4+ solid walls)
+  for (let x = cx - radius; x <= cx + radius; x++) {
+    for (let z = cz - radius; z <= cz + radius; z++) {
+      // Check if column at (x, z) has ceiling within 5 blocks
+      let ceilingY = null;
+      for (let h = 1; h <= 5; h++) {
+        const b = _getBlock(bot, x, cy + h, z);
+        if (b && _isCeiling(b)) {
+          ceilingY = cy + h;
+          break;
+        }
+      }
+      if (ceilingY === null) continue;
+      // Has at least 2 cardinal walls?
+      let wallCount = 0;
+      for (const [dx, dz] of [[0, -1], [0, 1], [1, 0], [-1, 0]]) {
+        const w = _getBlock(bot, x + dx, cy, z + dz);
+        if (w && _isSolid(w)) wallCount++;
+      }
+      if (wallCount < 2) continue;
+      structures.push({
+        position: { x, y: cy, z: z },
+        ceiling_y: ceilingY,
+        ceiling_height: ceilingY - cy,
+        wall_count: wallCount,
+      });
+    }
+  }
+  // Deduplicate by clustering nearby ceiling columns
+  const deduped = [];
+  for (const s of structures) {
+    const isNear = deduped.find(d =>
+      Math.abs(d.position.x - s.position.x) < 2 &&
+      Math.abs(d.position.z - s.position.z) < 2
+    );
+    if (!isNear) deduped.push(s);
+  }
+  return {
+    radius,
+    structure_count: deduped.length,
+    structures: deduped.slice(0, 32),  // cap
   };
 }

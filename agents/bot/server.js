@@ -5000,20 +5000,30 @@ const httpServer = http.createServer(async (req, res) => {
         if (!action) {
           return respond(res, 400, {
             ok: false,
-            error: 'Missing action param. Use: identify_cave, identify_interior, find_doors, verify_door, scan_structure.',
+            error: 'Missing action param. Use: identify_cave, identify_interior, find_doors, verify_door, scan_structure, verify_block, walkable, path_to, corners, escape_routes, structure_outline.',
           });
         }
         const radius = parseInt(url.searchParams.get('radius') || '8');
         const opts = { radius };
-        // verify_door needs explicit coords
-        if (action === 'verify_door') {
+        // verify_door and verify_block need explicit coords
+        if (action === 'verify_door' || action === 'verify_block') {
           const x = parseInt(url.searchParams.get('x'));
           const y = parseInt(url.searchParams.get('y'));
           const z = parseInt(url.searchParams.get('z'));
           if ([x, y, z].some(v => Number.isNaN(v))) {
-            return respond(res, 400, { ok: false, error: 'verify_door requires x, y, z query params' });
+            return respond(res, 400, { ok: false, error: `${action} requires x, y, z query params` });
           }
           opts.x = x; opts.y = y; opts.z = z;
+        }
+        // path_to needs target coords
+        if (action === 'path_to') {
+          const tx = parseInt(url.searchParams.get('target_x'));
+          const ty = parseInt(url.searchParams.get('target_y'));
+          const tz = parseInt(url.searchParams.get('target_z'));
+          if ([tx, ty, tz].some(v => Number.isNaN(v))) {
+            return respond(res, 400, { ok: false, error: 'path_to requires target_x, target_y, target_z' });
+          }
+          opts.target_x = tx; opts.target_y = ty; opts.target_z = tz;
         }
         // Use explicit position if passed
         const px = parseInt(url.searchParams.get('x'));
@@ -5025,7 +5035,10 @@ const httpServer = http.createServer(async (req, res) => {
         const b = ensureBot();
         const t0 = Date.now();
         try {
-          const data = dispatchNavigate(b, action, opts);
+          // dispatchNavigate returns a Promise for async actions (path_to).
+          // Other actions return sync results. Wrap in Promise.resolve to
+          // unify the await pattern.
+          const data = await Promise.resolve(dispatchNavigate(b, action, opts));
           const elapsed = Date.now() - t0;
           return respond(res, 200, { ok: true, data: { action, ...data, elapsed_ms: elapsed } });
         } catch (err) {
