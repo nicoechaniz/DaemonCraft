@@ -2202,3 +2202,27 @@ Some type CJKs are still TBD where the semantic mapping is debatable. The list o
 
 ### Open question: discard cooldown
 How many discards per turn before the LLM's narration is allowed through anyway? Proposed cap: 2. If LLM re-narrates incorrectly 3 times in a row, log warning and let it pass to avoid infinite loop.
+
+
+## System Operations (2026-06-02)
+
+**Controller mode**: `lab` (default as of 2026-06-02). Bot does NOT start
+autonomous turns. Only user input (chat message) drives L4. Change with:
+`./scripts/daemoncraft-ops.py mode [lab|autonomous]`. Lab mode silences
+ALL wake_up triggers (hostile entities, stuck tasks, plan progress) —
+nothing fires an L4 turn except human chat. The original autonomous mode
+came with a token cost (heartbeat every ~7s, ~600 tokens each) that
+Nico flagged as not worth the value when actively observing.
+
+**Operations script**: `scripts/daemoncraft-ops.py` is the single source
+of truth for system control. Subcommands: `status`, `mode`, `restart`,
+`speak`, `log`, `health`, `session`, `tools`, `watch`. Each shows current
+state and accepts the appropriate toggles. Replaces ad-hoc
+`systemctl --user restart hermes-gateway` + `curl /controller/mode` +
+`tail gateway.log` + `pgrep` sequences. Run `./scripts/daemoncraft-ops.py --help` for full list.
+
+**Why we don't just keep it on autonomous by default**: in autonomous
+mode the bot consumes ~10x more tokens (continuous heartbeat responses),
+and any stray hostile mob, stuck task, or completed plan triggers a
+new L4 turn. When Nico is actively testing, that noise is unhelpful.
+Lab mode lets Nico control exactly when the bot acts.
