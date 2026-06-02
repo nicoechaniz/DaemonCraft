@@ -4899,6 +4899,34 @@ const httpServer = http.createServer(async (req, res) => {
         }
         const b = ensureBot();
         const t0 = Date.now();
+        // Tied to t_d7b663f3 (chunk loading). Force-load every chunk that
+        // covers the requested volume before reading blocks. Without this,
+        // blockAt() returns null for unloaded chunks, making the scan
+        // return 'unknown' for everything outside the bot's loaded area.
+        // prismarine-world's getColumn() can be sync (return Chunk) or
+        // async (return Promise<Chunk>). We await the async form.
+        if (b.world && typeof b.world.getColumn === 'function') {
+          const minCX = minX >> 4, maxCX = maxX >> 4;
+          const minCZ = minZ >> 4, maxCZ = maxZ >> 4;
+          for (let cz = minCZ; cz <= maxCZ; cz++) {
+            for (let cx = minCX; cx <= maxCX; cx++) {
+              try {
+                const col = b.world.getColumn(cx, cz);
+                if (col && typeof col.then === 'function') {
+                  // Async form — wait for the chunk to load
+                  await col;
+                }
+                // Sync form: if returned undefined, we can't force-load
+                // synchronously without the internal loadChunk fn. Try
+                // a best-effort setTimeout to let the bot receive the
+                // chunk on next tick.
+                if (!b.world.getColumn(cx, cz) && b.world.loadChunk) {
+                  try { b.world.loadChunk(cx, cz); } catch (_e) {}
+                }
+              } catch (_le) { /* best-effort */ }
+            }
+          }
+        }
         const blocks = [];
         for (let y = minY; y <= maxY; y++) {
           for (let z = minZ; z <= maxZ; z++) {

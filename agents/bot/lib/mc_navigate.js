@@ -126,6 +126,24 @@ function _isDoorOpen(b) {
 
 function _getBlock(bot, x, y, z) {
   try {
+    // Tied to t_d7b663f3 (chunk loading). mineflayer's blockAt() returns
+    // null for chunks that haven't been loaded into the bot's world.
+    // We force-load the chunk for (x, z) before reading. This makes the
+    // mc_navigate queries work for arbitrary positions, not just the
+    // bot's currently-loaded area.
+    if (bot && bot.world && typeof bot.world.loadChunk === 'function') {
+      try {
+        const cx = x >> 4;  // block → chunk
+        const cz = z >> 4;
+        const loaded = bot.world.getColumn && bot.world.getColumn(cx, cz);
+        if (!loaded) {
+          bot.world.loadChunk(cx, cz);  // sync request — populates the column
+        }
+      } catch (_le) {
+        // loadChunk is best-effort. If it fails, fall through to
+        // blockAt which will return null and we treat as 'unknown'.
+      }
+    }
     return bot.blockAt(new (require('vec3').Vec3)(x, y, z));
   } catch (e) {
     return null;
