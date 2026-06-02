@@ -83,5 +83,10 @@ export const DEFAULT_ALLOWED_TOOLS = [
   "report_execution_error",
 ];
 
-/** Default deadline for the whole intent (compose + Ollama + dispatch). */
-export const DEFAULT_DEADLINE_SECONDS = 30;
+/** Default deadline for the whole intent (compose + Ollama + dispatch).
+ *  Raised from 30s to 90s on 2026-06-02 to accommodate qwen-andy:27b
+ *  cold-start (first load of a 16.5GB model can take 30-40s). After
+ *  warmup, typical qwen-andy responses complete in 5-15s. The 90s
+ *  budget leaves 3-4x margin for cold starts, Ollama queueing, and
+ *  multi-tool plans. */
+export const DEFAULT_DEADLINE_SECONDS = 90;
