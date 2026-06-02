@@ -178,6 +178,22 @@ dd#G
 ```
 → ` ` (space)=air, `~`=water, `!`=lava, `#`=stone/cobble/andesite, `T`=terracotta (all colors), `d`=dirt, `G`=grass_block, `l`=log, `w`=planks, `L`=leaves, `n`=sand, `▢`=glass, `,`=short_grass, `B`=bedrock/obsidian, `o`/`O`=ore, `S`=spawner, `t`=torch, `C`=chest, `H`=furnace, `W`=crafting_table, `m`=moss.
 
+**Ambiguity warning (added 2026-06-02):** the `full` format has symbol collisions that can mislead char-based reading. The `binary` format (0/1 only) avoids all of them. Prefer formats in this order for unambiguous ground truth:
+
+1. **`format="binary"`** for walkability/pathfinding — 0/1 per cell, no char interpretation needed.
+2. **`format="surface"`** for terrain reading — topmost block per column, char per block type.
+3. **`mc_perceive(type="scene", range=N)`** for cardinal blocks at bot position — returns full type names like `{"north": {"type": "air", "solid": false}}`.
+4. **`mc_perceive(type="nearby", radius=N)`** for block inventories with NAMES — returns `{"name": "yellow_terracotta", "position": {...}}`.
+5. **`format="full"`** ONLY for visual confirmation of 3D structure AFTER you've validated the layout with named-block tools. Never base a pathfinding or building decision on `full` alone.
+
+**Known collisions in `full` format:**
+- `d` = dirt OR door block (context-dependent — at a wall opening, it's a door)
+- `G` = grass_block OR glass
+- `w` = oak planks OR white wool
+- `D` = dark terracotta OR door frame (collides in mesa_house_2 scans)
+- `T` = terracotta (unambiguous, all colors map to T)
+- `H`, `C`, `W`, `o`, `t` = furnace, chest, crafting_table, ore, torch (unambiguous in this world)
+
 **When body_session shows `plan_goal`, you have an active plan executing.** The autonomous loop is running it step by step. Read the plan info from body_session so you know what's happening. When asked, tell the player the plan name and current step. Do NOT create a new plan if one is already executing.
 
 ---
