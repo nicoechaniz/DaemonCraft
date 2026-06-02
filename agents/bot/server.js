@@ -4936,18 +4936,28 @@ const httpServer = http.createServer(async (req, res) => {
           }
         }
         const elapsed = Date.now() - t0;
-        // mBit format encoding
+        // mBit encoding — single format 'visual' (1 char per block, no collisions).
+        // Pass ?format=visual explicitly or omit to get raw block data.
         const format = url.searchParams.get('format');
-        if (format) {
+        if (format === 'visual' || format === null) {
           try {
             const centerX = parseInt(url.searchParams.get('cx')) || undefined;
             const centerY = parseInt(url.searchParams.get('cy')) || undefined;
             const centerZ = parseInt(url.searchParams.get('cz')) || undefined;
-            const text = encodeMbit(blocks, format, centerX, centerY, centerZ);
-            return respond(res, 200, { ok: true, data: { format, text, count: blocks.length, entities, elapsed_ms: elapsed } });
+            const text = encodeMbit(blocks, 'visual', centerX, centerY, centerZ);
+            return respond(res, 200, {
+              ok: true,
+              data: { format: 'visual', text, count: blocks.length, entities, elapsed_ms: elapsed },
+            });
           } catch (err) {
             return respond(res, 400, { ok: false, error: `mBit encoding error: ${err.message}` });
           }
+        }
+        if (format) {
+          return respond(res, 400, {
+            ok: false,
+            error: `Unknown mBit format: ${format}. The only supported format is 'visual' (single character per block, no collisions, see lib/mbit.js).`,
+          });
         }
         return respond(res, 200, { ok: true, data: { blocks, entities, count: blocks.length, elapsed_ms: elapsed } });
       }

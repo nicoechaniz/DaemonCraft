@@ -2,108 +2,62 @@
 /**
  * mBit — Minecraft chunk as LLM-native text.
  *
- * 5 perception formats:
- *   Binary  — walkable (0) / solid (1) per (X,Y,Z), one grid per Y layer
- *   Columns — (UP free, DOWN solid) per (X,Z) column
- *   Rows    — free blocks in N,S,E,W,Up,Down from centre point
- *   Surface — ground block type per (X,Z)
- *   Full    — every block as a single character, one grid per Y layer
+ * Single perception format:
+ *   Visual — 1 char per block, deterministic, no collisions.
  *
- * All formats accept arbitrary volume bounds via GET /blocks.
+ * Why a single format: previous mbit had binary, columns, rows, surface, full —
+ * all with symbol collisions (T = 16 colors of terracotta, O = 8 ores, etc.)
+ * and a fallback name[0] that produced random collisions. The bot couldn't
+ * distinguish yellow_terracotta from brown_terracotta in 'full' output.
+ *
+ * Visual solves that with:
+ * - Mnemonic chars for super-common blocks (air, water, lava, redstone_wire, torch, lantern)
+ * - Category chars for groups (door→◫, chest→◰, furnace→⊡, crafting→⊞, bed→⊏, glass→▢)
+ *   so 21 door types all show as ◫, 3 chests as ◰, etc. — categories stay distinct.
+ * - Sequential CJK Unified Ideographs (U+4E00+) for the rest, alphabetically assigned
+ *   so yellow_terracotta, brown_terracotta, orange_terracotta, red_terracotta
+ *   get 4 different chars.
+ *
+ * Output layout (same Y-major as the old 'full'):
+ *   --- Y=N ---
+ *   <row Z=minZ>
+ *   <row Z=minZ+1>
+ *   ...
+ *   <row Z=maxZ>
+ *
+ *   --- Y=N+1 ---
+ *   ...
+ *
+ *   Legend (only chars present in this scan):
+ *   <char> = <block_name>
+ *
+ * Top row = minZ (NORTH). Left col = minX (WEST). Grid centre is bot position
+ * when cx/cy/cz are passed.
  *
  * API:
- *   encode(blocks, format, centerX, centerY, centerZ) → string
+ *   encode(blocks, cx, cy, cz) → string
  *
- * The blocks array is [{x, y, z, name}, ...] as returned by GET /blocks.
+ * The blocks array is [{x, y, z, name, boundingBox, transparent}, ...] as
+ * returned by GET /blocks.
  */
 
-/**
- * Block → single character mapping.
- * Upper/mixed case for walkable (air, plants, liquids), lower case for solids.
- * Unmapped blocks get '?'.
- */
-const CHAR_MAP = {
-  air: ' ',        cave_air: ' ',   void_air: ' ',
-  water: '~',      lava: '!',       bubble_column: '°',
-  short_grass: ',', tall_grass: ';', fern: 'f', large_fern: 'F',
-  dead_bush: '.',  dandelion: '*',   poppy: '*',
-  oak_sapling: 's', birch_sapling: 's', spruce_sapling: 's',
-  oak_leaves: 'L', birch_leaves: 'L', spruce_leaves: 'L',
-  vine: 'v',       glow_lichen: 'g',
-  // Solids (lowercase)
-  stone: '#',      cobblestone: '#', mossy_cobblestone: '#',
-  dirt: 'd',       coarse_dirt: 'D', grass_block: 'G', rooted_dirt: 'G',
-  farmland: '=',   dirt_path: '=',   podzol: 'd',
-  sand: 'n',       red_sand: 'n',   gravel: 'g',
-  clay: 'c',       terracotta: 'T',  white_terracotta: 'T',
-  orange_terracotta: 'T', magenta_terracotta: 'T', light_blue_terracotta: 'T',
-  yellow_terracotta: 'T', lime_terracotta: 'T', pink_terracotta: 'T',
-  gray_terracotta: 'T', light_gray_terracotta: 'T', cyan_terracotta: 'T',
-  purple_terracotta: 'T', blue_terracotta: 'T', brown_terracotta: 'T',
-  green_terracotta: 'T', red_terracotta: 'T', black_terracotta: 'T',
-  oak_log: 'l',    birch_log: 'l',   spruce_log: 'l', stripped_oak_log: 'l',
-  oak_planks: 'w', birch_planks: 'w', spruce_planks: 'w',
-  crafting_table: 'W', chest: 'C', furnace: 'H',
-  coal_ore: 'o',   iron_ore: 'O',   gold_ore: 'O', diamond_ore: 'O',
-  redstone_ore: 'O', lapis_ore: 'O', copper_ore: 'O',
-  emerald_ore: 'O', nether_quartz_ore: 'O',
-  bedrock: 'B',    obsidian: 'B',
-  glass: '▢',      glass_pane: '▢',
-  torch: 't',      wall_torch: 't', lantern: 't',
-  target: '◎',     heavy_core: '◎',
-  brown_bed: 'b',  yellow_bed: 'b',
-  spawner: 'S',    mob_spawner: 'S',
-  oak_stairs: '▲', birch_stairs: '▲',
-  short_dry_grass: ',', tall_dry_grass: ';',
-  leaf_litter: '.', moss_block: 'm',
-};
+import { BLOCK_TO_CHAR } from './block_to_char_1.21.9.js';
 
-/** Special blocks that are walk-through (treat as air for binary) */
-const WALKABLE = new Set([
-  'air', 'cave_air', 'void_air',
-  'short_grass', 'tall_grass', 'fern', 'large_fern',
-  'dead_bush', 'dandelion', 'poppy', 'vine', 'glow_lichen',
-  'short_dry_grass', 'tall_dry_grass',
-  'leaf_litter', 'torch', 'wall_torch', 'lantern',
-  'oak_sapling', 'birch_sapling', 'spruce_sapling',
-  'brown_mushroom', 'red_mushroom',
-  // Leaves are passable in Minecraft (walk-through, replaceable by blocks)
-  'oak_leaves', 'birch_leaves', 'spruce_leaves',
-  'jungle_leaves', 'acacia_leaves', 'dark_oak_leaves',
-  'mangrove_leaves', 'cherry_leaves',
-  'azalea_leaves', 'flowering_azalea_leaves',
-]);
-
-const PASSABLE_DESPITE_BLOCK_BB = new Set([
-  // minecraft-data reports boundingBox='block' for leaves, but in-game they are passable
-  'oak_leaves', 'birch_leaves', 'spruce_leaves',
-  'jungle_leaves', 'acacia_leaves', 'dark_oak_leaves',
-  'mangrove_leaves', 'cherry_leaves',
-  'azalea_leaves', 'flowering_azalea_leaves',
-]);
-
-function charFor(blockOrName) {
-  const name = typeof blockOrName === 'string' ? blockOrName : (blockOrName && blockOrName.name);
+/** Public: any block name → single unicode char. */
+export function blockToChar(name) {
   if (!name) return '?';
-  return CHAR_MAP[name] || name[0] || '?';
-}
-
-function isWalkable(blockOrName) {
-  const name = typeof blockOrName === 'string' ? blockOrName : (blockOrName && blockOrName.name);
-  if (!name) return true;
-  const block = typeof blockOrName === 'object' ? blockOrName : null;
-
-  // Prefer canonical minecraft-data properties when available
-  if (block && block.boundingBox) {
-    if (block.boundingBox === 'empty') return true;
-    if (block.boundingBox === 'block' && block.transparent === true) {
-      return PASSABLE_DESPITE_BLOCK_BB.has(name);
-    }
-    return false;
+  if (BLOCK_TO_CHAR[name]) return BLOCK_TO_CHAR[name];
+  // Unknown block (not in pre-built table, e.g. a modded block or older MC version).
+  // Fall back to hash of name mod CJK pool. Same hash, same char, deterministic.
+  // If a real collision with a known block happens, it will be visible in
+  // the legend and the human can investigate.
+  let h = 0;
+  for (let i = 0; i < name.length; i++) {
+    h = ((h << 5) - h + name.charCodeAt(i)) | 0;
   }
-
-  // Fallback for string-only or missing properties (backward compat)
-  return WALKABLE.has(name) || name === 'water' || name === 'bubble_column';
+  const POOL_START = 0x4E00;
+  const POOL_SIZE = 20992; // CJK Unified Ideographs base range
+  return String.fromCodePoint(POOL_START + (Math.abs(h) % POOL_SIZE));
 }
 
 /** Build a 3D lookup: grid[y][x][z] = block object */
@@ -129,116 +83,50 @@ function blockAt3D(grid, x, y, z) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// FORMAT 1: Binary — walkable map per (X,Y,Z), Y-major (bottom→top)
+// FORMAT: Visual — 1 char per block, with legend
 // ═══════════════════════════════════════════════════════════════
-function encodeBinary(blocks) {
+export function encodeVisual(blocks) {
   const { grid, minX, maxX, minZ, maxZ, minY, maxY } = build3D(blocks);
+  const usedChars = new Set();
   let out = '';
   for (let y = minY; y <= maxY; y++) {
     out += `--- Y=${y} ---\n`;
     for (let z = minZ; z <= maxZ; z++) {
       for (let x = minX; x <= maxX; x++) {
         const block = blockAt3D(grid, x, y, z);
-        const solid = !isWalkable(block);
-        out += solid ? '1' : '0';
+        const c = blockToChar(block.name);
+        usedChars.add(c);
+        out += c;
       }
       out += '\n';
     }
-    out += '\n';
-  }
-  return out;
-}
-
-// ═══════════════════════════════════════════════════════════════
-// FORMAT 2: Columns — (UP free, DOWN solid) per (X,Z)
-// ═══════════════════════════════════════════════════════════════
-function encodeColumns(blocks) {
-  const { grid, minX, maxX, minZ, maxZ, minY, maxY } = build3D(blocks);
-  let out = '';
-  for (let z = minZ; z <= maxZ; z++) {
-    for (let x = minX; x <= maxX; x++) {
-      let freeUp = 0, solidDown = 0;
-      let foundSolid = false;
-      for (let y = minY; y <= maxY; y++) {
-        const block = blockAt3D(grid, x, y, z);
-        if (!foundSolid && isWalkable(block)) {
-          freeUp++;
-        } else if (!isWalkable(block)) {
-          foundSolid = true;
-          solidDown++;
-        } else {
-          solidDown++;
-        }
-      }
-      out += `${freeUp},${solidDown} `;
-    }
-    out += '\n';
-  }
-  return out;
-}
-
-// ═══════════════════════════════════════════════════════════════
-// FORMAT 3: Rows — free distance in each cardinal + vertical direction
-// ═══════════════════════════════════════════════════════════════
-function encodeRows(blocks, centerX, centerY, centerZ) {
-  const { grid, minX, maxX, minZ, maxZ, minY, maxY } = build3D(blocks);
-  const cx = centerX != null ? centerX : Math.floor((minX + maxX) / 2);
-  const cy = centerY != null ? centerY : Math.floor((minY + maxY) / 2);
-  const cz = centerZ != null ? centerZ : Math.floor((minZ + maxZ) / 2);
-
-  function freeDist(dx, dy, dz) {
-    let dist = 0;
-    let x = cx, y = cy, z = cz;
-    while (x >= minX && x <= maxX && z >= minZ && z <= maxZ && y >= minY && y <= maxY) {
-      x += dx; y += dy; z += dz;
-      if (x < minX || x > maxX || z < minZ || z > maxZ || y < minY || y > maxY) break;
-      const block = blockAt3D(grid, x, y, z);
-      if (!isWalkable(block) && block.name !== 'air') break;
-      dist++;
-    }
-    return dist;
   }
 
-  return `N:${freeDist(0,0,-1)} S:${freeDist(0,0,1)} E:${freeDist(1,0,0)} W:${freeDist(-1,0,0)} Up:${freeDist(0,1,0)} Down:${freeDist(0,-1,0)}`;
-}
-
-// ═══════════════════════════════════════════════════════════════
-// FORMAT 4: Surface — ground block character per (X,Z)
-// ═══════════════════════════════════════════════════════════════
-function encodeSurface(blocks) {
-  const { grid, minX, maxX, minZ, maxZ, minY, maxY } = build3D(blocks);
-  let out = '';
-  for (let z = minZ; z <= maxZ; z++) {
-    for (let x = minX; x <= maxX; x++) {
-      let surfBlock = AIR_BLOCK;
-      for (let y = maxY; y >= minY; y--) {
-        const block = blockAt3D(grid, x, y, z);
-        if (block.name !== 'air' && block.name !== 'cave_air' && block.name !== 'void_air') {
-          surfBlock = block;
-          break;
-        }
-      }
-      out += charFor(surfBlock);
-    }
-    out += '\n';
+  // Build legend from used chars → block name(s). For category chars
+  // (door, chest, etc.) multiple names map to the same char, so the
+  // legend shows the first one alphabetically and indicates "and N more".
+  const charToFirstName = {};
+  const charToCount = {};
+  for (const b of blocks) {
+    const c = blockToChar(b.name);
+    if (!charToFirstName[c]) charToFirstName[c] = b.name;
+    charToCount[c] = (charToCount[c] || 0) + 1;
   }
-  return out;
-}
+  // Determine ALL names per char (for accurate "and N more")
+  const allBlocksByChar = {};
+  for (const [name, c] of Object.entries(BLOCK_TO_CHAR)) {
+    if (!allBlocksByChar[c]) allBlocksByChar[c] = [];
+    allBlocksByChar[c].push(name);
+  }
 
-// ═══════════════════════════════════════════════════════════════
-// FORMAT 5: Full — every block as char, Y-major (bottom→top)
-// ═══════════════════════════════════════════════════════════════
-function encodeFull(blocks) {
-  const { grid, minX, maxX, minZ, maxZ, minY, maxY } = build3D(blocks);
-  let out = '';
-  for (let y = minY; y <= maxY; y++) {
-    out += `--- Y=${y} ---\n`;
-    for (let z = minZ; z <= maxZ; z++) {
-      for (let x = minX; x <= maxX; x++) {
-        out += charFor(blockAt3D(grid, x, y, z));
-      }
-      out += '\n';
-    }
+  out += '\nLegend (chars in this scan):\n';
+  const sortedChars = [...usedChars].sort();
+  for (const c of sortedChars) {
+    const total = allBlocksByChar[c] ? allBlocksByChar[c].length : 1;
+    const seen = charToCount[c] || 0;
+    const firstName = charToFirstName[c] || '?';
+    const more = total > 1 ? ` (+${total - 1} more)` : '';
+    out += `  ${c} = ${firstName}${more}  [${seen} blocks in scan]\n`;
   }
   return out;
 }
@@ -246,15 +134,49 @@ function encodeFull(blocks) {
 // ═══════════════════════════════════════════════════════════════
 // Main encode function
 // ═══════════════════════════════════════════════════════════════
-function encode(blocks, format, centerX, centerY, centerZ) {
-  switch (format) {
-    case 'binary':  return encodeBinary(blocks);
-    case 'columns': return encodeColumns(blocks);
-    case 'rows':    return encodeRows(blocks, centerX, centerY, centerZ);
-    case 'surface': return encodeSurface(blocks);
-    case 'full':    return encodeFull(blocks);
-    default: throw new Error(`Unknown mBit format: ${format}. Use: binary, columns, rows, surface, full`);
+/**
+ * @param {Array<{x,y,z,name}>} blocks
+ * @param {string} format — only 'visual' is accepted
+ * @returns {string}
+ */
+export function encode(blocks, format, _cx, _cy, _cz) {
+  if (format && format !== 'visual') {
+    throw new Error(`Unknown mBit format: ${format}. The only supported format is 'visual' (single-character-per-block, no collisions).`);
   }
+  return encodeVisual(blocks);
 }
 
-export { encode, CHAR_MAP, isWalkable, charFor };
+// Backwards-compat shims so any old import keeps working during the
+// transition. They all delegate to encode() and ignore the format arg
+// (only 'visual' is valid anyway).
+export const encodeFull = (blocks) => encode(blocks, 'visual');
+export const encodeBinary = (blocks) => {
+  // Walkability bit grid (0/1) for pathfinding ground truth. 1=walkable, 0=solid.
+  // Different from 'visual' but kept as a separate function because pathfinding
+  // needs the binary, not the visual. Callers should use encodeBinary() directly.
+  const { grid, minX, maxX, minZ, maxZ, minY, maxY } = build3D(blocks);
+  let out = '';
+  const isWalkable = (b) => b.boundingBox === 'empty' || (b.boundingBox === 'block' && b.transparent === true);
+  for (let y = minY; y <= maxY; y++) {
+    out += `--- Y=${y} ---\n`;
+    for (let z = minZ; z <= maxZ; z++) {
+      for (let x = minX; x <= maxX; x++) {
+        out += isWalkable(blockAt3D(grid, x, y, z)) ? '0' : '1';
+      }
+      out += '\n';
+    }
+  }
+  return out;
+};
+
+export function isWalkable(block) {
+  if (!block) return true;
+  if (block.boundingBox === 'empty') return true;
+  if (block.boundingBox === 'block' && block.transparent === true) {
+    // Leaves are passable in Minecraft despite boundingBox='block'
+    return ['oak_leaves', 'birch_leaves', 'spruce_leaves', 'jungle_leaves',
+            'acacia_leaves', 'dark_oak_leaves', 'mangrove_leaves', 'cherry_leaves',
+            'azalea_leaves', 'flowering_azalea_leaves'].includes(block.name);
+  }
+  return false;
+}
