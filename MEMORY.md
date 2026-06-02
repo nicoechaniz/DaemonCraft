@@ -2128,3 +2128,77 @@ c48833c fix: don't cancel goto promises on runner mutex preemption
 - `docs/McCompaii-Autonomous-Behavior.md` — complete L1-L4 reference
 - `~/wiki/entities/mccompaii-tts.md` — TTS configuration
 - `HANDOFF-mutex-audit.md` — original audit findings
+## Session 2026-06-02 — Perception Tools, Narrate Gate, Visual Format
+
+### What we did
+1. **mbit visual format (t_891f8020, ✅ done)** — Replaced 5 mbit formats (binary, columns, rows, surface, full) with single 'visual' format. 1166 vanilla Minecraft 1.21.9 blocks mapped with 0 collisions. Mnemonic chars (air=` `, water=`~`, lava=`!`, torch=`†`, lantern=`◊`, redstone_wire=`R`), category chars (door=`◫`, chest=`◰`, furnace=`⊡`, crafting=`⊞`, bed=`⊏`, glass=`▢`), rest to CJK U+4E00+ alphabetically. Server returns 400 Bad Request for any format ≠ 'visual' (no back compat, as Nico requested). Commit 8f5efc1 (DaemonCraft), `agents/bot/lib/block_to_char_1.21.9.{js,json}` (33KB canonical), `lib/build_block_chars.py` (regenerable).
+
+2. **StuckPivotTracker sub-fix 4 (t_436909c6, ✅ implemented, deploy pending)** — bucket_size: 3 (was 5), cooldown: 60s (was 120), obj_key now includes action_class. Path B: position pinned to nearby cells (helper `_cells_within(max_diff=1)`) + all stuck + at least one bad L4 judge. Catches the rotate-action-class thrash that sub-fix 3 missed on 2026-06-01 06:36. Both deploy target and workspace updated. **Restart pending.**
+
+3. **NarrateGateTracker reminder approach (t_0fa2c6dc, ✅ done — will be REPLACED)** — `gateway/platforms/daemoncraft_narrategate.py` detects past-tense narration that contradicts last mc_* tool result. 11/11 unit tests pass. Wired in daemoncraft._handle_action_result. Cooldown 30s on reminders. **This approach will be replaced by the discard approach below.**
+
+4. **SOUL sections (t_528a39d7, ✅ done)** — Inserted "Embodied Experimental System" + "What I learned in this session is local" in 3 SOUL files (McCompaii, SOUL_daemoncraft, agents/SOUL-base). Also dragged in 6.1 and 6.2 (Verify Before Narrate + Radical Pivot) which were in runtime but never committed in SOUL-base.md.
+
+5. **mc_navigate perception macros (t_8d9a29ba, ⏳ 50% in progress)** — Implemented 5 semantic actions in `agents/bot/lib/mc_navigate.js`: `identify_cave`, `identify_interior`, `find_doors`, `verify_door`, `scan_structure`. Endpoint `/navigate` added to server. Bot server restarted with code. Issue found: bot at (16, 64, -47) in death-trap-zone near mesa_house_2 area — chunks not loaded, `blockAt` returns null. Need chunk loading fix (t_d7b663f3).
+
+6. **Bot escape (manual interaction)** — Nico said "bot clavado contra una esquina de una casa". Read SOUL House Integrity (use doors, don't break walls), used `mc_perceive scene` to confirm geometry (walls S+E, free N+O), moved bot in 3 `mc_move` calls. Bot free at (566.6, 119, -330.5).
+
+### What we DISCUSSED but not yet committed as cards
+- **Type-based CJK mapping** (t_bb491366) — replace exact-block CJK (arbitrary, no meaning) with semantic CJK categories (岩=stone, 木=wood, 土=earth, 水=water, 火=fire, etc.). The 90% of cases resolved by visual alone; the 10% (exact block) use `mc_navigate action=verify_block`. CJK is auto-decodable by any LLM with CJK knowledge without consulting a legend.
+
+- **Typed outcome field** (t_a2c3facb) — replace text-match parsing of tool result strings (regex on "cancelled", "no_progress", etc.) with a typed JSON contract: `{ok, outcome, category, target, position_before, position_after, block, details}`. Every consumer (NarrateGateTracker, StuckPivotTracker, mc_navigate) reads the fields directly. Zero substring matchers.
+
+- **Discard ungrounded narrate + visual inject** (t_f8481d90) — REPLACES the reminder approach in t_0fa2c6dc. On mismatch, strip the assistant text (keep tool_use blocks, they're valid), augment the tool_result with a visual pre-process of the affected area (visual of bot's current position + visual of the target cell for mc_move, etc.). Cap at 2 discards per turn.
+
+- **Enriched mc_navigate responses** (t_dd9f607d) — add `access_points` (doors + holes), `missing_blocks` (expected wall + current air = directly actionable for mc_build place), `is_safe` + `safety_issues`, `furni` counts, `hostile_presence`. Default safety_issues: open_door, wall_hole, missing_floor, lava_within_5m, hostile_inside, low_light (only with hostile). NOT issues: no_bed, missing_chest (preferences).
+
+- **verify_block** (t_063009f4) — for the 10% case where exact block name matters. mc_navigate action=verify_block x=...y=...z=... returns `{position, block, category, is_solid, ...}`. Companion to type-based CJK.
+
+- **Geometric macros** (t_4c62f48c) — 5 more actions for mc_navigate: walkable, path_to (fail-fast via pathfinder), corners (corner blocks of walkable space), escape_routes (cardinal directions with distances + blockers + ceiling + light), structure_outline (bounding boxes + classification).
+
+- **mbit3d visualizer SoT** (t_f34e5174) — http://localhost:3003/mbit3d must consume the canonical BLOCK_TO_CHAR mapping (not hardcoded). New endpoint `/navigate?action=visual_legend` exposes the mapping for the visualizer to fetch.
+
+- **Consolidated restart** (t_97b030a6) — bundle all changes that need restart: max_turns=30 (env change), sub-fix 4 (StuckPivotTracker), NarrateGateTracker recording, new SOULs. Drain 60-90s. Kills current L4 session.
+
+- **E2E tests L1-L2-L3-L4** (t_4b04d67e) — the testing scenario Nico proposed at end of session. L1: bot server endpoints. L2: reflex runner. L3: agent loop, trackers, bridge. L4: McCompaii session, SOUL, tools, house integrity, escape, narrate anchoring, verify_block.
+
+### What we DECIDED to NOT do
+- **Back compat for old mbit formats** — Nico explicit: "no necesitamos back compatibility. Nuestro actual full no sirve si no es inequívoco." Old formats return 400 Bad Request.
+- **CJK as semantic pictograms** — Nico questioned my use of arbitrary CJK and pushed toward semantic categories (岩, 木, 土, etc.) where each char has actual meaning. Recorded as t_bb491366.
+- **Reminder injection for narrate gate** — Nico proposed better: "borremos directamente de la historia de chat la respuesta ungrounded, para que no le quede al modelo como contexto". Then refined to: "le inyectemos un perceive y in mcBit o mcBit pre-procesado... algo que le indique: ey acá está el resultado de tu acción". Recorded as t_f8481d90.
+- **Maintain large dict in context for mBit decode** — Nico: "resulta menos importante que mantengas un diccionario grande en contexto para interpretar los mBits". Type-based CJK is the fix.
+
+### Current state (end of session 2026-06-02)
+- **Bot**: alive at (16.6, 64, -47.5), health 20, netherite gear, full inventory, in death-trap-zone (barrier blocks + TNT nearby per MEMORY), L4 is using `follow` to chase Nico (Nico at 7.2m SW)
+- **L4 session**: active, in lab mode, consolidating, in death-trap-zone
+- **Services**: daemoncraft (PID 1400670), daemoncraft-cast, hermes-gateway, embodied-service — all active
+- **Dispatcher**: `kanban.dispatch_in_gateway: false` (manual mode)
+- **Commits not yet pushed**: 0 (DaemonCraft commit 8f5efc1 + visual + SOUL-base; hermes-agent commits 2f9117981 + 8ccc54216 + 2f9117981; all synced via compaii-state)
+- **HMK**: chapters 48, 49, 50 (mc-episodic, mc-places) updated with the session events
+
+### Roadmap when Nico returns (priority order)
+1. ✅ **t_a2c3facb (typed outcome)** — DONE. Refactored server to return typed JSON; NarrateGateTracker consumes fields directly. 0 substring matchers. Commits + sync + gateway restart done.
+2. ✅ **t_bb491366 (type-based CJK)** — DONE. 1166/1166 blocks mapped to 146 distinct CJK chars with actual meaning. LLM auto-decodes. Build script regenerable. Commits + sync done.
+3. ✅ **t_d7b663f3 (chunk loading, with caveat)** — DONE. Best-effort code added to /blocks endpoint and mc_navigate.js. But mineflayer 1.21 + prismarine-world 1.21 don't support forced chunk loading from the client side. Distant scans return "unknown" until the bot explores. **Workaround**: walk bot near before scanning distant areas. Live test at bot position (16, 64, -47) works: 禁=barrier, 空=air, 丸=cobblestone, 土=dirt, 灰=concrete, 瓦=terracotta.
+4. ✅ **t_dd9f607d (enriched responses)** — DONE. identify_interior + scan_structure return access_points, missing_blocks, furni, hostile_presence, is_safe + safety_issues, volume_blocks. Plus actionVerifyBlock (t_063009f4) for exact block identity. Back-compat preserved.
+5. ✅ **t_063009f4 (verify_block)** — DONE (sub-task of t_dd9f607d). actionVerifyBlock returns {position, block, category, is_solid, is_walkable, is_opaque, metadata}. Fills the 10% gap that type-based CJK leaves.
+6. ✅ **t_f8481d90 (discard narrate + visual inject)** — DONE (soft-discard approach). When NarrateGateTracker detects past-tense narration contradicting last tool result, gateway injects synthetic world state with reminder text + visual pre-process of radius 4 around bot's position_after (fetched from bot server's /blocks?format=visual). Cooldown 30s. 8/8 unit tests pass. Full discard (strip assistant text from history) would require invasive changes to hermes-cli's conversation_loop.py — too invasive for this bloc.
+7. ✅ **t_4c62f48c (geometric macros)** — DONE. 5 new actions: walkable (standable cells with floor check), path_to (pathfinder with 5.5s timeout, fail-fast), corners (NW/NE/SE/SW of walkable area), escape_routes (cardinal directions with distance+blocker+ceiling, best_escape), structure_outline (ceiling-column detector). 11 total actions in dispatcher. Server /navigate updated for async path_to.
+8. **PAUSA para Nico**: confirm if restart (t_97b030a6) or continue. Restart kills the L4 session that's currently in the death-trap-zone chase.
+9. After restart: **t_f34e5174 (mbit3d visualizer)** — consumes the new mapping.
+10. **t_4b04d67e (E2E tests L1-L2-L3-L4)** — last step, with everything deployed.
+
+### Files to read first when resuming
+- `~/Projects/DaemonCraft/MEMORY.md` (this file)
+- `~/Projects/DaemonCraft/agents/bot/lib/block_to_char_1.21.9.js` (current CJK mapping)
+- `~/Projects/DaemonCraft/agents/bot/lib/mc_navigate.js` (mc_navigate implementations)
+- `~/.hermes/profiles/mccompaii/SOUL.md` (L4 SOUL with new sections)
+- `~/.hermes/hermes-agent/gateway/platforms/daemoncraft_narrategate.py` (NarrateGateTracker)
+- `~/.hermes/hermes-agent/gateway/platforms/daemoncraft_antiloop.py` (StuckPivotTracker sub-fix 4)
+- The 11 cards in kanban: 891f8020, 528a39d7, 0fa2c6dc, 436909c6, 8d9a29ba, bb491366, a2c3facb, f8481d90, dd9f607d, 063009f4, 4c62f48c, d7b663f3, 97b030a6, 4b04d67e, f34e5174
+
+### Open question: CJK for type-based mapping
+Some type CJKs are still TBD where the semantic mapping is debatable. The list of ~100 CJK types is in t_bb491366 body. Nico may want to adjust specific mappings (e.g. should `terracotta` map to `土` like dirt, or to `瓦` like bricks?).
+
+### Open question: discard cooldown
+How many discards per turn before the LLM's narration is allowed through anyway? Proposed cap: 2. If LLM re-narrates incorrectly 3 times in a row, log warning and let it pass to avoid infinite loop.
