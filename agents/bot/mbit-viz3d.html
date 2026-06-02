@@ -122,6 +122,9 @@ function clearObjects() {
 }
 
 const BLOCK_COLORS = {
+  // UI-only: which color to render a given block name. Local to the
+  // visualizer because it's a presentation decision, not a semantic
+  // mapping. The server doesn't care about colors.
   air:'#00000000', grass_block:'#7c9c4c', dirt:'#8b6914',
   coarse_dirt:'#6b5020', stone:'#808080', cobblestone:'#5a5a5a',
   terracotta:'#b86838', orange_terracotta:'#b86838',
@@ -135,24 +138,18 @@ const BLOCK_COLORS = {
   leaf_litter:'#8b6914', crafting_table:'#b8944c', chest:'#ccaa44',
 };
 
-const CHAR_MAP = {
-  air:' ', cave_air:' ', void_air:' ',
-  water:'~', lava:'!',
-  short_grass:',', tall_grass:';', dead_bush:'.',
-  dirt:'d', coarse_dirt:'D', grass_block:'G',
-  stone:'#', cobblestone:'#',
-  sand:'n', gravel:'g', clay:'c',
-  terracotta:'T', orange_terracotta:'T', brown_terracotta:'T',
-  yellow_terracotta:'T',
-  oak_log:'l', oak_leaves:'L', oak_planks:'w',
-  coal_ore:'o', iron_ore:'O', gold_ore:'O',
-  bedrock:'B', obsidian:'B', leaf_litter:'.',
-  short_dry_grass:',', tall_dry_grass:';',
-  crafting_table:'W', chest:'C',
-};
+// Block→char mapping is NOT hardcoded here. The server is the single
+// source of truth: `/navigate?action=visual_legend` returns the full
+// mapping. Each block in `/blocks?format=visual` already includes its
+// `char` field (added t_f34e5174). charFor(block) is a direct lookup,
+// no fallback. The visualizer stays in sync with the server encoding
+// automatically — no more hardcoded CHAR_MAP that drifted from the
+// server's block_to_char_1.21.9.js.
+function charFor(block) {
+  return (block && block.char) || '?';
+}
 
 function colorFor(n) { return BLOCK_COLORS[n] || BLOCK_COLORS.default; }
-function charFor(n) { return CHAR_MAP[n] || n?.[0] || '?'; }
 
 function localBotEye(st, centerX, centerZ, y1, y2) {
   const p = st?.data?.position;
@@ -239,7 +236,7 @@ async function refresh() {
       const wx = block.x + 0.5 - centerX;
       const wy = block.y + 0.5 - (y1 + y2) / 2;
       const wz = block.z + 0.5 - centerZ;
-      const ch = charFor(block.name);
+      const ch = charFor(block);
       const isEmptyBB = block.boundingBox === 'empty';
 
       if (currentMode === 'char' || currentMode === 'both') {
@@ -385,8 +382,33 @@ window.toggleAlignCamera = function() {
   ws.onerror = () => console.log('[mBit3D] WebSocket error');
 })();
 
+// Tied to t_f34e5174: fetch the canonical block→char mapping from the
+// server. The visualizer uses this for the legend panel and to keep
+// in sync with the server's block_to_char_1.21.9.js. Per-block
+// chars come directly from the /blocks response (no client-side
+// mapping needed). Refresh the legend every 60s.
+let legend = null;
+let legendFetchedAt = 0;
+async function fetchLegend(forceRefresh = false) {
+  const now = Date.now();
+  if (!forceRefresh && legend && (now - legendFetchedAt) < 60_000) return legend;
+  try {
+    const url = forceRefresh ? BOT_URL + '/navigate?action=visual_legend&refresh=true'
+                             : BOT_URL + '/navigate?action=visual_legend';
+    const resp = await fetch(url).then(r => r.json());
+    if (resp.ok && resp.data && resp.data.entries) {
+      legend = resp.data;
+      legendFetchedAt = now;
+      return legend;
+    }
+  } catch(e) { console.log('[mBit3D] legend fetch failed', e); }
+  return null;
+}
+window.fetchLegend = fetchLegend;
+
 refresh();
 if (document.getElementById('follow').checked) toggleFollow();
+fetchLegend();  // populate the legend panel
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;

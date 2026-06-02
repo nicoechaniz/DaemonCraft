@@ -59,7 +59,7 @@ import collectBlockPkg from 'mineflayer-collectblock';
 const collectBlock = collectBlockPkg.plugin;
 import minecraftData from 'minecraft-data';
 import { Vec3 } from 'vec3';
-import { encode as encodeMbit, isWalkable } from './lib/mbit.js';
+import { encode as encodeMbit, isWalkable, blockToChar } from './lib/mbit.js';
 import { dispatchNavigate } from './lib/mc_navigate.js';
 import { wrapToolResult, categoryForAction, isActionJudgeable } from './lib/typed_result.js';
 import {
@@ -4934,11 +4934,19 @@ const httpServer = http.createServer(async (req, res) => {
               const block = b.blockAt(new Vec3(x, y, z));
               const name = block ? block.name : 'unknown';
               const info = mcData ? mcData.blocksByName[name] : null;
+              // Tied to t_f34e5174: include the canonical char in each
+              // block so the visualizer (mbit-viz3d.html, mbit-viz.html)
+              // can render without needing its own block→char mapping.
+              // The visualizer still uses the legend endpoint for the
+              // full mapping (block list per char), but the per-block
+              // char is now served here, single source of truth.
+              const char = blockToChar(name) || '?';
               blocks.push({
                 x,
                 y,
                 z,
                 name,
+                char,
                 boundingBox: info ? info.boundingBox : (block && block.boundingBox) || 'block',
                 transparent: info ? info.transparent : (block && block.transparent) || false,
               });
@@ -4967,7 +4975,11 @@ const httpServer = http.createServer(async (req, res) => {
         }
         const elapsed = Date.now() - t0;
         // mBit encoding — single format 'visual' (1 char per block, no collisions).
-        // Pass ?format=visual explicitly or omit to get raw block data.
+        // The response ALWAYS includes both `text` (the LLM-readable mbit
+        // string) AND `blocks[]` (the structured block list with `name`,
+        // `char`, `x`, `y`, `z`, `boundingBox`, `transparent`). The visualizer
+        // (mbit-viz3d.html) reads `blocks[]` and uses `block.char` for
+        // per-block rendering (t_f34e5174). The LLM reads `text` as before.
         const format = url.searchParams.get('format');
         if (format === 'visual' || format === null) {
           try {
@@ -4977,7 +4989,14 @@ const httpServer = http.createServer(async (req, res) => {
             const text = encodeMbit(blocks, 'visual', centerX, centerY, centerZ);
             return respond(res, 200, {
               ok: true,
-              data: { format: 'visual', text, count: blocks.length, entities, elapsed_ms: elapsed },
+              data: {
+                format: 'visual',
+                text,
+                blocks,           // structured list with `char` field for visualizer
+                count: blocks.length,
+                entities,
+                elapsed_ms: elapsed,
+              },
             });
           } catch (err) {
             return respond(res, 400, { ok: false, error: `mBit encoding error: ${err.message}` });

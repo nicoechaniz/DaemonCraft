@@ -714,6 +714,8 @@ function actionScanStructure(bot, opts) {
 // Action dispatcher
 // ──────────────────────────────────────────────────────────────────────
 
+import { BLOCK_TO_CHAR } from './block_to_char_1.21.9.js';
+
 export function dispatchNavigate(bot, action, opts) {
   opts = opts || {};
   switch (action) {
@@ -728,8 +730,9 @@ export function dispatchNavigate(bot, action, opts) {
     case 'corners':            return actionCorners(bot, opts);
     case 'escape_routes':      return actionEscapeRoutes(bot, opts);
     case 'structure_outline':  return actionStructureOutline(bot, opts);
+    case 'visual_legend':      return actionVisualLegend(bot, opts);
     default:
-      throw new Error(`Unknown mc_navigate action: ${action}. Use: identify_cave, identify_interior, find_doors, verify_door, scan_structure, verify_block, walkable, path_to, corners, escape_routes, structure_outline.`);
+      throw new Error(`Unknown mc_navigate action: ${action}. Use: identify_cave, identify_interior, find_doors, verify_door, scan_structure, verify_block, walkable, path_to, corners, escape_routes, structure_outline, visual_legend.`);
   }
 }
 
@@ -987,4 +990,58 @@ function actionStructureOutline(bot, opts) {
     structure_count: deduped.length,
     structures: deduped.slice(0, 32),  // cap
   };
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Action: visual_legend (t_f34e5174)
+// Returns the canonical block→char mapping that the server uses to
+// encode the mbit visual output. The visualizer (mbit-viz3d.html and
+// mbit-viz.html) MUST consume this endpoint as the single source of
+// truth — not hardcode their own mapping. Hardcoded mappings have
+// collisions (T = all 16 terracotta colors, O = 8 ore types, etc.)
+// and don't match the server's encoding. To stay in sync, fetch
+// this legend at startup and on every format change.
+// ──────────────────────────────────────────────────────────────────────
+
+let _CACHED_LEGEND = null;
+let _CACHED_LEGEND_AT = 0;
+const LEGEND_CACHE_TTL_MS = 60_000;  // refresh every 60s
+
+function actionVisualLegend(bot, opts) {
+  const now = Date.now();
+  const refresh = opts.refresh === true || opts.refresh === 'true';
+  if (!refresh && _CACHED_LEGEND && (now - _CACHED_LEGEND_AT) < LEGEND_CACHE_TTL_MS) {
+    return {
+      ..._CACHED_LEGEND,
+      cached: true,
+      cache_age_ms: now - _CACHED_LEGEND_AT,
+    };
+  }
+  if (!BLOCK_TO_CHAR || typeof BLOCK_TO_CHAR !== 'object') {
+    return {
+      error: 'block_to_char_1.21.9.js module not loaded (BLOCK_TO_CHAR is undefined)',
+      block_count: 0,
+      char_count: 0,
+    };
+  }
+  // Build the inverse map: char → list of block names (for legend display)
+  const charToBlocks = {};
+  for (const [name, ch] of Object.entries(BLOCK_TO_CHAR)) {
+    if (!charToBlocks[ch]) charToBlocks[ch] = [];
+    charToBlocks[ch].push(name);
+  }
+  // Also build a stable sorted list of (char, [block_names]) for the UI
+  const entries = Object.entries(charToBlocks)
+    .map(([ch, names]) => ({ char: ch, blocks: names.sort(), count: names.length }))
+    .sort((a, b) => a.char.localeCompare(b.char));
+  _CACHED_LEGEND = {
+    source: 'block_to_char_1.21.9.js',
+    block_count: Object.keys(BLOCK_TO_CHAR).length,
+    char_count: entries.length,
+    char_to_blocks: charToBlocks,
+    entries,
+    generated_at: now,
+  };
+  _CACHED_LEGEND_AT = now;
+  return { ..._CACHED_LEGEND, cached: false };
 }
