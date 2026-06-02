@@ -22,11 +22,21 @@ async function botGet(path, botUrl = null) {
   return json.data ?? json;
 }
 
+// Tied to t_528a7941 (2026-06-02). Bot server `/blocks?format=visual`
+// now emits **type-based CJK** characters instead of the legacy
+// binary/surface/columns/full/rows formats. The bot server returns
+// 400 for any other format. The legend here tells the model what
+// the CJK chars mean and how to read them. The CJK chars have
+// semantic meaning in Chinese/Japanese (e.g. 瓦=tile/terracotta,
+// 木=log, 葉=leaf, 土=earth, 岩=rock) so a CJK-literate LLM can
+// decode them without the legend.
 const MBIT_LEGEND = [
-  "mBit grids are plain-text Minecraft voxels centered on the bot.",
-  "Read each grid row north->south; characters in a row are west->east; the bot is near the center cell.",
-  "binary: 0 = walkable/passable column, 1 = blocked/solid column.",
-  "surface/full chars: space = air, G = grass_block, d/D = dirt, # = stone/cobble, w = planks, l = log, ~=water, !=lava, O=ore, ?=unknown.",
+  "Format: type-based CJK visual. 1 char per block, 146 distinct chars total.",
+  "Mnemonic overrides: space=air, ~=water, !=lava, comma=short_grass, semicolon=tall_grass, dagger=torches, lozenge=lanterns, R=redstone_wire.",
+  "Walkable blocks (use these to decide where the bot can stand): space, ~, !, comma, semicolon, dagger, lozenge, and CJK chars mapped to other plants/leaves.",
+  "The remaining blocks are emitted as semantic CJK chars: 瓦=tile/terracotta, 扉=door, 階=stairs, 硝=glass, 幹=log/trunk, 板=plank/board, 葉=leaf, 花=flower, 苗=sapling, 草=grass, 種=seed, 菌=mushroom, 砂=sand, 土=earth/dirt, 岩=rock, 丸=cobblestone, 水=water, 火=fire, 空=sky/air, 光=light, 暗=dark, 禁=forbidden (barrier), 銅=copper, 鉄=iron, 金=gold, 紫=amethyst, 霊=soul, 獄=netherrack.",
+  "For exact block identification of a CJK char, refer to the legend at the bottom of each scan which shows the first block name that char maps to plus a (+N more) suffix when the char is a category covering multiple blocks.",
+  "Use mc_navigate(action=verify_block, x=..., y=..., z=...) for the 10% case where you need to distinguish e.g. yellow_terracotta from brown_terracotta (both map to 瓦).",
 ].join(" ");
 
 function classifyMbitPurpose(intent = "") {
@@ -54,40 +64,40 @@ function chooseMbitSpec(botPos, intent = "") {
   if (purpose === "verification") {
     return {
       purpose,
-      grids: [grid("full", { x1: x - 1, y1: y - 1, z1: z - 1, x2: x + 2, y2: y + 2, z2: z + 2 })],
-      interpretation_hint: "Use this 4x4x4 full voxel sample for exact before/after local verification. Full format is Y-major: top layer first, then north->south rows and west->east characters.",
+      grids: [grid("visual", { x1: x - 1, y1: y - 1, z1: z - 1, x2: x + 2, y2: y + 2, z2: z + 2 })],
+      interpretation_hint: "Use this 4x4x4 visual voxel sample for exact before/after local verification. The visual format is Y-major: top layer first, then north->south rows and west->east characters. Each CJK char has a semantic meaning; see MBIT_LEGEND at the bottom of each grid for the inverse mapping.",
     };
   }
   if (purpose === "mining") {
     return {
       purpose,
       grids: [
-        grid("surface", mkBounds(4, 3, 5)),
-        grid("columns", mkBounds(4, 3, 5)),
-        grid("rows", mkBounds(4, 0, 5)),
+        grid("visual", mkBounds(4, 3, 5)),
+        grid("visual", mkBounds(4, 0, 5)),
+        grid("visual", mkBounds(4, 0, 5)),
       ],
-      interpretation_hint: "For mining/digging, columns shows vertical clearance/solids around the bot; rows shows free distance in N/S/E/W/Up/Down from the center. Prefer scan/find tools for exact target coordinates after reading this terrain cue.",
+      interpretation_hint: "For mining/digging, the 3 visual grids show vertical clearance, ground type, and free-distance horizons around the bot. Each grid is a Y-major text representation; read top-to-bottom and the legend at the bottom maps each CJK char to its block name. Prefer scan/find tools for exact target coordinates after reading the visual terrain cue.",
     };
   }
   if (purpose === "building") {
     return {
       purpose,
       grids: [
-        grid("surface", mkBounds(5, 1, 4)),
-        grid("binary", mkBounds(5, 0, 1)),
-        grid("rows", mkBounds(5, 0, 4)),
+        grid("visual", mkBounds(5, 1, 4)),
+        grid("visual", mkBounds(5, 0, 1)),
+        grid("visual", mkBounds(5, 0, 4)),
       ],
-      interpretation_hint: "For building/placing, surface shows the floor/material under each cell; binary shows blocked vs walkable footprint. Keep the bot near the center and avoid placing into blocked or unsafe cells unless intentionally building there.",
+      interpretation_hint: "For building/placing, the 3 visual grids show the floor/material under each cell, blocked-vs-walkable footprint, and free distance. Walkable blocks (space, ~, !, comma, semicolon, dagger, lozenge) are safe to stand on. Keep the bot near the center and avoid placing into blocked cells unless intentionally building there.",
     };
   }
   return {
     purpose,
     grids: [
-      grid("binary", mkBounds(4, 0, 1)),
-      grid("surface", mkBounds(4, 1, 3)),
-      grid("rows", mkBounds(4, 0, 3)),
+      grid("visual", mkBounds(4, 0, 1)),
+      grid("visual", mkBounds(4, 1, 3)),
+      grid("visual", mkBounds(4, 0, 3)),
     ],
-    interpretation_hint: "For navigation, binary is the primary map: 0 means the bot can likely stand/pass, 1 means blocked. Surface tells what the ground is. rows gives immediate free-distance horizons from the bot-centered cell.",
+    interpretation_hint: "For navigation, the 3 visual grids show: blocked-vs-walkable footprint, ground material, and free distance in N/S/E/W/Up/Down. Walkable blocks (space, ~, !, comma, semicolon, dagger, lozenge) are where the bot can move. The CJK char-to-block mapping is at the bottom of each grid (the legend).",
   };
 }
 
