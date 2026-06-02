@@ -299,7 +299,11 @@ const MAX_AGENT_LOG = 50;
 let agentHeartbeat = { nextTurnIn: null, turnInProgress: false }; // countdown for dashboard
 
 // Controller Mode — explicit, not automagic. "lab" = no autonomous turns.
-let controllerMode = "autonomous"; // default autonomous for 24/7 operation; overridable via POST /controller/mode
+// Default as of 2026-06-02 is "lab" (Nico's preference: autonomous mode
+// costs ~10x more tokens from continuous heartbeats and isn't worth
+// the cost when actively observing). Override via POST
+// /controller/mode {"mode": "autonomous"}.
+let controllerMode = "lab"; // default lab; overridable via POST /controller/mode
 
 // ═══════════════════════════════════════════════════════════════════
 // Phase 1 Reactive Runner — event producers (debounced edge detectors)
