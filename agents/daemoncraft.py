@@ -955,6 +955,50 @@ def cmd_update(cast_name: str, cast: dict, mc_host: str, mc_port: int):
     log(f"Cast '{cast_name}' updated.", cast_name)
 
 
+def _reset_daemoncraft_sessions(hermes_home_path: Path, cast_name: str, agent_name: str) -> None:
+    """Delete any persisted DaemonCraft L4 sessions for this agent.
+
+    Called once per agent per cast cycle, right before the bot server is
+    started for the first time. This prevents the gateway from rehydrating a
+    stale L4 context (e.g. from a previous cast crash) and immediately
+    injecting a re-entry `[System note: ...]` turn into a fresh L4 session.
+
+    Skips silently if the state.db is not present (no sessions persisted yet).
+    """
+    state_db = hermes_home_path / "state.db"
+    if not state_db.exists():
+        return
+    try:
+        import sqlite3
+        conn = sqlite3.connect(str(state_db))
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id FROM sessions WHERE source IN ('daemoncraft','unknown')"
+        )
+        rows = cur.fetchall()
+        if not rows:
+            conn.close()
+            return
+        # Backup the state.db first (M-Nico rule: backup before change)
+        import time as _t
+        backup = hermes_home_path / f"state.db.cast-reset-{int(_t.time())}.bak"
+        import shutil
+        shutil.copy2(str(state_db), str(backup))
+        for row in rows:
+            sid = row[0]
+            cur.execute("DELETE FROM messages WHERE session_id=?", (sid,))
+            cur.execute("DELETE FROM sessions WHERE id=?", (sid,))
+        conn.commit()
+        conn.close()
+        log(
+            f"[cast-reset] Deleted {len(rows)} daemoncraft session(s) for {agent_name} "
+            f"before first start. Backup: {backup.name}",
+            cast_name,
+        )
+    except Exception as e:
+        log(f"[cast-reset] WARNING: failed to reset sessions for {agent_name}: {e}", cast_name)
+
+
 def cmd_daemon(cast_name: str, cast: dict, mc_host: str, mc_port: int):
     """Run a supervisor loop that keeps all agents alive.
 
@@ -973,6 +1017,7 @@ def cmd_daemon(cast_name: str, cast: dict, mc_host: str, mc_port: int):
     log(f"Daemon mode for '{cast_name}' started. Press Ctrl+C to stop.", cast_name)
     running = True
     restart_tracker = {}  # name -> [(timestamp, count)]
+    first_start_done: set = set()  # agent names whose first start in this cast cycle completed
 
     def handle_sigint(signum, frame):
         nonlocal running
@@ -1004,6 +1049,9 @@ def cmd_daemon(cast_name: str, cast: dict, mc_host: str, mc_port: int):
                 if not bot_alive:
                     if bot_pid:
                         remove_pid(cast_name, name, "bot")
+                    if name not in first_start_done:
+                        first_start_done.add(name)
+                        _reset_daemoncraft_sessions(hermes_home_path, cast_name, name)
                     log(f"Bot {name} down, restarting...", cast_name)
                     try:
                         workspace_dir = str(hermes_home_path)

@@ -1,5 +1,54 @@
 # DaemonCraft Project Memory
 
+## Session 2026-06-01/02 — L4 Anti-Loop, Lab Mode, Cast Reset, Session ID Collision
+
+### Problem observed
+McCompaii L4 entered 50-100 iteration turns attempting to resolve impossible objectives (e.g. move north to unreachable terrain) by trying many variants of the same action. Bot appeared frozen for 10-30 min per turn. A separate kimi-k2.6 session iterated up to 100 tool calls per turn, mostly calling `mc_chat` to spam `/setblock` and `/fill` commands to the bot chat instead of doing real work.
+
+### Root cause (working hypothesis)
+The L4 receives `last_judge: outcome=stuck` from failed tool calls but treats it as just another input rather than a terminal signal. The judge is working, the L4 is ignoring it. No software enforcement says "stuck on the same objective for N tool calls, pivot." L4 cap of 100 iterations is too high (8-50 min per turn).
+
+### Fixes applied
+1. **`/filter` in daemoncraft.py:_handle_chat_entry** — drop chat messages starting with `/` from L4 injection. Operator commands still work, just don't wake the L4. (commit pending in workspace)
+2. **Watchdog anti-loop in daemoncraft.py:_classify_heartbeat_event** — wake_up L4 if same (action, status, elapsed//30) signature repeats for N heartbeats (default 4) OR task.status=done with elapsed_s > 600s. Configurable via `task_loop_threshold` and `task_stale_seconds` in `~/.hermes/config.yaml`. **Commit `2aaef8fb4` on hermes-agent `main`.**
+3. **`[System note:` filter in daemoncraft.py:handle_message** — in lab mode, strip the re-entry note prefix from messages. Autonomous mode keeps the note.
+4. **Cast-reset sessions on boot in daemoncraft.py:cmd_daemon** — when the cast restarts a bot for the first time in a cycle, delete any persisted DaemonCraft L4 sessions from the state.db (with backup to `state.db.cast-reset-*.bak`). Prevents stale context rehydration.
+5. **Drop heartbeats in lab mode in daemoncraft.py:_handle_heartbeat_context** — early return at the top of the handler when `mode=lab`. The L4 session is only created when a real user turn arrives (chat, dashboard event, explicit operator action). Tested: 0 sessions after 15s of heartbeats in lab.
+6. **Session epoch microsecond in daemoncraft.py:__init__** — `_session_epoch: int = int(time.time() * 1_000_000)`. Reduced theoretical collision risk but **did not actually solve the ID collision** because `build_session_key` (gateway/session.py:648-660) builds keys using `group_sessions_per_user=True, thread_sessions_per_user=False`, and when thread_sessions_per_user=False, the participant_id (which includes the epoch) is dropped from the key. So the key doesn't change between restarts. The cast-reset (#4) is the real solution to the persistence problem.
+
+### McCompaii SOUL updates
+- `~/.hermes/SOUL_daemoncraft.md`: removed `deathpoint` from valid `mc_move` actions list, added "What I Never Do (Hard Bans)" section prohibiting death-as-tool and looped-narration, added "Anti-Loop Watchdog — Three-Turn Reset" section. **Not yet committed.**
+- `~/.hermes/profiles/mccompaii/SOUL.md`: same patches in "Death and Rebirth" and "What I Never Do" sections. **Not yet committed.**
+
+### Quest engine cleanup
+- `~/.local/share/daemoncraft/rolemaster/story.json` had `active_blueprint=el-codigo-que-suena` with sensor `dqs_broke_crying` (crying_obsidian). Backup at `rolemaster/story.json.disabled-1780371580.bak`. Set to `active_blueprint=null, phase=null, active_sensors=[]`. The quest engine was reading this every 7s via rcon (causing the `rcon-cli scoreboard players get CompAII dqs_broke_crying` calls visible in journal). Now idle.
+
+### Session ID collision investigation
+- The session_id `20260601_122151_89363112` is reused on every gateway restart because the session_key doesn't include the epoch (see #6 above).
+- `source='unknown'` in state.db for this session — the agent_loop (L3) is creating the session with source `unknown` instead of `daemoncraft`. Probably an artifact of the agent_loop's source reporting. Doesn't affect functionality but worth investigating later.
+
+### Kanban
+- Created `t_436909c6` — L4 anti-loop: pivot on stuck judge, don't thrash. Investigation plan + proposed fix documented.
+
+### HMK
+- Entry `chapter_id=48` in shelf `mc-episodic`: "2026-06-01/02 McCompaii L4 100-iter thrash turns + fixes"
+
+### Files modified (uncommitted as of session end)
+- `~/Projects/hermes-agent/gateway/platforms/daemoncraft.py` — 5 changes (filter, watchdog, system note filter, drop heartbeats, microsecond epoch)
+- `~/Projects/DaemonCraft/agents/daemoncraft.py` — cast-reset sessions on boot
+- `~/.hermes/config.yaml` — added `task_loop_threshold: 4` and `task_stale_seconds: 600` under `platforms.daemoncraft.extra`
+- `~/.hermes/SOUL_daemoncraft.md` and `~/.hermes/profiles/mccompaii/SOUL.md` — anti-loop sections
+
+### End-of-session test environment
+- Mode: `lab`
+- L4 sessions: 0 (lab drop heartbeats working)
+- Bot: alive in (629, 124, -325), health 20, surface
+- Quest engine: idle
+- All services active: `daemoncraft`, `daemoncraft-cast`, `hermes-gateway`, `embodied-service`
+
+### Next: software enforcement of pivot
+The prompt-level and software-level fixes are still TODO (kanban t_436909c6). When judge.outcome=stuck fires 3× consecutively with the same target, force the L4 turn to terminate with a system message. Also need to test that the watchdog signature bucketing works in practice (current bucketing on elapsed//30 may not catch the actual thrash pattern).
+
 ## Session 2026-05-31 — McCompaii Profile, Autonomous Mode, LLM Visibility
 
 ### McCompaii — Minecraft Embodiment Profile
