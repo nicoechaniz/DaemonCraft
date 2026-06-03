@@ -1,8 +1,7 @@
 /**
- * Ollama client for Gemma-Andy.
+ * Ollama client for Gemma-Andy + Qwen-Andy L3 layer.
  *
  * Endpoint: http://10.10.20.1:11434/api/chat (override via OLLAMA_URL)
- * Model:    gemma-andy:e4b-v2-2-3-q8_0       (override via GEMMA_ANDY_MODEL)
  *
  * Hard rules (raw/gemma-andy/gemma-andy-integration-guide.md):
  *
@@ -62,14 +61,11 @@ function canonicalEscapeString(s) {
       const named = { 0x08: "\\b", 0x09: "\\t", 0x0a: "\\n", 0x0c: "\\f", 0x0d: "\\r" }[cp];
       out += named ?? "\\u" + cp.toString(16).padStart(4, "0");
     } else if (cp < 0x7f) {
-      // Printable ASCII
       out += ch;
     } else {
-      // Non-ASCII → \uXXXX; surrogate-aware via codePointAt
       if (cp <= 0xffff) {
         out += "\\u" + cp.toString(16).padStart(4, "0");
       } else {
-        // Emit surrogate pair
         const v = cp - 0x10000;
         const hi = 0xd800 + (v >> 10);
         const lo = 0xdc00 + (v & 0x3ff);
@@ -85,26 +81,26 @@ function canonicalEscapeString(s) {
 }
 
 /**
- * Call Gemma-Andy with the canonical payload. Returns the raw text from
- * the message.content of the response (caller passes it to parser.js).
+ * Call an Ollama model with the canonical payload. Returns raw text from
+ * the message.content of the response.
+ *
+ * @param {object} payload — world state / intent payload (caller builds it)
+ * @param {object} opts
+ * @param {AbortSignal} [opts.signal] — abort controller signal
+ * @param {object}  [opts.options={}] — extra Ollama options (merged into requestBody.options)
+ * @param {string}  opts.model — model tag (e.g. GEMMA_ANDY_MODEL, QWEN_ANDY_MODEL)
+ * @param {object}  [opts.extraBody={}] — extra top-level fields for the request body
  */
-export async function callGemmaAndy(payload, { signal, options = {} } = {}) {
+export async function callOllama(payload, { signal, options = {}, model, extraBody = {} } = {}) {
+  if (!model) throw new Error("callOllama requires a model parameter");
+
   const userContent = canonicalStringify(payload);
   const requestBody = {
-    model: GEMMA_ANDY_MODEL,
+    model,
     stream: false,
-    // Rule 1: NO system message. Only `role: "user"`.
     messages: [{ role: "user", content: userContent }],
+    ...extraBody,
     options: {
-      // Sampling: leave Modelfile defaults (temperature=0.2, top_p=0.9,
-      // min_p=0.05, repeat_penalty=1.05, num_ctx=131072) UNTOUCHED.
-      // Earlier field-test tried temperature=0.0 (greedy, mirroring
-      // eval_with_adapter.py's do_sample=False) but it made the model
-      // collapse to single-tool plans (e.g. "construyamos casa" emitted
-      // ONLY scan_nearby, dropping the multi-step gather+build that
-      // example #1 of the integration guide shows). Greedy is for
-      // deterministic eval; production needs the small variance for
-      // multi-step planning.
       num_predict: 1024,
       ...options,
     },
@@ -131,52 +127,25 @@ export async function callGemmaAndy(payload, { signal, options = {} } = {}) {
   }
   return {
     raw: content,
-    model: json.model ?? GEMMA_ANDY_MODEL,
+    model: json.model ?? model,
     elapsed_ms,
     eval_count: json.eval_count,
     prompt_eval_count: json.prompt_eval_count,
   };
 }
 
-export async function callQwenAndy(payload, { signal, options = {} } = {}) {
-  const userContent = canonicalStringify(payload);
-  const requestBody = {
-    model: QWEN_ANDY_MODEL,
-    stream: false,
-    messages: [{ role: "user", content: userContent }],
-    think: false,  // CRÍTICO — sin esto el modelo degrada
-    options: {
-      num_predict: 1024,
-      ...options,
-    },
-  };
+/**
+ * Convenience wrappers — thin parameterization of callOllama.
+ *
+ * callQwenAndy adds think: false (CRÍTICO — sin esto el modelo degrada).
+ * callGemmaAndy adds nothing extra.
+ */
+export async function callGemmaAndy(payload, opts = {}) {
+  return callOllama(payload, { ...opts, model: GEMMA_ANDY_MODEL });
+}
 
-  const t0 = Date.now();
-  const res = await fetch(`${OLLAMA_URL}/api/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(requestBody),
-    signal,
-  });
-  const elapsed_ms = Date.now() - t0;
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Ollama /api/chat → ${res.status}: ${body.slice(0, 200)}`);
-  }
-
-  const json = await res.json();
-  const content = json?.message?.content;
-  if (typeof content !== "string") {
-    throw new Error(`Ollama response missing message.content: ${JSON.stringify(json).slice(0, 200)}`);
-  }
-  return {
-    raw: content,
-    model: json.model ?? QWEN_ANDY_MODEL,
-    elapsed_ms,
-    eval_count: json.eval_count,
-    prompt_eval_count: json.prompt_eval_count,
-  };
+export async function callQwenAndy(payload, opts = {}) {
+  return callOllama(payload, { ...opts, model: QWEN_ANDY_MODEL, extraBody: { think: false } });
 }
 
 export { OLLAMA_URL, GEMMA_ANDY_MODEL, QWEN_ANDY_MODEL };
