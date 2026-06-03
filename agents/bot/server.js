@@ -305,6 +305,22 @@ let agentHeartbeat = { nextTurnIn: null, turnInProgress: false }; // countdown f
 // /controller/mode {"mode": "autonomous"}.
 let controllerMode = "lab"; // default lab; overridable via POST /controller/mode
 
+// ── Persist controller mode across restarts ──
+const CONTROLLER_STATE_FILE = WORKSPACE_DIR
+  ? path.join(WORKSPACE_DIR, 'controller-state.json')
+  : (configPath ? path.join(path.dirname(configPath), 'controller-state.json') : null);
+if (CONTROLLER_STATE_FILE && fs.existsSync(CONTROLLER_STATE_FILE)) {
+  try {
+    const saved = JSON.parse(fs.readFileSync(CONTROLLER_STATE_FILE, 'utf8'));
+    if (saved.mode === 'lab' || saved.mode === 'autonomous') {
+      controllerMode = saved.mode;
+      console.log(`[controller] Restored mode: ${controllerMode} from ${CONTROLLER_STATE_FILE}`);
+    }
+  } catch (err) {
+    console.warn(`[controller] Failed to load state from ${CONTROLLER_STATE_FILE}:`, err.message);
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // Phase 1 Reactive Runner — event producers (debounced edge detectors)
 // Emits 'runner_event' on bot; accumulated into runnerEventBuffer for /events
@@ -5154,6 +5170,15 @@ const httpServer = http.createServer(async (req, res) => {
           return respond(res, 400, { ok: false, error: 'mode must be "lab" or "autonomous"' });
         }
         controllerMode = mode;
+        // Persist across restarts
+        if (CONTROLLER_STATE_FILE) {
+          try {
+            fs.writeFileSync(CONTROLLER_STATE_FILE, JSON.stringify({ mode }, null, 2), 'utf8');
+            console.log(`[controller] Saved mode: ${mode} to ${CONTROLLER_STATE_FILE}`);
+          } catch (err) {
+            console.warn(`[controller] Failed to persist mode to ${CONTROLLER_STATE_FILE}:`, err.message);
+          }
+        }
         return respond(res, 200, { ok: true, data: { mode: controllerMode } });
       }
 
