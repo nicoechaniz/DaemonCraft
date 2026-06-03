@@ -1,8 +1,68 @@
 diff --git a/node_modules/mineflayer-pathfinder/index.js b/node_modules/mineflayer-pathfinder/index.js
-index b38bd30..ad82720 100644
+index b38bd30..6cfa6e9 100644
 --- a/node_modules/mineflayer-pathfinder/index.js
 +++ b/node_modules/mineflayer-pathfinder/index.js
-@@ -439,6 +439,8 @@ function inject (bot) {
+@@ -9,6 +9,7 @@ const Lock = require('./lib/lock')
+ const Vec3 = require('vec3').Vec3
+ 
+ const Physics = require('./lib/physics')
++const { evaluateStepUpJump } = require('../../lib/step-up-lead.cjs')
+ const nbt = require('prismarine-nbt')
+ const interactableBlocks = require('./lib/interactable.json')
+ 
+@@ -123,6 +124,9 @@ function inject (bot) {
+   function resetPath (reason, clearStates = true) {
+     if (!stopPathing && path.length > 0) bot.emit('path_reset', reason)
+     path = []
++    // Tied to t_528a7941: clear the jump-anticipation flag so the next
++    // path can re-trigger the jump-anticipate.
++    globalThis.__pfJumped = false
+     if (digging) {
+       bot.on('diggingAborted', detectDiggingStopped)
+       bot.on('diggingCompleted', detectDiggingStopped)
+@@ -417,6 +421,41 @@ function inject (bot) {
+   })
+ 
+   function monitorMovement () {
++    // eslint-disable-next-line no-console
++    if (!globalThis.__pfMonCount) globalThis.__pfMonCount = 0
++    globalThis.__pfMonCount++
++    if (globalThis.__pfMonCount % 20 === 0) {
++      // eslint-disable-next-line no-console
++      console.error(`[${new Date().toISOString().slice(11, 23)}] [pathfinder] monitorMovement called ${globalThis.__pfMonCount} times, stateGoal=${stateGoal ? 'set' : 'null'} path_len=${path.length}`)
++    }
++    // Tied to t_97b030a6 followup: ground-snap in Y BEFORE the path shift check.
++    // This runs every tick the pathfinder is active, not just on shift. The
++    // auto-center inside `if (Math.abs(dx) <= 0.35 && Math.abs(dz) <= 0.35 && Math.abs(dy) < 1)`
++    // only fires during a path.shift() (rare event), so a bot stuck at half-height
++    // would never reach the snap. This top-level check catches it every tick.
++    if (bot.entity && path.length > 0) {
++      const _p = bot.entity.position
++      const _floorY = Math.floor(_p.y)
++      const _offY = _p.y - _floorY
++      const _nextPoint = path[0]
++      // Protect *any* upcoming step-up (even when path[0] is still the pre-step
++      // low node). Without this, firing the lead jump at stepIndex>=1 would
++      // immediately see offY>0.15 + _nextPoint.y low → forward=false, starving
++      // the 3-tick rise window to only ~0.12-0.2 blocks of travel (the cardinal
++      // bounce symptom). Diag worked by accident (corner + timing). We only
++      // re-ground-snap when NO higher y exists anywhere in the remaining path.
++      const _hasStepUp = path.some(pt => pt && pt.y > _floorY)
++      const _stepUpInProgress = (_nextPoint && _nextPoint.y > _floorY) || _hasStepUp
++      if (_offY > 0.15 && !_stepUpInProgress) {
++        // eslint-disable-next-line no-console
++        console.error(`[${new Date().toISOString().slice(11, 23)}] [pathfinder] Y-SNAP-TOP: y=${_p.y.toFixed(2)} offY=${_offY.toFixed(3)} onGround=${bot.entity.onGround} path_len=${path.length}`)
++        bot.setControlState('jump', true)
++        bot.setControlState('forward', false)
++        bot.setControlState('sprint', false)
++        lastNodeTime = performance.now()
++        return
++      }
++    }
+     // Test freemotion
+     if (stateMovements && stateMovements.allowFreeMotion && stateGoal && stateGoal.entity) {
+       const target = stateGoal.entity
+@@ -439,6 +478,8 @@ function inject (bot) {
        }
      }
  
@@ -11,7 +71,81 @@ index b38bd30..ad82720 100644
      if (astarContext && astartTimedout) {
        const results = astarContext.compute()
        results.path = postProcessPath(results.path)
-@@ -602,8 +604,35 @@ function inject (bot) {
+@@ -576,6 +617,64 @@ function inject (bot) {
+     let dx = nextPoint.x - p.x
+     const dy = nextPoint.y - p.y
+     let dz = nextPoint.z - p.z
++
++    // Velocity-based step-up anticipation: look ahead in the path for the
++    // next one-block step-up and estimate time-to-contact from the bot's
++    // current horizontal velocity. Triggers a real jump pulse when the
++    // estimated contact is within a lead window (see step-up-lead.cjs for
++    // why leadTicks = L / vDom and why cardinal needs both the L value *and*
++    // forward kept during the whole ~3-tick rise). Replaces the old fixed-
++    // distance JUMP-ANTICIPATE. The Y-SNAP guard above now also protects any
++    // pending higher node so an idx=1 fire doesn't kill forward on offY>0.15.
++    // Mineflayer velocity is blocks per physics tick here.
++    const _predictFloorY = Math.floor(p.y)
++    const _stepIndex = path.findIndex(pt => pt && pt.y > _predictFloorY)
++    if (_stepIndex >= 0 && bot.entity && bot.entity.velocity) {
++      const _stepPoint = path[_stepIndex]
++      const _sdx = _stepPoint.x - p.x
++      const _sdz = _stepPoint.z - p.z
++      const _vel = bot.entity.velocity
++      const _pred = evaluateStepUpJump({
++        px: p.x,
++        pz: p.z,
++        vx: _vel.x,
++        vz: _vel.z,
++        stepX: _stepPoint.x,
++        stepZ: _stepPoint.z
++      })
++      const _ticksToContact = _pred.ticksToContact
++      const _leadTicks = _pred.leadTicks
++      const _speedToward = _pred.speedToward
++      const _shouldJump = _stepIndex >= 0 && !globalThis.__pfJumped && bot.entity.onGround && bot.jumpTicks === 0 && _pred.shouldJump
++      if (_shouldJump) {
++        // eslint-disable-next-line no-console
++        console.error(`[${new Date().toISOString().slice(11, 23)}] [pathfinder] STEP-PREDICT-JUMP: stepIndex=${_stepIndex} step=(${_stepPoint.x},${_stepPoint.y},${_stepPoint.z}) pos=(${p.x.toFixed(2)},${p.y.toFixed(2)},${p.z.toFixed(2)}) ticksToContact=${Number.isFinite(_ticksToContact) ? _ticksToContact.toFixed(1) : 'inf'} leadTicks=${_leadTicks.toFixed(1)} speedToward=${_speedToward.toFixed(3)}`)
++        bot.look(Math.atan2(-_sdx, -_sdz), 0)
++        bot.once('physicsTick', () => {
++          const _pt = bot.entity.position
++          const _velY = bot.entity.velocity ? bot.entity.velocity.y : undefined
++          const _jumpState = bot.getControlState ? bot.getControlState('jump') : undefined
++          // eslint-disable-next-line no-console
++          console.error(`[${new Date().toISOString().slice(11, 23)}] [pathfinder] STEP-PREDICT-PHYSICS-TICK: pos=(${_pt.x.toFixed(2)},${_pt.y.toFixed(2)},${_pt.z.toFixed(2)}) onGround=${bot.entity.onGround} velY=${_velY === undefined ? 'undef' : _velY.toFixed(3)} jumpTicks=${bot.jumpTicks} jumpQueued=${bot.jumpQueued} jumpState=${_jumpState}`)
++        })
++        // Force a false→true edge. Mineflayer returns early on setControlState('jump', true)
++        // if jump is already true, and then it does not queue a fresh jump.
++        bot.setControlState('jump', false)
++        bot.setControlState('jump', true)
++        bot.setControlState('forward', true)
++        // Always sprint on the launch tick for step-ups: the 0.2 boost + air
++        // accel helps cardinal cover the 0.6 bot width in the short y-rise
++        // window. Later monitors will usually clear it (allowSprinting=false
++        // or nearBlock probe), but the impulse sim sees sprint=true.
++        bot.setControlState('sprint', true)
++        globalThis.__pfJumped = true
++        lastNodeTime = performance.now()
++        // eslint-disable-next-line no-console
++        console.error(`[${new Date().toISOString().slice(11, 23)}] [pathfinder] STEP-PREDICT-JUMP: stepIndex=${_stepIndex} step=(${_stepPoint.x},${_stepPoint.y},${_stepPoint.z}) pos=(${p.x.toFixed(2)},${p.y.toFixed(2)},${p.z.toFixed(2)}) ticksToContact=${Number.isFinite(_ticksToContact) ? _ticksToContact.toFixed(1) : 'inf'} speedToward=${_speedToward.toFixed(3)} jumpQueued=${bot.jumpQueued} jumpState=${bot.getControlState ? bot.getControlState('jump') : 'undef'}`)
++        return
++      }
++    }
++
+     if (Math.abs(dx) <= 0.35 && Math.abs(dz) <= 0.35 && Math.abs(dy) < 1) {
+       // arrived at next point
+       lastNodeTime = performance.now()
+@@ -596,14 +695,45 @@ function inject (bot) {
+       }
+       // not done yet
+       nextPoint = path[0]
++      // Tied to t_528a7941: clearing the flag when we shift to a new
++      // nextPoint lets the jump-anticipate re-evaluate for the new node.
++      globalThis.__pfJumped = false
+       if (nextPoint.toBreak.length > 0 || nextPoint.toPlace.length > 0) {
+         fullStop()
+         return
        }
        dx = nextPoint.x - p.x
        dz = nextPoint.z - p.z
@@ -23,6 +157,7 @@ index b38bd30..ad82720 100644
 +      const cz = Math.floor(p.z) + 0.5
 +      const offX = cx - p.x
 +      const offZ = cz - p.z
++
 +      if (Math.abs(offX) > 0.08 || Math.abs(offZ) > 0.08) {
 +        bot.look(Math.atan2(-offX, -offZ), 0)
 +        bot.setControlState('forward', true)
@@ -47,7 +182,7 @@ index b38bd30..ad82720 100644
      bot.look(Math.atan2(-dx, -dz), 0)
      bot.setControlState('forward', true)
      bot.setControlState('jump', false)
-@@ -611,10 +640,10 @@ function inject (bot) {
+@@ -611,10 +741,10 @@ function inject (bot) {
      if (bot.entity.isInWater) {
        bot.setControlState('jump', true)
        bot.setControlState('sprint', false)
