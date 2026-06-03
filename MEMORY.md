@@ -1,5 +1,38 @@
 # DaemonCraft Project Memory
 
+## Session 2026-06-03 — Step-Up Predictor + Recovery + Sprint (COMPLETED → merged to main)
+
+### What we built
+- **STEP-PREDICT**: velocity-based jump predictor using swept AABB (by Grok). `leadTicks = leadAxisGap / vDom`, `DEFAULT_LEAD_AXIS_GAP=0.8`.
+- **Sprint on cardinal approaches**: `|dx| >> |dz|` → `sprint=true` during jump (prevents face collision)
+- **Step Recovery FSM**: crouch+backstep 260ms → yaw jitter ±0.3rad → jump+forward 600ms. Path-gated. Max 10 attempts per session.
+- **Sprint fix**: `nearBlock` probe removed (our patch blocked sprint 99% of the time). `canSprintJump` re-enabled. Restored original mineflayer-pathfinder sprint behavior.
+- **Sprint config**: set in `agents/casts/lab.yaml` (bot_config.pathfinder.allow_sprinting) AND `agents/daemoncraft.py` template.
+
+### Files changed
+- `agents/bot/lib/step-up-lead.cjs` — NEW: Grok's AABB + lead model
+- `agents/bot/node_modules/mineflayer-pathfinder/index.js` — STEP-PREDICT, sprint restore, Y-SNAP-TOP gate, SPRINT-DIAG removed
+- `agents/bot/lib/motion-controller.js` — Step recovery FSM, path cache, follow resume, yaw jitter
+- `agents/bot/patches/mineflayer-pathfinder+2.4.5.patch` — persisted
+- `agents/daemoncraft.py` — `allow_sprinting=True`
+- `agents/casts/lab.yaml` — `allow_sprinting: true` (was overridden to false)
+
+### Commits (world-aware → main)
+- `c66186d` — step-up predictor
+- `b17a5e8` — step recovery FSM
+- `e551e2a` — sprint enable + yaw jitter
+- NEW — sprint fix: remove nearBlock, re-enable canSprintJump, clean debug logs
+
+### Verified
+- Sprint works in runtime (bot runs with dust particles, visible sprinting)
+- Follow player works with sprint
+- STEP-PREDICT jump logic intact (debug logs removed, logic remains)
+- Y-SNAP-TOP with step-up gating operational
+- monitorMovement counter (every 20 ticks) kept for operations
+
+### Config Pitfall
+`allow_sprinting` in `lab.yaml` bot_config overrides `daemoncraft.py` template.
+
 ## Session 2026-06-01/02 — L4 Anti-Loop, Lab Mode, Cast Reset, Session ID Collision
 
 ### Problem observed
