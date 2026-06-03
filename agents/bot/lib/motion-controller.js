@@ -61,6 +61,18 @@ export class MotionController {
     this._recoveryEnabled = true; // step/lateral/mine recovery FSM — re-enabled after pathfinder debug
     this._pendingGotoCleanup = null; // cleanup for active goto/gotoNear promise
     this._handlingStuck = false; // guard against re-entrant _handleStuck calls
+    this._currentPath = []; // cached from mineflayer path_update events
+    
+    bot.on('path_update', (results) => {
+      if (results.path && results.path.length > 0) {
+        this._currentPath = results.path;
+      }
+    });
+    // Don't clear on goal_reached — path_update overwrites with fresh data.
+    // Clearing breaks follows where goal_reached fires when bot is near player.
+    bot.on('goal_reached', () => {
+      // intentionally empty — cache lives across goal_reached
+    });
     
     bot.on('goal_reached', () => {
       this._stuckCount = 0;
@@ -126,15 +138,42 @@ export class MotionController {
 
   // Walk to the horizontal center of the block the bot is standing on.
   // Ensures the bot starts every movement with clearance from adjacent blocks.
+  // Tied to t_97b030a6 followup (2026-06-02): also ground the bot in Y
+  // if it's floating (e.g. after a step-up that left it 0.4m above the
+  // floor). A small jump breaks on_ground and re-engages gravity.
   async _walkToBlockCenter(timeoutMs = 500) {
     const p = this.bot.entity.position;
+    this._log(`[DBG] _walkToBlockCenter START pos=(${p.x.toFixed(2)},${p.y.toFixed(2)},${p.z.toFixed(2)}) onGround=${this.bot.entity.onGround} velocity=(${this.bot.entity.velocity.x.toFixed(2)},${this.bot.entity.velocity.y.toFixed(2)},${this.bot.entity.velocity.z.toFixed(2)})`);
+    // Tied to t_97b030a6 followup (2026-06-02): ground-snap before any movement.
+    // If the bot is floating more than 0.1m above an integer Y, nudge it down
+    // by toggling jump (breaks onGround, gravity resumes, lands on floor).
+    // Note: use bot.entity.onGround (camelCase, NOT isOnGround — undefined).
+    if (this.bot.entity.onGround === false) {
+      const floorY = Math.floor(p.y);
+      if (p.y - floorY > 0.1) {
+        this._log(`[DBG] floating detected: y=${p.y.toFixed(2)} floorY=${floorY} deltaY=${(p.y - floorY).toFixed(2)} — nudging down`);
+        this.bot.setControlState('jump', true);
+        await new Promise(r => setTimeout(r, 80));
+        this.bot.setControlState('jump', false);
+        await new Promise(r => setTimeout(r, 120));
+        const np2 = this.bot.entity.position;
+        this._log(`[DBG] after nudge: y=${np2.y.toFixed(2)} onGround=${this.bot.entity.onGround} velocityY=${this.bot.entity.velocity.y.toFixed(2)}`);
+      } else {
+        this._log(`[DBG] !onGround but deltaY=${(p.y - floorY).toFixed(2)} <= 0.1, NOT nudging`);
+      }
+    } else {
+      this._log(`[DBG] on ground, no Y fix needed`);
+    }
     const cx = Math.floor(p.x) + 0.5;
     const cz = Math.floor(p.z) + 0.5;
     const dx = cx - p.x;
     const dz = cz - p.z;
     const dist = Math.sqrt(dx * dx + dz * dz);
 
-    if (dist <= 0.1) return;
+    if (dist <= 0.1) {
+      this._log(`[DBG] centering SKIPPED — dist=${dist.toFixed(2)} <= 0.1, already centered`);
+      return;
+    }
 
     this._log(`centering: (${p.x.toFixed(2)},${p.z.toFixed(2)}) → (${cx.toFixed(2)},${cz.toFixed(2)}) dist=${dist.toFixed(2)}`);
 
@@ -144,22 +183,25 @@ export class MotionController {
 
     const startPos = { x: p.x, z: p.z };
     const start = Date.now();
+    let lastNp = p;
     while (Date.now() - start < timeoutMs) {
       await new Promise(r => setTimeout(r, 100));
       const np = this.bot.entity.position;
       const ndx = cx - np.x;
       const ndz = cz - np.z;
+      const moved = Math.sqrt((np.x - startPos.x)**2 + (np.z - startPos.z)**2);
+      this._log(`[DBG] centering tick: pos=(${np.x.toFixed(2)},${np.y.toFixed(2)},${np.z.toFixed(2)}) offX=${ndx.toFixed(2)} offZ=${ndz.toFixed(2)} moved=${moved.toFixed(2)} onGround=${this.bot.entity.onGround}`);
       if (Math.abs(ndx) <= 0.1 && Math.abs(ndz) <= 0.1) {
         this._log('centering complete');
         break;
       }
       // Bail early if bot isn't making progress (stuck from start)
-      const moved = Math.sqrt((np.x - startPos.x)**2 + (np.z - startPos.z)**2);
       if (moved < 0.05 && Date.now() - start > 300) {
-        this._log('centering stalled — bailing');
+        this._log(`[DBG] centering stalled — bailing at moved=${moved.toFixed(3)}`);
         break;
       }
       this.bot.look(Math.atan2(-ndx, -ndz), 0);
+      lastNp = np;
     }
 
     this.bot.setControlState('forward', false);
@@ -198,6 +240,11 @@ export class MotionController {
     if (_isSolidAt(fwdDx, fwdDz, BODY_FEET) && !_isSolidAt(fwdDx, fwdDz, BODY_HEAD)) {
       return 'step';
     }
+    // Tier 0b: step check at y+1 — solid at [1.0] AND air at [2.0]
+    // Catches steps when the bot is at the face (feet check misses the 1-block gap).
+    if (_isSolidAt(fwdDx, fwdDz, [1.0]) && !_isSolidAt(fwdDx, fwdDz, [2.0])) {
+      return 'step';
+    }
 
     // Tier 1: body-level blocks (0.4-1.9) — these need mine or strafe
     const BODY = [0.4, 0.9, 1.4, 1.9];
@@ -212,8 +259,11 @@ export class MotionController {
   }
 
   async goto(x, y, z, timeoutMs = 15000) {
+    this._log(`[DBG] goto CALLED target=(${x},${y},${z}) timeoutMs=${timeoutMs}`);
     await this.stop();
+    this._log(`[DBG] goto after stop, calling _walkToBlockCenter`);
     await this._walkToBlockCenter(); // center before starting path
+    this._log(`[DBG] goto after walkToBlockCenter, setting goal`);
     const sessionId = `goto_${Date.now()}`;
     const goalDescriptor = makeGoalDescriptor('block', x, y, z);
     const session = createSession(sessionId, goalDescriptor, timeoutMs);
@@ -250,6 +300,7 @@ export class MotionController {
         try { this.bot.pathfinder.setGoal(null); } catch {}
         const p = this.bot.entity.position;
         session.state = SESSION_STATE.FAILED;
+        this._log(`[DBG] goto TIMEOUT for (${x},${y},${z}) — final pos=(${p.x.toFixed(2)},${p.y.toFixed(2)},${p.z.toFixed(2)}) onGround=${this.bot.entity.onGround} velocityY=${this.bot.entity.velocity.y.toFixed(2)}`);
         this._session = null;
         resolve({ ok: true, result: 'Walked toward ' + Math.round(x) + ',' + Math.round(y) + ',' + Math.round(z) + ', now at ' + p.x.toFixed(1) + ',' + p.y.toFixed(1) + ',' + p.z.toFixed(1) + '. Did not reach destination within timeout.' });
       };
@@ -425,6 +476,7 @@ export class MotionController {
 
   // Phase 2: Recovery entry point — dispatches to deterministic FSM based on _classifyBlocked
   async _handleStuck(session) {
+    this._log(`[DBG] _handleStuck CALLED state=${session ? session.state : 'null'} cancelRequested=${session ? session.cancelRequested : 'n/a'} hardCancelled=${session ? session.hardCancelled : 'n/a'}`)
     if (!session || session.state !== SESSION_STATE.STUCK_DETECTED) return;
     if (session.hardCancelled || session.cancelRequested) return;
     if (!this._recoveryEnabled) {
@@ -490,23 +542,168 @@ export class MotionController {
       return;
     }
 
-    // ── Recovery FSM placeholder ──────────────────────────────────
-    // If you ever need to re-enable recovery (backstep, rotate,
-    // jump, measure), set this._recoveryEnabled = true and
-    // re-add the FSM methods listed below.
-    //
-    // Required methods (currently stripped):
-    //   _classifyBlocked()   — detect obstacle direction
-    //   _doStepRecoveryFSM() — pause → sneak-back → jump-forward
-    //   _doLateralRecoveryFSM() — strafe away from lateral obstacle
-    //   _doMineRecoveryFSM() — mine the blocking block
-    //   _pausePathfinder()   — temporarily disable pathfinder
-    //   _resumeGoal()        — re-set goal after recovery
-    //   _clearControls()     — release all movement control states
-    //   _findNearestBodyBlock()
-    //
-    // See git history at ~2026-05-28 for the full implementation.
+    // ── Recovery FSM (step only) ──────────────────────────────────
+    // Check path BEFORE entering the FSM — no step means just restart goal
+    const _floorY = Math.floor(this.bot.entity.position.y);
+    const _hasStepInPath = this._currentPath.some(pt => pt && pt.y > _floorY);
+    if (!_hasStepInPath) {
+      this._log(`recovery: no step in path (len=${this._currentPath.length}), restarting goal`);
+      session.state = SESSION_STATE.NAVIGATING;
+      this._lastCheckPos = null;
+      this._stuckCheckT0 = 0;
+      if (session.goalDescriptor && session.goalDescriptor.type === 'follow' && session.goalDescriptor.entity) {
+        this.bot.pathfinder.setGoal(new goals.GoalFollow(session.goalDescriptor.entity, session.goalDescriptor.distance || 2), true);
+      } else if (session.goalDescriptor) {
+        this._resumeGoal(session.goalDescriptor);
+      }
+      return;
+    }
+
+    if (this._activeRecovery) return;
+    this._activeRecovery = true;
+    const generation = this._sessionGeneration;
+
+    this._recoveryPromise = Promise.resolve().then(async () => {
+      try {
+        session.state = SESSION_STATE.RECOVERY_ATOMIC;
+        session.recoveryAttempt++;
+        if (session.recoveryAttempt > 10) {
+          this._log(`recovery attempt limit reached — giving up`);
+          session.state = SESSION_STATE.FAILED;
+          this._session = null;
+          return;
+        }
+        this._log(`recovery attempt=${session.recoveryAttempt} hasStepInPath=true pathLen=${this._currentPath.length}`);
+        await this._doStepRecoveryFSM(session, generation);
+      } catch (e) {
+        this._log(`recovery error: ${e.message}`);
+        session.state = SESSION_STATE.FAILED;
+      } finally {
+        if (session && session.cancelRequested && !session.hardCancelled) {
+          session.hardCancelled = true;
+          session.state = SESSION_STATE.CANCELLED;
+          try { this.bot.pathfinder.setGoal(null); } catch (e) {}
+          this._clearControls();
+        }
+        this._activeRecovery = false;
+        this._clearControls();
+        this._recoveryPromise = null;
+      }
+    });
     // ──────────────────────────────────────────────────────────────
+  }
+
+  // Execute control sequence with guaranteed cleanup
+  async _withControls(fn) {
+    try { await fn(); } finally { this._clearControls(); }
+  }
+
+  // Sample forward/left/right at body heights to find nearest solid obstruction.
+  _findNearestBodyBlock() {
+    const b = this.bot;
+    if (!b || !b.entity) return null;
+    const yaw = b.entity.yaw;
+    const pos = b.entity.position;
+    const fwdDx = -Math.sin(yaw), fwdDz = Math.cos(yaw);
+    const leftDx = -Math.cos(yaw), leftDz = -Math.sin(yaw);
+    const rightDx = Math.cos(yaw), rightDz = Math.sin(yaw);
+    const dirs = [
+      { dx: fwdDx, dz: fwdDz, name: 'forward' },
+      { dx: leftDx, dz: leftDz, name: 'left' },
+      { dx: rightDx, dz: rightDz, name: 'right' },
+    ];
+    const BODY = [0.4, 0.9, 1.4, 1.9];
+    let nearest = null, nearestDist = Infinity;
+    for (const dir of dirs) {
+      for (const h of BODY) {
+        const pt = pos.offset(dir.dx, h, dir.dz);
+        const blk = b.blockAt(pt);
+        if (blk && blk.name !== 'air' && blk.name !== 'cave_air' && blk.name !== 'void_air' && blk.boundingBox === 'block') {
+          const dist = Math.abs(dir.dx) + Math.abs(dir.dz);
+          if (dist < nearestDist) { nearestDist = dist; nearest = { block: blk, direction: dir.name }; }
+        }
+      }
+    }
+    return nearest;
+  }
+
+  // Pause pathfinder (clear goal but don't change session state)
+  async _pausePathfinder() {
+    try { this.bot.pathfinder.setGoal(null); } catch {}
+    await new Promise(r => setTimeout(r, 100));
+  }
+
+  // Resume original goal from a goal descriptor
+  _resumeGoal(goalDescriptor) {
+    if (!goalDescriptor || !goalDescriptor.type) return false;
+    let goal;
+    if (goalDescriptor.type === 'block') {
+      goal = new goals.GoalBlock(goalDescriptor.x, goalDescriptor.y, goalDescriptor.z);
+    } else if (goalDescriptor.type === 'near') {
+      goal = new goals.GoalNear(goalDescriptor.x, goalDescriptor.y, goalDescriptor.z, goalDescriptor.range || 2);
+    } else if (goalDescriptor.type === 'follow') {
+      return false;
+    }
+    if (goal) { this.bot.pathfinder.setGoal(goal); return true; }
+    return false;
+  }
+
+  async _doStepRecoveryFSM(session, generation) {
+    if (this._sessionGeneration !== generation) return;
+    if (!session || session.state !== SESSION_STATE.RECOVERY_ATOMIC) return;
+    try {
+      await this._pausePathfinder();
+      if (!this._isSessionValid(session, generation)) { this._clearControls(); return; }
+      // BACKSTEP (crouched 260ms)
+      this.bot.setControlState('sneak', true);
+      this.bot.setControlState('back', true);
+      await new Promise(r => setTimeout(r, 260));
+      if (!this._isSessionValid(session, generation)) { this._clearControls(); return; }
+      this._clearControls();
+      // Small random yaw between attempts so each recovery is slightly different
+      const _jitterYaw = this.bot.entity.yaw + (Math.random() - 0.5) * 0.6;
+      await this.bot.look(_jitterYaw, 0);
+      // JUMP_FORWARD (600ms)
+      const preJump = { x: this.bot.entity.position.x, y: this.bot.entity.position.y, z: this.bot.entity.position.z };
+      this.bot.setControlState('jump', true);
+      this.bot.setControlState('forward', true);
+      await new Promise(r => setTimeout(r, 600));
+      if (!this._isSessionValid(session, generation)) { this._clearControls(); return; }
+      this._clearControls();
+      await new Promise(r => setTimeout(r, 200));
+      if (!this._isSessionValid(session, generation)) { this._clearControls(); return; }
+      // MEASURING
+      const postJump = this.bot.entity.position;
+      const dx = postJump.x - preJump.x, dy = postJump.y - preJump.y, dz = postJump.z - preJump.z;
+      const moved = Math.sqrt(dx * dx + dz * dz);
+      this._log(`step recovery: dx=${dx.toFixed(2)} dy=${dy.toFixed(2)} dz=${dz.toFixed(2)} moved=${moved.toFixed(2)}`);
+      if (dy > 0.3 || moved > 1.0) {
+        this._resetFastStuckWindow();
+        if (session.goalDescriptor) {
+          const resumed = this._resumeGoal(session.goalDescriptor);
+          if (resumed) {
+            session.state = SESSION_STATE.NAVIGATING;
+          } else if (session.goalDescriptor.type === 'follow' && session.goalDescriptor.entity) {
+            this.bot.pathfinder.setGoal(new goals.GoalFollow(session.goalDescriptor.entity, session.goalDescriptor.distance || 2), true);
+            session.state = SESSION_STATE.NAVIGATING;
+          } else {
+            session.state = SESSION_STATE.COMPLETE;
+          }
+        } else {
+          session.state = SESSION_STATE.COMPLETE;
+        }
+        session.recoveryAttempt = 0; // reset after successful recovery
+        this._log('step recovery: resumed navigation');
+      } else {
+        this._log('step recovery: no progress, keeping NAVIGATING');
+        session.state = SESSION_STATE.NAVIGATING;
+        session.recoveryAttempt = 0; // reset so bot can keep trying
+      }
+    } catch (e) {
+      this._log(`step recovery error: ${e.message}`);
+      session.state = SESSION_STATE.NAVIGATING;
+      session.recoveryAttempt = 0;
+    }
   }
 
   dispose() {
