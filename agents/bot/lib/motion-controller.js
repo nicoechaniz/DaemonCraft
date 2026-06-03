@@ -62,6 +62,7 @@ export class MotionController {
     this._pendingGotoCleanup = null; // cleanup for active goto/gotoNear promise
     this._handlingStuck = false; // guard against re-entrant _handleStuck calls
     this._currentPath = []; // cached from mineflayer path_update events
+    this._recoveryTargetKey = null; // step node being climbed, cleared on move
     
     bot.on('path_update', (results) => {
       if (results.path && results.path.length > 0) {
@@ -652,6 +653,23 @@ export class MotionController {
     if (this._sessionGeneration !== generation) return;
     if (!session || session.state !== SESSION_STATE.RECOVERY_ATOMIC) return;
     try {
+      // Capture the step-up node we're trying to climb so we can detect
+      // if the player moved between attempts
+      const _floorY = Math.floor(this.bot.entity.position.y);
+      const _stepNode = this._currentPath.find(pt => pt && pt.y > _floorY);
+      const _stepKey = _stepNode ? `${_stepNode.x},${_stepNode.y},${_stepNode.z}` : null;
+      if (!this._recoveryTargetKey) {
+        this._recoveryTargetKey = _stepKey;
+      } else if (this._recoveryTargetKey !== _stepKey) {
+        this._log(`step recovery: step changed (player moved), aborting`);
+        this._recoveryTargetKey = null;
+        session.state = SESSION_STATE.NAVIGATING;
+        if (session.goalDescriptor && session.goalDescriptor.type === 'follow' && session.goalDescriptor.entity) {
+          this.bot.pathfinder.setGoal(new goals.GoalFollow(session.goalDescriptor.entity, session.goalDescriptor.distance || 2), true);
+        }
+        session.recoveryAttempt = 0;
+        return;
+      }
       await this._pausePathfinder();
       if (!this._isSessionValid(session, generation)) { this._clearControls(); return; }
       // BACKSTEP (crouched 260ms)
@@ -693,6 +711,7 @@ export class MotionController {
           session.state = SESSION_STATE.COMPLETE;
         }
         session.recoveryAttempt = 0; // reset after successful recovery
+        this._recoveryTargetKey = null;
         this._log('step recovery: resumed navigation');
       } else {
         this._log('step recovery: no progress, keeping NAVIGATING');

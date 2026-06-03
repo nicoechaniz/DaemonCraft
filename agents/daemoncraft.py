@@ -402,7 +402,7 @@ def start_bot(
             "api_port": port,
         },
         "pathfinder": {
-            "allow_sprinting": False,
+            "allow_sprinting": True,
             "can_dig": False,
             "allow_parkour": True,
         },

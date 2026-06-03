@@ -1,5 +1,5 @@
 diff --git a/node_modules/mineflayer-pathfinder/index.js b/node_modules/mineflayer-pathfinder/index.js
-index b38bd30..6cfa6e9 100644
+index b38bd30..c844906 100644
 --- a/node_modules/mineflayer-pathfinder/index.js
 +++ b/node_modules/mineflayer-pathfinder/index.js
 @@ -9,6 +9,7 @@ const Lock = require('./lib/lock')
@@ -10,7 +10,17 @@ index b38bd30..6cfa6e9 100644
  const nbt = require('prismarine-nbt')
  const interactableBlocks = require('./lib/interactable.json')
  
-@@ -123,6 +124,9 @@ function inject (bot) {
+@@ -36,6 +37,9 @@ function inject (bot) {
+ 
+   bot.pathfinder = {}
+ 
++  // Expose current path for recovery checks (GoalFollow has no path_update events)
++  bot.pathfinder.getCurrentPath = () => path
++
+   bot.pathfinder.thinkTimeout = 5000 // ms
+   bot.pathfinder.tickTimeout = 40 // ms, amount of thinking per tick (max 50 ms)
+   bot.pathfinder.searchRadius = -1 // in blocks, limits of the search area, -1: don't limit the search
+@@ -123,6 +127,9 @@ function inject (bot) {
    function resetPath (reason, clearStates = true) {
      if (!stopPathing && path.length > 0) bot.emit('path_reset', reason)
      path = []
@@ -20,7 +30,7 @@ index b38bd30..6cfa6e9 100644
      if (digging) {
        bot.on('diggingAborted', detectDiggingStopped)
        bot.on('diggingCompleted', detectDiggingStopped)
-@@ -417,6 +421,41 @@ function inject (bot) {
+@@ -417,6 +424,41 @@ function inject (bot) {
    })
  
    function monitorMovement () {
@@ -62,7 +72,7 @@ index b38bd30..6cfa6e9 100644
      // Test freemotion
      if (stateMovements && stateMovements.allowFreeMotion && stateGoal && stateGoal.entity) {
        const target = stateGoal.entity
-@@ -439,6 +478,8 @@ function inject (bot) {
+@@ -439,6 +481,8 @@ function inject (bot) {
        }
      }
  
@@ -71,7 +81,7 @@ index b38bd30..6cfa6e9 100644
      if (astarContext && astartTimedout) {
        const results = astarContext.compute()
        results.path = postProcessPath(results.path)
-@@ -576,6 +617,64 @@ function inject (bot) {
+@@ -576,6 +620,64 @@ function inject (bot) {
      let dx = nextPoint.x - p.x
      const dy = nextPoint.y - p.y
      let dz = nextPoint.z - p.z
@@ -136,7 +146,7 @@ index b38bd30..6cfa6e9 100644
      if (Math.abs(dx) <= 0.35 && Math.abs(dz) <= 0.35 && Math.abs(dy) < 1) {
        // arrived at next point
        lastNodeTime = performance.now()
-@@ -596,14 +695,45 @@ function inject (bot) {
+@@ -596,14 +698,45 @@ function inject (bot) {
        }
        // not done yet
        nextPoint = path[0]
@@ -182,16 +192,26 @@ index b38bd30..6cfa6e9 100644
      bot.look(Math.atan2(-dx, -dz), 0)
      bot.setControlState('forward', true)
      bot.setControlState('jump', false)
-@@ -611,10 +741,10 @@ function inject (bot) {
+@@ -611,10 +744,20 @@ function inject (bot) {
      if (bot.entity.isInWater) {
        bot.setControlState('jump', true)
        bot.setControlState('sprint', false)
 -    } else if (stateMovements.allowSprinting && physics.canStraightLine(path, true)) {
 +    } else if (stateMovements.allowSprinting && !nearBlock && physics.canStraightLine(path, true)) {
++      if (!globalThis.__pfSprintLogCount) globalThis.__pfSprintLogCount = 0;
++      globalThis.__pfSprintLogCount++;
++      if (globalThis.__pfSprintLogCount % 100 === 1) {
++        // eslint-disable-next-line no-console
++        console.error(`[${new Date().toISOString().slice(11, 23)}] [pathfinder] SPRINT-ON: allowSprinting=${stateMovements.allowSprinting} nearBlock=${nearBlock} canStraightLine=${physics.canStraightLine(path, true)}`);
++      }
        bot.setControlState('jump', false)
        bot.setControlState('sprint', true)
 -    } else if (stateMovements.allowSprinting && physics.canSprintJump(path)) {
-+    } else if (false && stateMovements.allowSprinting && (path[0].y - p.y) <= 0.5 && physics.canSprintJump(path)) {
++    } else {
++      // eslint-disable-next-line no-console
++      console.error(`[${new Date().toISOString().slice(11, 23)}] [pathfinder] SPRINT-DIAG: allowSprinting=${stateMovements.allowSprinting} nearBlock=${nearBlock} canStraightLine=${physics.canStraightLine(path, true)} isInWater=${bot.entity.isInWater} pathLen=${path.length}`);
++    }
++    if (false && stateMovements.allowSprinting && (path[0].y - p.y) <= 0.5 && physics.canSprintJump(path)) {
        bot.setControlState('jump', true)
        bot.setControlState('sprint', true)
      } else if (physics.canStraightLine(path)) {
