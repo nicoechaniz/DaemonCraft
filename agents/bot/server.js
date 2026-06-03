@@ -2524,7 +2524,7 @@ async collect({ block, count = 1 }) {
     // so comparing against feet would let through blocks at the bot's new lower level.
     const botPos = b.entity.position;
     const botFeetY = Math.floor(botPos.y);
-    const safe = found.sort((a, b) => b.y - a.y);
+    const safe = found.sort((a, b) => a.distanceTo(botPos) - b.distanceTo(botPos));
 
     if (safe.length === 0) throw new Error(
       `Found ${found.length} ${block}, but all are below your feet. ` +
@@ -2540,7 +2540,7 @@ async collect({ block, count = 1 }) {
         // Navigate to beside the target block (X+1 offset), so we mine sideways
         // rather than standing directly on it (which triggers the under-foot safety filter).
         if (b.entity.position.distanceTo(pos) > 4.5) {
-          if (b.motion) await b.motion.gotoNear(pos.x + 1, pos.y, pos.z, 3);
+          if (b.motion) await b.motion.gotoNear(pos.x + 1, pos.y, pos.z, 5);
         }
 
         await b.dig(target, true);
@@ -2600,7 +2600,7 @@ async collect({ block, count = 1 }) {
     }
     await b.tool.equipForBlock(target);
     if (b.entity.position.distanceTo(target.position) > 4.5) {
-      if (b.motion) await b.motion.gotoNear(x, y, z, 3);
+      if (b.motion) await b.motion.gotoNear(x + 1, y, z, 5);
     }
     await b.dig(target, true);
     return { result: `Mined ${target.name} at ${x}, ${y}, ${z}` };
