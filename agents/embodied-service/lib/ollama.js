@@ -23,6 +23,7 @@
 
 const OLLAMA_URL = process.env.OLLAMA_URL || "http://10.10.20.1:11434";
 const GEMMA_ANDY_MODEL = process.env.GEMMA_ANDY_MODEL || "gemma-andy:e4b-v2-2-3-q8_0";
+const QWEN_ANDY_MODEL = process.env.QWEN_ANDY_MODEL || "qwen-andy:27b-v2-2-3-q4_k_m";
 
 /**
  * Canonical JSON serializer matching `json.dumps(obj, sort_keys=True,
@@ -137,4 +138,45 @@ export async function callGemmaAndy(payload, { signal, options = {} } = {}) {
   };
 }
 
-export { OLLAMA_URL, GEMMA_ANDY_MODEL };
+export async function callQwenAndy(payload, { signal, options = {} } = {}) {
+  const userContent = canonicalStringify(payload);
+  const requestBody = {
+    model: QWEN_ANDY_MODEL,
+    stream: false,
+    messages: [{ role: "user", content: userContent }],
+    think: false,  // CRÍTICO — sin esto el modelo degrada
+    options: {
+      num_predict: 1024,
+      ...options,
+    },
+  };
+
+  const t0 = Date.now();
+  const res = await fetch(`${OLLAMA_URL}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(requestBody),
+    signal,
+  });
+  const elapsed_ms = Date.now() - t0;
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Ollama /api/chat → ${res.status}: ${body.slice(0, 200)}`);
+  }
+
+  const json = await res.json();
+  const content = json?.message?.content;
+  if (typeof content !== "string") {
+    throw new Error(`Ollama response missing message.content: ${JSON.stringify(json).slice(0, 200)}`);
+  }
+  return {
+    raw: content,
+    model: json.model ?? QWEN_ANDY_MODEL,
+    elapsed_ms,
+    eval_count: json.eval_count,
+    prompt_eval_count: json.prompt_eval_count,
+  };
+}
+
+export { OLLAMA_URL, GEMMA_ANDY_MODEL, QWEN_ANDY_MODEL };

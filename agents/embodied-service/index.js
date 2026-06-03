@@ -22,7 +22,7 @@ import http from "node:http";
 import { randomUUID } from "node:crypto";
 import { loadSchema, filterSupported } from "./lib/schema.js";
 import { composeWorldState } from "./lib/world_state.js";
-import { callGemmaAndy, GEMMA_ANDY_MODEL, OLLAMA_URL } from "./lib/ollama.js";
+import { callGemmaAndy, callQwenAndy, GEMMA_ANDY_MODEL, QWEN_ANDY_MODEL, OLLAMA_URL } from "./lib/ollama.js";
 import { parseGemmaAndyResponse } from "./lib/parser.js";
 import { dispatch } from "./lib/dispatcher.js";
 import { setBotUrl } from "./lib/refs.js";
@@ -69,12 +69,16 @@ function detectLanguage(text) {
 
 // Load schema once at startup so /health surfaces it.
 const schema = loadSchema();
+const EMBODIED_MODEL = (process.env.EMBODIED_MODEL || "gemma-andy").toLowerCase();
+const activeModel = EMBODIED_MODEL === "qwen-andy" ? QWEN_ANDY_MODEL : GEMMA_ANDY_MODEL;
+const callModel = EMBODIED_MODEL === "qwen-andy" ? callQwenAndy : callGemmaAndy;
 console.log(
   JSON.stringify({
     event: "service_start",
     port: PORT,
     ollama_url: OLLAMA_URL,
-    model: GEMMA_ANDY_MODEL,
+    model: activeModel,
+    model_variant: EMBODIED_MODEL,
     schema_version: schema.version ?? schema._meta?.version_label ?? schema._meta?.version,
     schema_total: schema.allowed_tools.length,
     schema_supported: schema._supported.size,
@@ -206,7 +210,7 @@ async function handleIntent(req, res) {
 
   let ollama_result;
   try {
-    ollama_result = await callGemmaAndy(payload, { signal: controller.signal });
+    ollama_result = await callModel(payload, { signal: controller.signal });
   } catch (err) {
     clearTimeout(deadline_timer);
     logEvent({ event: "ollama_call_failed", context_id, error: err.message });
@@ -452,7 +456,7 @@ const server = http.createServer(async (req, res) => {
       version: "0.1.0",
       port: PORT,
       ollama_url: OLLAMA_URL,
-      model: GEMMA_ANDY_MODEL,
+      model: activeModel,
       schema_version: schema.version ?? schema._meta?.version_label ?? schema._meta?.version,
       schema_total: schema.allowed_tools.length,
       schema_supported: schema._supported.size,

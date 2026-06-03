@@ -21,7 +21,7 @@ agents:
       server:
         api_port: 3003
       pathfinder:
-        allow_sprinting: true
+        allow_sprinting: false
         can_dig: false
         allow_parkour: true
       chat:
