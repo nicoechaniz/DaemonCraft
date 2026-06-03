@@ -670,6 +670,19 @@ export class MotionController {
         session.recoveryAttempt = 0;
         return;
       }
+      // ── Guard: don't recover into a solid block ──────────────
+      // If the step-up node is occupied by a solid block, this isn't
+      // a terrain step — it's a wall/tree/ore the bot should mine, not jump into.
+      const _stepBlock = _stepNode ? this.bot.blockAt(_stepNode) : null;
+      if (_stepBlock && _stepBlock.boundingBox === 'block') {
+        this._log(`step recovery: next node is solid (${_stepBlock.name}) — skipping, restarting goal`);
+        this._recoveryTargetKey = null;
+        session.state = SESSION_STATE.NAVIGATING;
+        if (session.goalDescriptor) {
+          this._resumeGoal(session.goalDescriptor);
+        }
+        return;
+      }
       await this._pausePathfinder();
       if (!this._isSessionValid(session, generation)) { this._clearControls(); return; }
       // BACKSTEP (crouched 260ms)
