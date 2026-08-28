@@ -15,14 +15,20 @@ Last updated: 2026-05-10
 | Document | What it covers |
 |---|---|
 | [GEMMA_ANDY_AUDIT.md](GEMMA_ANDY_AUDIT.md) | Mariano's design vs our implementation, idiom guide, gaps |
-| [../MEMORY.md](../MEMORY.md) | Project memory: agent state, stability fixes, known pitfalls, decisions |
+| [../MEMORY.md](../MEMORY.md) | Legacy session archive; historical evidence only, not current task or runtime authority |
 
 ## Quick Reference
 
-### Start everything
+### Read-only preflight
 ```bash
-systemctl --user start daemoncraft.service daemoncraft-cast.service embodied-service.service
+cd ~/Projects/DaemonCraft
+./scripts/daemoncraft-ops.py status
+./scripts/daemoncraft-ops.py health
 ```
+
+Do not start, restart, enable, or switch DaemonCraft services or autonomous
+mode without explicit maintainer instruction. See [OPERATIONS.md](OPERATIONS.md)
+and the owning GitHub Issue before changing live state.
 
 ### Full update (code changes)
 ```bash
