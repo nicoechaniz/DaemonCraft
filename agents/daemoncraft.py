@@ -48,6 +48,22 @@ BASE_SOUL_FILE = AGENTS_DIR / "SOUL-base.md"
 BODY_FILE = AGENTS_DIR / "prompts" / "BODY.md"
 
 
+def resolve_hermes_python() -> str:
+    """Return the supported Hermes runtime, with an explicit override for tests."""
+    candidates = [
+        os.environ.get("HERMES_PYTHON"),
+        str(Path.home() / ".hermes" / "venvs" / "hermes-current" / "bin" / "python"),
+        str(Path.home() / ".hermes" / "hermes-agent" / "venv" / "bin" / "python"),
+    ]
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            return candidate
+    raise RuntimeError(
+        "No Hermes Python runtime found. Set HERMES_PYTHON or install "
+        "~/.hermes/venvs/hermes-current."
+    )
+
+
 def _get_all_known_bots() -> str:
     """Collect all agent names from every cast config for cross-bot awareness."""
     bots = set()
@@ -128,11 +144,41 @@ def log_file(cast_name: str, agent_name: str, kind: str) -> Path:
     return get_log_dir(cast_name) / f"{agent_name}_{kind}.log"
 
 
+def _pid_matches_owner(
+    pid: int,
+    agent_name: str,
+    kind: str,
+    proc_root: Path = Path("/proc"),
+) -> bool:
+    """Reject stale pidfiles whose PID has been reused by another process."""
+    try:
+        cmdline = (proc_root / str(pid) / "cmdline").read_bytes().replace(b"\0", b" ").decode(
+            "utf-8", errors="replace"
+        )
+    except OSError:
+        return False
+
+    safe_name = agent_name.lower().replace(" ", "-")
+    if kind == "bot":
+        return "server.js" in cmdline and f"config-{safe_name}.json" in cmdline
+    if kind == "agent":
+        if "agent_loop.py" not in cmdline:
+            return False
+        try:
+            environ = (proc_root / str(pid) / "environ").read_bytes().split(b"\0")
+        except OSError:
+            return False
+        expected = f"MC_USERNAME={agent_name}".encode()
+        return expected in environ
+    return False
+
+
 def read_pid(cast_name: str, agent_name: str, kind: str) -> int | None:
     pf = pid_file(cast_name, agent_name, kind)
     if pf.exists():
         try:
-            return int(pf.read_text().strip())
+            pid = int(pf.read_text().strip())
+            return pid if _pid_matches_owner(pid, agent_name, kind) else None
         except ValueError:
             return None
     return None
@@ -537,8 +583,9 @@ def start_local_agent_loop(
     lf = log_file(cast_name, agent_name, "agent")
     out = open(lf, "a")
 
-    # Use the deploy target venv (shared code)
-    deploy_venv_python = str(Path.home() / ".hermes" / "hermes-agent" / "venv" / "bin" / "python")
+    # Use the managed current runtime. The legacy deploy venv remains a
+    # fallback so existing installations keep working during migration.
+    deploy_venv_python = resolve_hermes_python()
     loop_script = str(SCRIPT_DIR / "agent_loop.py")
 
     standby_file = str(get_pid_dir(cast_name) / f"{agent_name}_standby")

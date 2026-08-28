@@ -1,0 +1,2 @@
+# Dependencies imported by agent_loop.py but not provided by Hermes itself.
+websocket-client==1.9.0

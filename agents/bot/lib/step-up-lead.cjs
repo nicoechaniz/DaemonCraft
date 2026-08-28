@@ -30,11 +30,10 @@
 
 const BOT_HALF_WIDTH = 0.3
 /** Blocks along the limiting axis between AABB leading edge and step face at jump.
- * Cardinal needs ~0.42-0.5 (3.5-4.2 ticks at 0.118 b/t) to let y reach +1 *before or
- * during* the x-crossing of the bot half-width so the landing/support registers on
- * the higher surface rather than clipping the face and losing vx+vy. Diagonals
- * tolerate the value via corner geometry + split v. The model is sound; the
- * previous 0.36 was too tight for face-on + node granularity.
+ * The configured 0.8 block lead is the value shipped and validated with the
+ * velocity-based predictor. Keeping the test tied to this exported constant avoids
+ * silently restoring the earlier 0.36-0.5 experimental window. Diagonals preserve
+ * the same limiting-axis gap through the adaptive vDom calculation.
  */
 const DEFAULT_LEAD_AXIS_GAP = 0.8
 const MIN_LEAD_TICKS = 2
