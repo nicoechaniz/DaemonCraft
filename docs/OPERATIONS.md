@@ -102,7 +102,7 @@ Common: `Unauthorized user` → add `GATEWAY_ALLOW_ALL_USERS=true` to `.env`.
 SkinsRestorer is installed on the Minecraft server. Use RCON:
 
 ```python
-# Via Python RCON (localhost:25575, password: daemoncraft-rcon)
+# Via Python RCON (localhost:25575; password comes from root .env)
 # Command: skin set <player> <minecraft_username>
 # Example: skin set gAndy Gandhi_TG
 ```

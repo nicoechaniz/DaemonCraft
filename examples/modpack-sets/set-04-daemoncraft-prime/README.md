@@ -133,7 +133,7 @@ cp examples/modpack-sets/set-04-daemoncraft-prime/bedrock-mcpack/daemoncraft-pri
 
 # 6. Reload server
 docker exec -u 1000 daemoncraft-minecraft rcon-cli \
-  --host 10.10.20.240 --password daemoncraft-rcon reload
+  --host 10.10.20.240 --password "$RCON_PASSWORD" reload
 ```
 
 ---

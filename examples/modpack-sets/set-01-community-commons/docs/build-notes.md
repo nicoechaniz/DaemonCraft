@@ -21,7 +21,7 @@ cd /home/fede/REPOS/daemoncraft
 sha1=b2be34e6b03f3b215277b34821087e9399ae99f4
 sed -i "s|resource-pack=.*|resource-pack=https://inference01.altermundi.net/packs/daemoncraft-set01.zip|" server/data/server.properties
 sed -i "s|resource-pack-sha1=.*|resource-pack-sha1=$sha1|" server/data/server.properties
-docker exec -u 1000 daemoncraft-minecraft rcon-cli --password daemoncraft-rcon reload
+docker exec -u 1000 daemoncraft-minecraft rcon-cli --password "$RCON_PASSWORD" reload
 ```
 
 To rebuild from source:

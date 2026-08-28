@@ -72,9 +72,9 @@ services:
       MODRINTH_PROJECTS: "geyser,luckperms:OrIs0S6b,coreprotect:HD2IvrxS,skinsrestorer:2PjHGlwd,decentholograms:t9gURTWO,tab-was-taken:FewsxQmS,chatfilter-zepsizola:UlCRrLx8,plan:egk2fxRL"
       MODRINTH_ALLOWED_VERSION_TYPE: "beta"
 
-      # RCON — enabled by default in Purpur; password is pinned here so the
-      # mc-backup sidecar can reliably authenticate. Change in .env only.
-      RCON_PASSWORD: ${RCON_PASSWORD:-daemoncraft-rcon}
+      # RCON — require an explicit secret so public repository defaults can
+      # never become live credentials. Minecraft and mc-backup share it.
+      RCON_PASSWORD: ${RCON_PASSWORD:?Set RCON_PASSWORD in .env}
       ENABLE_RCON: "true"
 
       # --- Logging ---
@@ -120,10 +120,9 @@ services:
       PRUNE_BACKUPS_DAYS: "30"
       RCON_HOST: localhost
       RCON_PORT: "25575"
-      # MUST match the minecraft service default. If they diverge, mc-backup
-      # silently fails to authenticate when the operator hasn't set
-      # RCON_PASSWORD in .env, and backups quietly stop happening.
-      RCON_PASSWORD: ${RCON_PASSWORD:-daemoncraft-rcon}
+      # MUST match the minecraft service. Compose resolves the same required
+      # secret for both services; startup fails closed when it is absent.
+      RCON_PASSWORD: ${RCON_PASSWORD:?Set RCON_PASSWORD in .env}
       SRC_DIR: /data
       DEST_DIR: /backups
       BACKUP_NAME: daemoncraft
