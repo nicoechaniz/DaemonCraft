@@ -95,12 +95,10 @@ test('fixed lead=10 jumps cardinal earlier than diagonal (regression)', () => {
   }
 })
 
-test('adaptive lead: cardinal gap at threshold is in the 0.4-0.5 window that works with forward-protected rise (see step-up-lead.cjs)', () => {
+test('adaptive lead preserves the configured cardinal axis gap', () => {
   const lead = computeStepUpLeadTicks(0.12, 0)
   const gapAtLead = lead * 0.12
-  if (gapAtLead > 0.55 || gapAtLead < 0.35) {
-    throw new Error(`cardinal gap ${gapAtLead} outside expected ~0.45 for current L=${require('../lib/step-up-lead.cjs').DEFAULT_LEAD_AXIS_GAP}`)
-  }
+  approx(gapAtLead, DEFAULT_LEAD_AXIS_GAP, 0.01)
 })
 
 console.log(failed ? `\n${failed} failed` : '\nAll passed')

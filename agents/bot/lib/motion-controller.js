@@ -473,6 +473,7 @@ export class MotionController {
     try { b.setControlState('right', false); } catch {}
     try { b.setControlState('jump', false); } catch {}
     try { b.setControlState('sneak', false); } catch {}
+    try { b.setControlState('sprint', false); } catch {}
   }
 
   // Phase 2: Recovery entry point — dispatches to deterministic FSM based on _classifyBlocked
