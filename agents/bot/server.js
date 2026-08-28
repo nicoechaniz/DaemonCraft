@@ -89,6 +89,11 @@ import {
   recipeIngredientCounts,
 } from './lib/action_feedback.js';
 import { MotionController } from './lib/motion-controller.js';
+import {
+  hasVerticalProgress,
+  shouldStopAtOpenSky,
+  yawForCardinal,
+} from './lib/escape-macro-policy.js';
 import { BodyMutex } from './lib/mutex.js';
 import { ACTION_REGISTRY, ON_ABORT, REG_KEY } from './lib/action-registry.js';
 import { HOSTILE_NAMES, WEAPONS, BANNED_FOOD, isHostileName, equipBestWeapon } from './lib/combat-data.js';
@@ -1120,15 +1125,19 @@ const SPIRAL_ORDER = ['west', 'north', 'east', 'south'];
  *
  * @param {number} targetY      - stop when bot reaches this Y (floor)
  * @param {number} stepsPerSide - steps before rotating direction (default 3)
+ * @param {boolean} stopOnOpenSky - preserve the surface guard unless a human
+ *   explicitly disables it for an open vertical shaft
  * @returns {{ steps: number, finalY: number, message: string }}
  */
-async function climbSpiral(bot, targetY, stepsPerSide = 3) {
+async function climbSpiral(bot, targetY, stepsPerSide = 3, stopOnOpenSky = true) {
   const startY = Math.floor(bot.entity.position.y);
   if (startY >= targetY) return { steps: 0, finalY: startY, message: `Already at or above Y=${targetY}.` };
 
   let dirIdx = 0;          // index into SPIRAL_ORDER
   let stepsOnSide = 0;     // steps taken on current side
   let totalSteps = 0;
+  let consecutiveNoProgress = 0;
+  let stopReason = null;
   const maxSteps = (targetY - startY) * 3; // spiral wastes some movement, allow more
 
   for (let i = 0; i < maxSteps; i++) {
@@ -1154,8 +1163,9 @@ async function climbSpiral(bot, targetY, stepsPerSide = 3) {
       const b2 = bot.blockAt(new Vec3(curX + dd.dx, curY + 1, curZ + dd.dz));
       if (!b2 || b2.name === 'air' || b2.name === 'cave_air' || b2.name === 'void_air') openDirs++;
     }
-    if (skyHeadroom >= 96 && openDirs >= 2) {
+    if (shouldStopAtOpenSky({ stopOnOpenSky, skyHeadroom, openCardinals: openDirs })) {
       log(`[spiral] Reached surface at Y=${curY} (headroom=${skyHeadroom}, openCardinals=${openDirs})`);
+      stopReason = 'open_sky';
       break;
     }
 
@@ -1180,9 +1190,8 @@ async function climbSpiral(bot, targetY, stepsPerSide = 3) {
     }
 
     // ── Step up ────────────────────────────────────────────
-    // Face the cardinal direction so the step-up goes the right way
-    const yawByDir = { west: Math.PI, east: 0, north: -Math.PI/2, south: Math.PI/2 };
-    const targetYaw = yawByDir[direction];
+    // Face the cardinal direction so the jump-forward goes toward the step.
+    const targetYaw = yawForCardinal(direction);
     await bot.look(targetYaw, 0, true);
     await sleep(100);
 
@@ -1190,17 +1199,23 @@ async function climbSpiral(bot, targetY, stepsPerSide = 3) {
     const targetYstep = curY + 1;
     const targetZ = curZ + dir.dz + 0.5;
 
-    try {
-      bot.motion.goto(targetX, targetYstep, targetZ);
-      await sleep(600);
-    } catch (e) {
-      // goto may reject on cancellation — that's fine
+    const moveResult = await Promise.race([
+      bot.motion.goto(targetX, targetYstep, targetZ)
+        .then(() => ({ reached: true }))
+        .catch((error) => ({ reached: false, error })),
+      sleep(3500).then(() => ({ reached: false, timeout: true })),
+    ]);
+    if (!moveResult.reached && bot.motion) {
+      await bot.motion.stop().catch(() => {});
     }
+    // Let gravity and collision resolution settle before judging elevation.
+    await sleep(250);
 
     const afterY = bot.entity.position.y;
-    if (Math.floor(afterY) > curY) {
+    if (hasVerticalProgress(curY, afterY)) {
       totalSteps++;
       stepsOnSide++;
+      consecutiveNoProgress = 0;
 
       // Rotate direction after stepsPerSide successful steps
       if (stepsOnSide >= stepsPerSide) {
@@ -1208,18 +1223,34 @@ async function climbSpiral(bot, targetY, stepsPerSide = 3) {
         dirIdx = (dirIdx + 1) % SPIRAL_ORDER.length;
       }
     } else {
-      // Retry nudge
-      bot.setControlState('forward', true);
-      await sleep(400);
-      bot.setControlState('forward', false);
-      await sleep(100);
-      if (Math.floor(bot.entity.position.y) > curY) {
+      // One bounded jump-forward can complete a step that stopped at the block edge.
+      try {
+        bot.setControlState('jump', true);
+        bot.setControlState('forward', true);
+        await sleep(600);
+      } finally {
+        bot.setControlState('forward', false);
+        bot.setControlState('jump', false);
+      }
+      await sleep(250);
+      if (hasVerticalProgress(curY, bot.entity.position.y)) {
         totalSteps++;
         stepsOnSide++;
+        consecutiveNoProgress = 0;
         if (stepsOnSide >= stepsPerSide) {
           stepsOnSide = 0;
           dirIdx = (dirIdx + 1) % SPIRAL_ORDER.length;
         }
+      } else {
+        consecutiveNoProgress++;
+        stepsOnSide = 0;
+        dirIdx = (dirIdx + 1) % SPIRAL_ORDER.length;
+        if (consecutiveNoProgress >= SPIRAL_ORDER.length) {
+          stopReason = 'no_vertical_progress';
+          log(`[spiral] Stopping at Y=${curY}: no stable vertical progress in any cardinal direction`);
+          break;
+        }
+        log(`[spiral] No vertical progress toward ${direction}; rotating to ${SPIRAL_ORDER[dirIdx]}`);
       }
     }
 
@@ -1233,8 +1264,9 @@ async function climbSpiral(bot, targetY, stepsPerSide = 3) {
     steps: totalSteps,
     finalY,
     stoppedEarly,
+    stopReason,
     message: stoppedEarly
-      ? `Spiral stopped at Y=${finalY} (open sky detected) after ${totalSteps} steps. Target was ${targetY}.`
+      ? `Spiral stopped at Y=${finalY}${stopReason === 'open_sky' ? ' (open sky detected)' : ''} after ${totalSteps} steps. Target was ${targetY}.`
       : `Spiral reached Y=${finalY} (target ${targetY}) in ${totalSteps} steps.`,
   };
 }
@@ -5615,7 +5647,7 @@ const httpServer = http.createServer(async (req, res) => {
 
       // ── Macro endpoint: pre-canned multi-step skills (staircase, spiral, bridge, etc.) ──
       if (path === '/macro') {
-        const { macro, direction, target_y, steps_per_side } = body || {};
+        const { macro, direction, target_y, steps_per_side, stop_on_open_sky } = body || {};
         if (!macro) return respond(res, 400, { ok: false, error: "Missing 'macro' field. Available: staircase, spiral" });
         const b = ensureBot();
 
@@ -5639,8 +5671,9 @@ const httpServer = http.createServer(async (req, res) => {
             return respond(res, 400, { ok: false, error: "Missing 'target_y' (number)" });
           }
           const sps = steps_per_side != null ? parseInt(steps_per_side) : 3;
+          const stopOnOpenSky = stop_on_open_sky !== false;
           try {
-            const result = await climbSpiral(b, target_y, sps);
+            const result = await climbSpiral(b, target_y, sps, stopOnOpenSky);
             return respond(res, 200, { ok: true, ...result, state: briefState() });
           } catch (e) {
             return respond(res, 500, { ok: false, error: e.message });
